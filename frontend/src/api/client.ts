@@ -1,0 +1,83 @@
+import axios from "axios";
+import { useAppStore } from "../store/appStore";
+import type {
+  Table, TableCreate, EnrichmentVersion, GoldenQuestion,
+  GoldenQuestionCreate, EvalRun, EvalResult, UserScope,
+  UserScopeCreate, AuditQuery,
+} from "../types";
+
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:8000",
+  headers: { "Content-Type": "application/json" },
+});
+
+api.interceptors.request.use((config) => {
+  const scope = useAppStore.getState().activeScope;
+  if (scope) {
+    config.headers["X-Scope-Id"] = scope.id;
+  }
+  return config;
+});
+
+// ── Tables ────────────────────────────────────────────────────────────────────
+export const tablesApi = {
+  list: (params?: { status?: string; owner_id?: string; search?: string }) =>
+    api.get<Table[]>("/tables", { params }).then((r) => r.data),
+  get: (id: string) => api.get<Table>(`/tables/${id}`).then((r) => r.data),
+  create: (payload: TableCreate) =>
+    api.post<Table>("/tables", payload).then((r) => r.data),
+};
+
+// ── Enrichment ────────────────────────────────────────────────────────────────
+export const enrichmentApi = {
+  getLatest: (tableId: string) =>
+    api.get<EnrichmentVersion>(`/tables/${tableId}/enrichment/latest`).then((r) => r.data),
+  create: (tableId: string, data: EnrichmentVersion["data"]) =>
+    api.post<EnrichmentVersion>(`/tables/${tableId}/enrichment`, { data }).then((r) => r.data),
+};
+
+// ── Golden Questions ──────────────────────────────────────────────────────────
+export const questionsApi = {
+  list: (tableId: string) =>
+    api.get<GoldenQuestion[]>(`/tables/${tableId}/questions`).then((r) => r.data),
+  create: (tableId: string, payload: GoldenQuestionCreate) =>
+    api.post<GoldenQuestion>(`/tables/${tableId}/questions`, payload).then((r) => r.data),
+  delete: (tableId: string, questionId: string) =>
+    api.delete(`/tables/${tableId}/questions/${questionId}`),
+};
+
+// ── Evaluation ────────────────────────────────────────────────────────────────
+export const evalApi = {
+  triggerRun: (tableId: string) =>
+    api.post<EvalRun>(`/tables/${tableId}/eval/run`).then((r) => r.data),
+  listAllRuns: () =>
+    api.get<EvalRun[]>("/eval/runs/all").then((r) => r.data),
+  listRuns: (tableId: string) =>
+    api.get<EvalRun[]>(`/tables/${tableId}/eval/runs`).then((r) => r.data),
+  getRun: (runId: string) => api.get<EvalRun>(`/eval/${runId}`).then((r) => r.data),
+  getResults: (runId: string) =>
+    api.get<EvalResult[]>(`/eval/${runId}/results`).then((r) => r.data),
+};
+
+// ── Publish ───────────────────────────────────────────────────────────────────
+export const publishApi = {
+  publish: (tableId: string) =>
+    api.post(`/tables/${tableId}/publish`).then((r) => r.data),
+};
+
+// ── Scopes ────────────────────────────────────────────────────────────────────
+export const scopesApi = {
+  list: () => api.get<UserScope[]>("/scopes").then((r) => r.data),
+  create: (payload: UserScopeCreate) =>
+    api.post<UserScope>("/scopes", payload).then((r) => r.data),
+  activate: (scopeId: string) =>
+    api.post<UserScope>(`/scopes/${scopeId}/activate`).then((r) => r.data),
+};
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+export const auditApi = {
+  queries: (params?: { table_id?: string; user_id?: string; limit?: number }) =>
+    api.get<AuditQuery[]>("/audit/queries", { params }).then((r) => r.data),
+};
+
+export default api;

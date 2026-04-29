@@ -1,0 +1,250 @@
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import LanguageDetector from "i18next-browser-languagedetector";
+
+const en = {
+  translation: {
+    nav: {
+      tables: "Tables",
+      sandbox: "Sandbox & Evaluations",
+      monitoring: "Monitoring & Audit",
+      permissions: "Permissions & Scopes",
+    },
+    tables: {
+      title: "Tables",
+      searchPlaceholder: "Search tables...",
+      add: "Add Table",
+      noData: "No tables found",
+      cols: {
+        name: "Name",
+        schema: "Schema",
+        status: "Status",
+        owner: "Owner",
+        updated: "Last Updated",
+        actions: "Actions",
+      },
+    },
+    status: {
+      draft: "Draft",
+      sandbox: "Sandbox",
+      verified: "Verified",
+      production: "Production",
+      degraded: "Degraded",
+    },
+    tabs: {
+      overview: "Overview",
+      enrichment: "Enrichment",
+      questions: "Golden Questions",
+      evaluations: "Evaluations",
+      audit: "Audit",
+    },
+    enrichment: {
+      title: "Semantic Enrichment",
+      tableDesc: "Table Description",
+      columns: "Columns",
+      save: "Save Enrichment",
+      colName: "Column Name",
+      colDesc: "Description",
+      isGeo: "Geo",
+      isTime: "Time",
+      errors: {
+        shortDesc: "Description is too short (min 20 chars)",
+        missing: "Description is required",
+      },
+    },
+    questions: {
+      title: "Golden Questions",
+      add: "Add Question",
+      question: "Question",
+      sql: "Expected SQL",
+      difficulty: "Difficulty",
+      noData: "No golden questions yet",
+    },
+    evaluations: {
+      title: "Evaluations",
+      runEval: "Run Evaluation",
+      score: "Score",
+      status: "Status",
+      noData: "No evaluation runs yet",
+    },
+    publish: {
+      title: "Publish Table",
+      btn: "Publish to Production",
+      checklist: "Validation Checklist",
+      errors: "Blocking Issues",
+      confirm: "Confirm Publish",
+      cancel: "Cancel",
+      success: "Table published successfully",
+    },
+    scopes: {
+      title: "Scopes",
+      activeBanner: "Active Scope: {{name}}",
+      create: "Create Scope",
+      activate: "Activate",
+      active: "Active",
+    },
+    audit: {
+      title: "Query Audit",
+      query: "Query",
+      user: "User",
+      executed: "Executed At",
+      latency: "Latency (ms)",
+      success: "Success",
+    },
+    wizard: {
+      title: "Onboard New Table",
+      steps: {
+        select: "Select Table",
+        schema: "Review Schema",
+        enrichment: "Add Enrichment",
+        validate: "Validate",
+        questions: "Golden Questions",
+        submit: "Submit",
+      },
+      next: "Next",
+      back: "Back",
+      submit: "Submit",
+      finish: "Table onboarded successfully!",
+    },
+    common: {
+      loading: "Loading...",
+      error: "Something went wrong",
+      retry: "Retry",
+      save: "Save",
+      cancel: "Cancel",
+      delete: "Delete",
+      edit: "Edit",
+      view: "View",
+      noData: "No data",
+    },
+  },
+};
+
+const he = {
+  translation: {
+    nav: {
+      tables: "טבלאות",
+      sandbox: "Sandbox והערכות",
+      monitoring: "ניטור ובקרה",
+      permissions: "הרשאות ותחומים",
+    },
+    tables: {
+      title: "טבלאות",
+      searchPlaceholder: "חיפוש טבלאות...",
+      add: "הוספת טבלה",
+      noData: "לא נמצאו טבלאות",
+      cols: {
+        name: "שם",
+        schema: "סכמה",
+        status: "סטטוס",
+        owner: "בעלים",
+        updated: "עדכון אחרון",
+        actions: "פעולות",
+      },
+    },
+    status: {
+      draft: "טיוטה",
+      sandbox: "Sandbox",
+      verified: "מאומת",
+      production: "פרודקשן",
+      degraded: "פגום",
+    },
+    tabs: {
+      overview: "סקירה",
+      enrichment: "העשרה סמנטית",
+      questions: "שאלות זהב",
+      evaluations: "הערכות",
+      audit: "ביקורת",
+    },
+    enrichment: {
+      title: "העשרה סמנטית",
+      tableDesc: "תיאור הטבלה",
+      columns: "עמודות",
+      save: "שמור העשרה",
+      colName: "שם עמודה",
+      colDesc: "תיאור",
+      isGeo: "גיאוגרפי",
+      isTime: "זמן",
+      errors: {
+        shortDesc: "התיאור קצר מדי (מינימום 20 תווים)",
+        missing: "נדרש תיאור",
+      },
+    },
+    questions: {
+      title: "שאלות זהב",
+      add: "הוספת שאלה",
+      question: "שאלה",
+      sql: "SQL צפוי",
+      difficulty: "רמת קושי",
+      noData: "אין שאלות זהב עדיין",
+    },
+    evaluations: {
+      title: "הערכות",
+      runEval: "הרצת הערכה",
+      score: "ציון",
+      status: "סטטוס",
+      noData: "אין הרצות הערכה עדיין",
+    },
+    publish: {
+      title: "פרסום טבלה",
+      btn: "פרסום לפרודקשן",
+      checklist: "רשימת בדיקה",
+      errors: "בעיות חוסמות",
+      confirm: "אשר פרסום",
+      cancel: "ביטול",
+      success: "הטבלה פורסמה בהצלחה",
+    },
+    scopes: {
+      title: "תחומים",
+      activeBanner: "תחום פעיל: {{name}}",
+      create: "יצירת תחום",
+      activate: "הפעלה",
+      active: "פעיל",
+    },
+    audit: {
+      title: "ביקורת שאילתות",
+      query: "שאילתה",
+      user: "משתמש",
+      executed: "זמן ביצוע",
+      latency: "זמן תגובה (ms)",
+      success: "הצלחה",
+    },
+    wizard: {
+      title: "קליטת טבלה חדשה",
+      steps: {
+        select: "בחירת טבלה",
+        schema: "סקירת סכמה",
+        enrichment: "הוספת העשרה",
+        validate: "אימות",
+        questions: "שאלות זהב",
+        submit: "שליחה",
+      },
+      next: "הבא",
+      back: "חזרה",
+      submit: "שלח",
+      finish: "הטבלה נקלטה בהצלחה!",
+    },
+    common: {
+      loading: "טוען...",
+      error: "שגיאה בטעינה",
+      retry: "נסה שוב",
+      save: "שמור",
+      cancel: "ביטול",
+      delete: "מחק",
+      edit: "עריכה",
+      view: "צפייה",
+      noData: "אין נתונים",
+    },
+  },
+};
+
+i18n
+  .use(LanguageDetector)
+  .use(initReactI18next)
+  .init({
+    resources: { en, he },
+    fallbackLng: "en",
+    interpolation: { escapeValue: false },
+  });
+
+export default i18n;
