@@ -4,6 +4,9 @@ import type {
   Table, TableCreate, EnrichmentVersion, GoldenQuestion,
   GoldenQuestionCreate, EvalRun, EvalResult, UserScope,
   UserScopeCreate, AuditQuery,
+  TableProfile, ColumnProfile, CrossTableProfile,
+  QueryFeedback, QueryFeedbackCreate,
+  TableHealth,
 } from "../types";
 
 const api = axios.create({
@@ -78,6 +81,40 @@ export const scopesApi = {
 export const auditApi = {
   queries: (params?: { table_id?: string; user_id?: string; limit?: number }) =>
     api.get<AuditQuery[]>("/audit/queries", { params }).then((r) => r.data),
+};
+
+// ── Profiling ─────────────────────────────────────────────────────────────────
+export const profilingApi = {
+  get: (tableId: string) =>
+    api.get<TableProfile>(`/tables/${tableId}/profile`).then((r) => r.data),
+  run: (tableId: string) =>
+    api.post<TableProfile>(`/tables/${tableId}/profile/run`).then((r) => r.data),
+  getColumns: (tableId: string) =>
+    api.get<ColumnProfile[]>(`/tables/${tableId}/profile/columns`).then((r) => r.data),
+  getCrossProfiles: (tableId: string) =>
+    api.get<CrossTableProfile[]>(`/tables/${tableId}/cross-profile`).then((r) => r.data),
+  runCrossProfile: (tableId: string) =>
+    api.post<CrossTableProfile[]>(`/tables/${tableId}/cross-profile`).then((r) => r.data),
+};
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+export const feedbackApi = {
+  submit: (payload: QueryFeedbackCreate) =>
+    api.post<QueryFeedback>("/feedback", payload).then((r) => r.data),
+  getForTable: (tableId: string) =>
+    api.get<QueryFeedback[]>(`/feedback/table/${tableId}`).then((r) => r.data),
+  getForQuery: (queryId: string) =>
+    api.get<QueryFeedback[]>(`/feedback/query/${queryId}`).then((r) => r.data),
+};
+
+// ── Health ────────────────────────────────────────────────────────────────────
+export const healthApi = {
+  get: (tableId: string) =>
+    api.get<TableHealth>(`/tables/${tableId}/health`).then((r) => r.data),
+  recompute: (tableId: string) =>
+    api.post<TableHealth>(`/tables/${tableId}/health/recompute`).then((r) => r.data),
+  getAll: () =>
+    api.get<TableHealth[]>("/health/all").then((r) => r.data),
 };
 
 export default api;

@@ -12,12 +12,14 @@ import { GoldenQuestions } from "./GoldenQuestions";
 import { EvaluationTab } from "./EvaluationTab";
 import { AuditTab } from "./AuditTab";
 import { PublishModal } from "./PublishModal";
+import { ProfilingTab } from "./ProfilingTab";
+import { HealthDashboard } from "./HealthDashboard";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
 dayjs.extend(relativeTime);
 
-type TabKey = "overview" | "enrichment" | "questions" | "evaluations" | "audit";
+type TabKey = "overview" | "enrichment" | "questions" | "evaluations" | "audit" | "profiling" | "health";
 
 export function TableDetails() {
   const { id } = useParams<{ id: string }>();
@@ -43,6 +45,8 @@ export function TableDetails() {
     { key: "enrichment",   label: t("tabs.enrichment") },
     { key: "questions",    label: t("tabs.questions") },
     { key: "evaluations",  label: t("tabs.evaluations") },
+    { key: "profiling",    label: "Profiling" },
+    { key: "health",       label: "Health" },
     { key: "audit",        label: t("tabs.audit") },
   ];
 
@@ -183,6 +187,8 @@ export function TableDetails() {
       {activeTab === "enrichment"  && <EnrichmentEditor tableId={id!} />}
       {activeTab === "questions"   && <GoldenQuestions tableId={id!} />}
       {activeTab === "evaluations" && <EvaluationTab tableId={id!} />}
+      {activeTab === "profiling"   && <ProfilingTab tableId={id!} />}
+      {activeTab === "health"      && <HealthDashboard tableId={id!} />}
       {activeTab === "audit"       && <AuditTab tableId={id!} />}
 
       {showPublish && (

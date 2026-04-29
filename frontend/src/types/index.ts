@@ -2,6 +2,10 @@
 export type TableStatus = "draft" | "sandbox" | "verified" | "production" | "degraded";
 export type DifficultyLevel = "simple" | "medium" | "complex";
 export type EvalStatus = "running" | "completed" | "failed";
+export type QuestionType = "simple" | "complex" | "join" | "geo" | "aggregate" | "time_series";
+export type ProfilingStatus = "pending" | "running" | "completed" | "failed";
+export type FeedbackRating = "positive" | "negative";
+export type HealthStatus = "good" | "warning" | "critical";
 
 export interface Table {
   id: string;
@@ -45,6 +49,8 @@ export interface GoldenQuestion {
   question: string;
   expected_sql: string;
   difficulty: DifficultyLevel;
+  question_type: QuestionType;
+  coverage_tags?: string[];
   created_at: string;
 }
 
@@ -52,6 +58,8 @@ export interface GoldenQuestionCreate {
   question: string;
   expected_sql: string;
   difficulty: DifficultyLevel;
+  question_type?: QuestionType;
+  coverage_tags?: string[];
 }
 
 export interface EvalRun {
@@ -99,10 +107,99 @@ export interface AuditQuery {
   status: string;
   error_message?: string;
   langfuse_trace_id?: string;
+  confidence_score?: number;
+  explanation_text?: string;
+  warnings_json?: string[];
   created_at: string;
 }
 
 export interface PublishError {
   code: string;
   message: string;
+}
+
+// ── Profiling ─────────────────────────────────────────────────────────────────
+
+export interface TableProfile {
+  id: string;
+  table_id: string;
+  status: ProfilingStatus;
+  row_count?: number;
+  column_count?: number;
+  size_bytes?: number;
+  null_rate_avg?: number;
+  duplicate_rate?: number;
+  sample_data?: Record<string, unknown>[];
+  auto_insights?: string[];
+  cached_until?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ColumnProfile {
+  id: string;
+  table_id: string;
+  profile_id: string;
+  column_name: string;
+  data_type?: string;
+  null_count?: number;
+  null_rate?: number;
+  distinct_count?: number;
+  min_value?: string;
+  max_value?: string;
+  avg_value?: number;
+  top_values?: { value: string; count: number }[];
+  is_geo: boolean;
+  is_time: boolean;
+  created_at: string;
+}
+
+export interface CrossTableProfile {
+  id: string;
+  source_table_id: string;
+  target_table_id: string;
+  join_suggestion?: string;
+  match_strength: "strong" | "weak";
+  common_columns?: string[];
+  created_at: string;
+}
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+
+export interface QueryFeedback {
+  id: string;
+  user_id: string;
+  query_id: string;
+  table_id?: string;
+  rating: FeedbackRating;
+  comment?: string;
+  suggested_correction?: string;
+  created_at: string;
+}
+
+export interface QueryFeedbackCreate {
+  user_id: string;
+  query_id: string;
+  table_id?: string;
+  rating: FeedbackRating;
+  comment?: string;
+  suggested_correction?: string;
+}
+
+// ── Table Health ──────────────────────────────────────────────────────────────
+
+export interface TableHealth {
+  id: string;
+  table_id: string;
+  health_score: number;
+  health_status: HealthStatus;
+  eval_success_rate?: number;
+  feedback_ratio?: number;
+  data_quality_score?: number;
+  schema_drift_flag: boolean;
+  failure_wrong_table: number;
+  failure_wrong_sql: number;
+  failure_empty_result: number;
+  failure_execution_error: number;
+  updated_at: string;
 }

@@ -5,7 +5,7 @@ import time
 from app.config import settings
 from app.db.engine import create_db_and_tables, engine
 from app.models.models import AuditQuery
-from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit
+from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit, profiling, feedback, health
 
 app = FastAPI(
     title="Text2SQL Studio API",
@@ -65,6 +65,9 @@ app.include_router(evaluation.router)
 app.include_router(publish.router)
 app.include_router(scopes.router)
 app.include_router(audit.router)
+app.include_router(profiling.router)
+app.include_router(feedback.router)
+app.include_router(health.router)
 
 
 @app.get("/health")
