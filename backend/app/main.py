@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
@@ -6,11 +7,23 @@ from app.config import settings
 from app.db.engine import create_db_and_tables, engine
 from app.models.models import AuditQuery
 from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit, profiling, feedback, health
+from app.routers import orchestration
+from app.services.scheduler import start_scheduler, stop_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    start_scheduler()
+    yield
+    stop_scheduler()
+
 
 app = FastAPI(
     title="Text2SQL Studio API",
-    description="Data Intelligence module — Table lifecycle management",
-    version="1.0.0",
+    description="Data Intelligence module — Evaluation Orchestration & Monitoring",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -53,15 +66,13 @@ async def audit_middleware(request: Request, call_next):
 
     return response
 
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
 
 
 app.include_router(tables.router)
 app.include_router(enrichment.router)
 app.include_router(questions.router)
 app.include_router(evaluation.router)
+app.include_router(orchestration.router)
 app.include_router(publish.router)
 app.include_router(scopes.router)
 app.include_router(audit.router)

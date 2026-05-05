@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CloudDownload } from "lucide-react";
+import { CheckCircle2, CloudDownload, Check } from "lucide-react";
 import { App } from "antd";
 import { tablesApi, enrichmentApi, questionsApi } from "../../api/client";
 import type { TableCreate, EnrichmentData, GoldenQuestionCreate } from "../../types";
@@ -114,7 +114,7 @@ export function OnboardingWizard() {
         {STEPS.map((s, i) => (
           <div key={s} className="stepper__step">
             <div className={`stepper__circle${i < currentStep ? " stepper__circle--done" : i === currentStep ? " stepper__circle--active" : ""}`}>
-              {i < currentStep ? "✓" : i + 1}
+              {i < currentStep ? <Check size={14} /> : i + 1}
             </div>
             <div className={`stepper__label${i === currentStep ? " stepper__label--active" : ""}`}>
               {t(`wizard.steps.${s}`)}

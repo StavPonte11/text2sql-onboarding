@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Activity } from "lucide-react";
+import { Activity, Check, X } from "lucide-react";
 import { auditApi } from "../../api/client";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
@@ -48,17 +48,17 @@ export function AuditTab({ tableId }: Props) {
                 <tr key={row.id}>
                   <td style={{ maxWidth: 340 }}>
                     <code style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                      {row.query.length > 80 ? row.query.slice(0, 80) + "…" : row.query}
+                      {row.raw_question.length > 80 ? row.raw_question.slice(0, 80) + "…" : row.raw_question}
                     </code>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{row.user_id}</td>
                   <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    {dayjs(row.executed_at).format("MMM D, HH:mm:ss")}
+                    {dayjs(row.created_at).format("MMM D, HH:mm:ss")}
                   </td>
-                  <td style={{ fontSize: 13 }}>{row.latency_ms ?? "—"}</td>
+                  <td style={{ fontSize: 13 }}>{row.execution_time_ms ?? "—"}</td>
                   <td>
-                    <span style={{ color: row.success ? "var(--status-production)" : "var(--status-degraded)", fontWeight: 600, fontSize: 12 }}>
-                      {row.success ? "✓" : "✗"}
+                    <span style={{ color: row.status === "success" ? "var(--status-production)" : "var(--status-degraded)", fontWeight: 600, fontSize: 12, display: "flex", alignItems: "center" }}>
+                      {row.status === "success" ? <Check size={14} /> : <X size={14} />}
                     </span>
                   </td>
                 </tr>

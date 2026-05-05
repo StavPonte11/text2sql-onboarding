@@ -9,6 +9,10 @@ import { OnboardingWizard } from "./components/wizard/OnboardingWizard";
 import { MonitoringPage } from "./components/monitoring/MonitoringPage";
 import { ScopesPage } from "./pages/ScopesPage";
 import { SandboxPage } from "./pages/SandboxPage";
+import { ControlCenterPage } from "./pages/ControlCenterPage";
+import { EvaluationsPage } from "./pages/EvaluationsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { LandingPage } from "./pages/LandingPage";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
 import "./styles/globals.css";
@@ -49,13 +53,17 @@ function AppLayout() {
           <LanguageToggle />
         </div>
         <Routes>
-          <Route path="/" element={<Navigate to="/tables" replace />} />
+          <Route path="/control-center" element={<ControlCenterPage />} />
+          <Route path="/evaluations" element={<EvaluationsPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/tables" element={<TableList />} />
           <Route path="/tables/:id" element={<TableDetails />} />
           <Route path="/wizard" element={<OnboardingWizard />} />
           <Route path="/sandbox" element={<SandboxPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
+          {/* Catch-all redirect for unmatched inner routes */}
+          <Route path="*" element={<Navigate to="/control-center" replace />} />
         </Routes>
       </div>
     </div>
@@ -64,11 +72,14 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { colorPrimary: '#6366f1' } }}>
+    <ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { colorPrimary: '#0ea5e9', fontFamily: "'Plus Jakarta Sans', sans-serif", borderRadius: 6 } }}>
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <BrowserRouter>
-            <AppLayout />
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/*" element={<AppLayout />} />
+            </Routes>
           </BrowserRouter>
         </QueryClientProvider>
       </AntApp>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Plus, Shield } from "lucide-react";
+import { Plus, Shield, Check } from "lucide-react";
 import { App } from "antd";
 import { scopesApi } from "../api/client";
 import type { UserScopeCreate } from "../types";
@@ -76,8 +76,8 @@ export function ScopesPage() {
               </div>
               <div className="flex gap-2 items-center">
                 {scope.is_active && (
-                  <span style={{ color: "var(--status-production)", fontSize: 12, fontWeight: 700 }}>
-                    ✓ {t("scopes.active")}
+                  <span style={{ color: "var(--status-production)", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                    <Check size={14} /> {t("scopes.active")}
                   </span>
                 )}
                 <button

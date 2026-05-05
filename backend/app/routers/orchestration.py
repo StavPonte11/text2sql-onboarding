@@ -1,0 +1,635 @@
+"""
+orchestration.py — Evaluation Orchestration & Monitoring APIs.
+
+New endpoints:
+  Schedules:   GET/POST/PUT/DELETE /evaluations/schedules
+  Runs:        POST /evaluations/run, GET /evaluations/runs, GET /evaluations/runs/{id}
+  Analytics:   GET /evaluations/analytics/trends, /analytics/tables
+  Comparison:  GET /evaluations/compare?run1=&run2=
+  Alerts:      GET /evaluations/alerts, POST /evaluations/alerts/{id}/ack
+  System:      GET /evaluations/system-health
+"""
+import uuid
+import time
+import random
+from datetime import datetime, timedelta
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from sqlmodel import Session, select
+from app.db.engine import get_session, engine
+from app.models.models import (
+    Table, GoldenQuestion,
+    EvalRun, EvalRunRead, EvalStatus,
+    EvalResult,
+    EvaluationSchedule, EvaluationScheduleCreate, EvaluationScheduleUpdate, EvaluationScheduleRead,
+    EvaluationHistoryMetric, EvaluationHistoryMetricRead,
+    EvaluationAlert, EvaluationAlertRead, AlertSeverity,
+)
+from app.services.scoring import (
+    JudgeOutput, ExecutionResult, ExpectedShape,
+    compute_score, compute_dataset_score,
+    PASS_THRESHOLD,
+)
+
+router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+REGRESSION_BLOCK_DELTA = 0.10
+REGRESSION_WARNING_DELTA = 0.05
+LOW_SCORE_THRESHOLD = 0.70
+
+
+# ── Stubbed external calls (same as in evaluation.py) ─────────────────────────
+
+def _stub_agent(question: str, table_id: str) -> dict:
+    success = random.random() > 0.1
+    row_count = random.randint(0, 5000) if success else 0
+    iterations = random.choices([0, 1, 2, 3], weights=[60, 25, 10, 5])[0]
+    return {
+        "generated_sql": f"SELECT * FROM {table_id[:8]}.stub LIMIT 100",
+        "tables_used": [f"{table_id[:8]}.stub"],
+        "generated_columns": ["id", "name", "value"],
+        "refiner_iterations": iterations,
+        "execution": {
+            "success": success,
+            "rows": [],
+            "columns": ["id", "name", "value"] if success else [],
+            "row_count": row_count,
+            "execution_time_ms": random.randint(200, 8000),
+            "error_message": None if success else "Stub execution error",
+        },
+    }
+
+
+def _stub_judge(exec_success: bool) -> dict:
+    base = random.uniform(0.55, 0.95) if exec_success else random.uniform(0.0, 0.35)
+    failure_types = [None, None, None, "wrong_table", "wrong_join", "wrong_filter"]
+    return {
+        "table_selection_correctness": round(min(1.0, base + random.uniform(-0.1, 0.1)), 3),
+        "sql_semantic_equivalence":    round(min(1.0, base + random.uniform(-0.15, 0.1)), 3),
+        "result_correctness":          round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
+        "hallucination_detected":      random.random() < 0.05,
+        "failure_type":                random.choice(failure_types) if not exec_success else None,
+        "reasoning": {},
+        "confidence_in_judgment": round(random.uniform(0.7, 0.95), 3),
+    }
+
+
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: str = "user"):
+    """Run evaluation for multiple tables (one run per table)."""
+    with Session(engine) as session:
+        for table_id, run_id in zip(table_ids, run_ids):
+            run = session.get(EvalRun, run_id)
+            if not run:
+                continue
+
+            questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+            ).all()
+
+            if not questions:
+                run.status = EvalStatus.failed
+                run.completed_at = datetime.utcnow()
+                session.add(run)
+                session.commit()
+                _create_alert(session, run_id, table_id, "failed_run", AlertSeverity.critical,
+                              f"Table {table_id[:8]} has no golden questions — evaluation aborted.")
+                continue
+
+            question_scores: list[tuple[float, str]] = []
+            failure_counts = {
+                "wrong_table": 0, "wrong_join": 0, "wrong_filter": 0,
+                "hallucination": 0, "execution_error": 0, "empty_result_bug": 0,
+            }
+            dim_totals = {"table_selection_correctness": 0.0, "sql_semantic_equivalence": 0.0, "result_correctness": 0.0}
+
+            t_start = time.time()
+
+            for q in questions:
+                agent_result = _stub_agent(q.question, table_id)
+                exec_data = agent_result["execution"]
+
+                execution = ExecutionResult(
+                    success=exec_data["success"],
+                    rows=exec_data["rows"],
+                    columns=exec_data["columns"],
+                    row_count=exec_data["row_count"],
+                    execution_time_ms=exec_data["execution_time_ms"],
+                    error_message=exec_data.get("error_message"),
+                )
+                expected_shape = ExpectedShape(row_count_min=0, row_count_max=999_999, expected_columns=["id", "name", "value"])
+
+                judge_raw = _stub_judge(exec_data["success"])
+                judge = JudgeOutput(
+                    table_selection_correctness=judge_raw["table_selection_correctness"],
+                    sql_semantic_equivalence=judge_raw["sql_semantic_equivalence"],
+                    result_correctness=judge_raw["result_correctness"],
+                    hallucination_detected=judge_raw["hallucination_detected"],
+                    failure_type=judge_raw.get("failure_type"),
+                    reasoning=judge_raw.get("reasoning", {}),
+                    confidence_in_judgment=judge_raw.get("confidence_in_judgment", 0.8),
+                )
+
+                breakdown = compute_score(
+                    execution=execution,
+                    expected_shape=expected_shape,
+                    judge=judge,
+                    tables_used=agent_result["tables_used"],
+                    expected_tables=[],
+                    generated_columns=agent_result["generated_columns"],
+                    schema_columns=["id", "name", "value"],
+                    refiner_iterations=agent_result["refiner_iterations"],
+                    question_type=q.question_type.value if hasattr(q.question_type, 'value') else str(q.question_type),
+                )
+
+                result = EvalResult(
+                    run_id=run_id,
+                    question_id=q.id,
+                    score=breakdown.final_score,
+                    status="pass" if breakdown.question_status == "pass" else "fail",
+                    error_type=breakdown.failure_type,
+                )
+                session.add(result)
+
+                question_scores.append((breakdown.final_score, str(q.question_type)))
+                if breakdown.failure_type and breakdown.failure_type in failure_counts:
+                    failure_counts[breakdown.failure_type] += 1
+
+                for dim in dim_totals:
+                    val = getattr(judge, dim, 0.0)
+                    dim_totals[dim] += val
+
+            duration = time.time() - t_start
+            agg = compute_dataset_score(question_scores)
+            n = len(questions)
+
+            passes = sum(1 for s, _ in question_scores if s >= PASS_THRESHOLD)
+            fails = n - passes
+
+            dim_avgs = {k: round(v / n, 3) for k, v in dim_totals.items()} if n else {}
+
+            # Detect regression vs previous run
+            prev_runs = session.exec(
+                select(EvalRun)
+                .where(EvalRun.table_id == table_id, EvalRun.status == EvalStatus.completed, EvalRun.id != run_id)
+                .order_by(EvalRun.created_at.desc())
+                .limit(1)
+            ).first()
+
+            regression_detected = False
+            regression_delta = None
+
+            if prev_runs and prev_runs.score > 0:
+                delta = prev_runs.score - agg["dataset_score"]
+                if delta > REGRESSION_BLOCK_DELTA:
+                    regression_detected = True
+                    regression_delta = round(delta, 4)
+                    _create_alert(session, run_id, table_id, "regression", AlertSeverity.critical,
+                                  f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {agg['dataset_score']:.2f})",
+                                  {"previous_score": prev_runs.score, "current_score": agg["dataset_score"], "delta": delta})
+                elif delta > REGRESSION_WARNING_DELTA:
+                    regression_detected = True
+                    regression_delta = round(delta, 4)
+                    _create_alert(session, run_id, table_id, "regression", AlertSeverity.warning,
+                                  f"Score warning: {delta:.1%} drop detected",
+                                  {"previous_score": prev_runs.score, "current_score": agg["dataset_score"], "delta": delta})
+
+            # Low score alert
+            if agg["dataset_score"] < LOW_SCORE_THRESHOLD:
+                _create_alert(session, run_id, table_id, "low_score", AlertSeverity.warning,
+                              f"Score {agg['dataset_score']:.2f} is below threshold {LOW_SCORE_THRESHOLD}",
+                              {"score": agg["dataset_score"], "threshold": LOW_SCORE_THRESHOLD})
+
+            # Update run
+            run.score = agg["dataset_score"]
+            run.pass_rate = round(passes / n, 3) if n else 0
+            run.fail_rate = round(fails / n, 3) if n else 0
+            run.total_questions = n
+            run.duration_seconds = round(duration, 2)
+            run.status = EvalStatus.completed
+            run.completed_at = datetime.utcnow()
+            run.failure_breakdown = failure_counts
+            run.dimension_averages = dim_avgs
+            run.regression_detected = regression_detected
+            run.regression_delta = regression_delta
+            session.add(run)
+
+            # Persist metrics for analytics
+            for metric_name, metric_value in [
+                ("score", agg["dataset_score"]),
+                ("pass_rate", run.pass_rate),
+                ("fail_rate", run.fail_rate),
+                ("wrong_table", failure_counts["wrong_table"]),
+                ("wrong_join", failure_counts["wrong_join"]),
+                ("wrong_filter", failure_counts["wrong_filter"]),
+                ("execution_error", failure_counts["execution_error"]),
+            ]:
+                session.add(EvaluationHistoryMetric(run_id=run_id, metric_name=metric_name, metric_value=metric_value))
+
+            session.commit()
+
+
+def _create_alert(session: Session, run_id: Optional[str], table_id: Optional[str],
+                  alert_type: str, severity: AlertSeverity, message: str, details: Optional[dict] = None):
+    alert = EvaluationAlert(
+        run_id=run_id,
+        table_id=table_id,
+        alert_type=alert_type,
+        severity=severity,
+        message=message,
+        details=details,
+    )
+    session.add(alert)
+
+
+# ── Runs ──────────────────────────────────────────────────────────────────────
+
+@router.post("/run", response_model=list[EvalRunRead], status_code=202)
+def trigger_evaluation_run(
+    table_ids: list[str],
+    background_tasks: BackgroundTasks,
+    triggered_by: str = Query(default="user"),
+    session: Session = Depends(get_session),
+):
+    """Trigger evaluation for one or more tables."""
+    runs = []
+    for table_id in table_ids:
+        table = session.get(Table, table_id)
+        if not table:
+            raise HTTPException(status_code=404, detail=f"Table {table_id} not found")
+        run = EvalRun(table_id=table_id, triggered_by=triggered_by)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        runs.append(run)
+
+    background_tasks.add_task(
+        _run_full_pipeline,
+        [r.table_id for r in runs],
+        [r.id for r in runs],
+        triggered_by,
+    )
+    return runs
+
+
+@router.get("/runs", response_model=list[EvalRunRead])
+def list_runs(
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0),
+    status: Optional[str] = Query(default=None),
+    table_id: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+):
+    query = select(EvalRun).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
+    if status:
+        query = query.where(EvalRun.status == status)
+    if table_id:
+        query = query.where(EvalRun.table_id == table_id)
+    return session.exec(query).all()
+
+
+@router.get("/runs/{run_id}", response_model=EvalRunRead)
+def get_run(run_id: str, session: Session = Depends(get_session)):
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    return run
+
+
+@router.get("/runs/{run_id}/report")
+def get_run_report(run_id: str, session: Session = Depends(get_session)):
+    """Full structured report — matches the evaluation_pipeline.md format."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+    return {
+        "run_id": run_id,
+        "table_id": run.table_id,
+        "overall_score": run.score,
+        "pass_rate": run.pass_rate,
+        "fail_rate": run.fail_rate,
+        "total_questions": run.total_questions,
+        "duration_seconds": run.duration_seconds,
+        "status": run.status,
+        "triggered_by": run.triggered_by,
+        "is_publishable": run.score >= 0.80,
+        "regression_detected": run.regression_detected,
+        "regression_delta": run.regression_delta,
+        "failure_breakdown": run.failure_breakdown or {},
+        "dimension_averages": run.dimension_averages or {},
+        "started_at": run.started_at.isoformat(),
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "per_question": [
+            {
+                "question_id": r.question_id,
+                "score": r.score,
+                "status": r.status,
+                "failure_type": r.error_type,
+            }
+            for r in results
+        ],
+    }
+
+
+# ── Schedules ─────────────────────────────────────────────────────────────────
+
+@router.get("/schedules", response_model=list[EvaluationScheduleRead])
+def list_schedules(session: Session = Depends(get_session)):
+    return session.exec(select(EvaluationSchedule).order_by(EvaluationSchedule.created_at.desc())).all()
+
+
+@router.post("/schedules", response_model=EvaluationScheduleRead, status_code=201)
+def create_schedule(payload: EvaluationScheduleCreate, session: Session = Depends(get_session)):
+    schedule = EvaluationSchedule(**payload.model_dump())
+    session.add(schedule)
+    session.commit()
+    session.refresh(schedule)
+    return schedule
+
+
+@router.put("/schedules/{schedule_id}", response_model=EvaluationScheduleRead)
+def update_schedule(schedule_id: str, payload: EvaluationScheduleUpdate, session: Session = Depends(get_session)):
+    schedule = session.get(EvaluationSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    for k, v in update_data.items():
+        setattr(schedule, k, v)
+    session.add(schedule)
+    session.commit()
+    session.refresh(schedule)
+    return schedule
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(schedule_id: str, session: Session = Depends(get_session)):
+    schedule = session.get(EvaluationSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    session.delete(schedule)
+    session.commit()
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+@router.get("/analytics/trends")
+def get_trends(
+    days: int = Query(default=30),
+    table_id: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+):
+    """Score and pass_rate over time. Returns one data point per completed run."""
+    since = datetime.utcnow() - timedelta(days=days)
+    query = (
+        select(EvalRun)
+        .where(EvalRun.status == EvalStatus.completed, EvalRun.created_at >= since)
+        .order_by(EvalRun.created_at.asc())
+    )
+    if table_id:
+        query = query.where(EvalRun.table_id == table_id)
+
+    runs = session.exec(query).all()
+
+    # Group by day for sparkline data
+    points = []
+    for r in runs:
+        points.append({
+            "run_id": r.id,
+            "table_id": r.table_id,
+            "date": r.created_at.strftime("%Y-%m-%d"),
+            "timestamp": r.created_at.isoformat(),
+            "score": round(r.score, 3),
+            "pass_rate": round(r.pass_rate, 3),
+            "fail_rate": round(r.fail_rate, 3),
+            "regression_detected": r.regression_detected,
+        })
+
+    # Aggregate by date
+    by_date: dict = {}
+    for p in points:
+        d = p["date"]
+        if d not in by_date:
+            by_date[d] = {"date": d, "scores": [], "pass_rates": [], "run_count": 0}
+        by_date[d]["scores"].append(p["score"])
+        by_date[d]["pass_rates"].append(p["pass_rate"])
+        by_date[d]["run_count"] += 1
+
+    daily = []
+    for d, v in sorted(by_date.items()):
+        daily.append({
+            "date": d,
+            "avg_score": round(sum(v["scores"]) / len(v["scores"]), 3),
+            "avg_pass_rate": round(sum(v["pass_rates"]) / len(v["pass_rates"]), 3),
+            "run_count": v["run_count"],
+        })
+
+    return {"runs": points, "daily": daily, "total_runs": len(runs)}
+
+
+@router.get("/analytics/tables")
+def get_table_analytics(session: Session = Depends(get_session)):
+    """Per-table performance ranking."""
+    tables = session.exec(select(Table)).all()
+    result = []
+    for t in tables:
+        runs = session.exec(
+            select(EvalRun)
+            .where(EvalRun.table_id == t.id, EvalRun.status == EvalStatus.completed)
+            .order_by(EvalRun.created_at.desc())
+            .limit(10)
+        ).all()
+
+        if not runs:
+            result.append({
+                "table_id": t.id,
+                "table_name": t.name,
+                "status": t.status,
+                "latest_score": None,
+                "avg_score": None,
+                "pass_rate": None,
+                "run_count": 0,
+                "trend": "stable",
+                "failure_breakdown": {},
+            })
+            continue
+
+        latest = runs[0]
+        scores = [r.score for r in runs]
+        avg = round(sum(scores) / len(scores), 3)
+
+        # Trend: compare latest 3 vs previous 3
+        trend = "stable"
+        if len(scores) >= 4:
+            recent_avg = sum(scores[:2]) / 2
+            older_avg = sum(scores[2:4]) / 2
+            if recent_avg < older_avg - 0.05:
+                trend = "declining"
+            elif recent_avg > older_avg + 0.05:
+                trend = "improving"
+
+        result.append({
+            "table_id": t.id,
+            "table_name": t.name,
+            "status": t.status,
+            "latest_score": round(latest.score, 3),
+            "avg_score": avg,
+            "pass_rate": round(latest.pass_rate, 3),
+            "run_count": len(runs),
+            "trend": trend,
+            "last_run_at": latest.created_at.isoformat(),
+            "failure_breakdown": latest.failure_breakdown or {},
+        })
+
+    result.sort(key=lambda x: (x["latest_score"] is None, x["latest_score"] or 0))
+    return result
+
+
+@router.get("/compare")
+def compare_runs(
+    run1: str = Query(...),
+    run2: str = Query(...),
+    session: Session = Depends(get_session),
+):
+    """Side-by-side comparison of two eval runs."""
+    r1 = session.get(EvalRun, run1)
+    r2 = session.get(EvalRun, run2)
+    if not r1 or not r2:
+        raise HTTPException(status_code=404, detail="One or both runs not found")
+
+    res1 = {r.question_id: r for r in session.exec(select(EvalResult).where(EvalResult.run_id == run1)).all()}
+    res2 = {r.question_id: r for r in session.exec(select(EvalResult).where(EvalResult.run_id == run2)).all()}
+
+    all_qids = set(res1) | set(res2)
+    regressions = []
+    improvements = []
+
+    for qid in all_qids:
+        s1 = res1[qid].score if qid in res1 else None
+        s2 = res2[qid].score if qid in res2 else None
+        if s1 is not None and s2 is not None:
+            delta = s2 - s1
+            if delta < -0.1:
+                regressions.append({"question_id": qid, "run1_score": s1, "run2_score": s2, "delta": round(delta, 3)})
+            elif delta > 0.1:
+                improvements.append({"question_id": qid, "run1_score": s1, "run2_score": s2, "delta": round(delta, 3)})
+
+    score_delta = round(r2.score - r1.score, 4)
+
+    return {
+        "run1": {"id": r1.id, "score": r1.score, "pass_rate": r1.pass_rate, "created_at": r1.created_at.isoformat(), "table_id": r1.table_id},
+        "run2": {"id": r2.id, "score": r2.score, "pass_rate": r2.pass_rate, "created_at": r2.created_at.isoformat(), "table_id": r2.table_id},
+        "score_delta": score_delta,
+        "pass_rate_delta": round(r2.pass_rate - r1.pass_rate, 4),
+        "regression_count": len(regressions),
+        "improvement_count": len(improvements),
+        "regressions": sorted(regressions, key=lambda x: x["delta"]),
+        "improvements": sorted(improvements, key=lambda x: x["delta"], reverse=True),
+        "verdict": "regression" if score_delta < -0.05 else "improvement" if score_delta > 0.05 else "stable",
+    }
+
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+
+@router.get("/alerts", response_model=list[EvaluationAlertRead])
+def list_alerts(
+    acknowledged: Optional[bool] = Query(default=None),
+    limit: int = Query(default=50),
+    session: Session = Depends(get_session),
+):
+    query = select(EvaluationAlert).order_by(EvaluationAlert.created_at.desc()).limit(limit)
+    if acknowledged is not None:
+        query = query.where(EvaluationAlert.acknowledged == acknowledged)
+    return session.exec(query).all()
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=EvaluationAlertRead)
+def acknowledge_alert(alert_id: str, session: Session = Depends(get_session)):
+    alert = session.get(EvaluationAlert, alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert.acknowledged = True
+    session.add(alert)
+    session.commit()
+    session.refresh(alert)
+    return alert
+
+
+# ── System Health ──────────────────────────────────────────────────────────────
+
+@router.get("/system-health")
+def system_health(session: Session = Depends(get_session)):
+    """Aggregate system health for the control center dashboard."""
+    all_runs = session.exec(
+        select(EvalRun)
+        .where(EvalRun.status == EvalStatus.completed)
+        .order_by(EvalRun.created_at.desc())
+        .limit(100)
+    ).all()
+
+    unacked_alerts = session.exec(
+        select(EvaluationAlert).where(EvaluationAlert.acknowledged == False)
+    ).all()
+
+    total_tables = session.exec(select(Table)).all()
+    production_tables = [t for t in total_tables if t.status == "production"]
+
+    latest_run = all_runs[0] if all_runs else None
+
+    if all_runs:
+        global_score = round(sum(r.score for r in all_runs) / len(all_runs), 3)
+        global_pass_rate = round(sum(r.pass_rate for r in all_runs) / len(all_runs), 3)
+    else:
+        global_score = None
+        global_pass_rate = None
+
+    # Top failing tables (lowest avg score)
+    table_scores: dict[str, list[float]] = {}
+    for r in all_runs:
+        table_scores.setdefault(r.table_id, []).append(r.score)
+
+    failing_tables = []
+    for tid, scores in table_scores.items():
+        avg = sum(scores) / len(scores)
+        if avg < LOW_SCORE_THRESHOLD:
+            table = session.get(Table, tid)
+            failing_tables.append({
+                "table_id": tid,
+                "table_name": table.name if table else tid[:8],
+                "avg_score": round(avg, 3),
+                "failure_rate": round(1 - avg, 3),
+            })
+
+    failing_tables.sort(key=lambda x: x["avg_score"])
+
+    # Recent runs (last 10)
+    recent_runs = [
+        {
+            "run_id": r.id,
+            "table_id": r.table_id,
+            "score": r.score,
+            "pass_rate": r.pass_rate,
+            "status": r.status,
+            "triggered_by": r.triggered_by,
+            "created_at": r.created_at.isoformat(),
+            "regression_detected": r.regression_detected,
+        }
+        for r in all_runs[:10]
+    ]
+
+    return {
+        "global_score": global_score,
+        "global_pass_rate": global_pass_rate,
+        "active_alerts": len(unacked_alerts),
+        "critical_alerts": sum(1 for a in unacked_alerts if a.severity == AlertSeverity.critical),
+        "last_evaluation": latest_run.created_at.isoformat() if latest_run else None,
+        "total_tables": len(total_tables),
+        "production_tables": len(production_tables),
+        "total_runs_today": sum(1 for r in all_runs if r.created_at.date() == datetime.utcnow().date()),
+        "top_failing_tables": failing_tables[:5],
+        "recent_runs": recent_runs,
+        "system_status": "critical" if any(a.severity == AlertSeverity.critical for a in unacked_alerts)
+                        else "warning" if unacked_alerts else "healthy",
+    }

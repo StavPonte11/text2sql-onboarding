@@ -2,7 +2,7 @@
    Text2SQL Studio — Global Design System
    ───────────────────────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 
 :root {
   /* Palette */
@@ -13,11 +13,12 @@
   --border: #1e2a45;
   --border-subtle: #151f38;
 
-  /* Brand */
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --accent-dim: rgba(99, 102, 241, 0.15);
-  --accent-glow: rgba(99, 102, 241, 0.3);
+  /* Brand - Text2SQL Studio System */
+  --accent: #0ea5e9;
+  --accent-hover: #38bdf8;
+  --accent-cta: #f97316;
+  --accent-dim: rgba(14, 165, 233, 0.15);
+  --accent-glow: rgba(14, 165, 233, 0.3);
 
   /* Status */
   --status-draft: #64748b;
@@ -43,7 +44,7 @@
 
 html, body, #root {
   height: 100%;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
   background: var(--bg-base);
   color: var(--text-primary);
   font-size: 14px;
@@ -93,7 +94,7 @@ html, body, #root {
 .sidebar__logo-text {
   font-size: 15px;
   font-weight: 700;
-  background: linear-gradient(135deg, #6366f1, #a78bfa);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -396,7 +397,7 @@ html, body, #root {
 
 /* ── Scope banner ── */
 .scope-banner {
-  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(167,139,250,0.1));
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(56, 189, 248, 0.1));
   border-bottom: 1px solid var(--accent-glow);
   padding: 8px 32px;
   font-size: 12.5px;

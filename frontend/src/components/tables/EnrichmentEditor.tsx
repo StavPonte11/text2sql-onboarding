@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Save, AlertCircle, MapPin, Clock } from "lucide-react";
+import { Save, AlertCircle, MapPin, Clock, Check } from "lucide-react";
 import { App } from "antd";
 import { enrichmentApi } from "../../api/client";
 import type { EnrichmentData, ColumnDef } from "../../types";
@@ -75,7 +75,7 @@ export function EnrichmentEditor({ tableId }: Props) {
       <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 20 }}>
         <h2 style={{ fontSize: 17, fontWeight: 700 }}>{t("enrichment.title")}</h2>
         <div className="flex gap-2 items-center">
-          {saved && <span style={{ color: "var(--status-production)", fontSize: 13, fontWeight: 600 }}>✓ Saved</span>}
+          {saved && <span style={{ color: "var(--status-production)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Check size={14} /> Saved</span>}
           <button className="btn btn--primary btn--sm" onClick={handleSave} disabled={saveMutation.isPending}>
             <Save size={14} /> {saveMutation.isPending ? "Saving..." : t("enrichment.save")}
           </button>

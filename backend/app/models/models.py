@@ -122,16 +122,143 @@ class EvalRun(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     table_id: str = Field(foreign_key="tables.id", index=True)
+    dataset_id: Optional[str] = Field(default=None, index=True)
     score: float = Field(default=0.0)
+    pass_rate: float = Field(default=0.0)
+    fail_rate: float = Field(default=0.0)
+    total_questions: int = Field(default=0)
+    duration_seconds: Optional[float] = None
+    triggered_by: str = Field(default="user")  # "user" | "scheduler" | "system"
     status: EvalStatus = Field(default=EvalStatus.running)
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    failure_breakdown: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    dimension_averages: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    regression_detected: bool = Field(default=False)
+    regression_delta: Optional[float] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class EvalRunRead(SQLModel):
     id: str
     table_id: str
+    dataset_id: Optional[str]
     score: float
+    pass_rate: float
+    fail_rate: float
+    total_questions: int
+    duration_seconds: Optional[float]
+    triggered_by: str
     status: EvalStatus
+    started_at: datetime
+    completed_at: Optional[datetime]
+    failure_breakdown: Optional[dict]
+    dimension_averages: Optional[dict]
+    regression_detected: bool
+    regression_delta: Optional[float]
+    created_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVALUATION SCHEDULE MODELS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EvaluationSchedule(SQLModel, table=True):
+    __tablename__ = "evaluation_schedules"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    dataset_id: str = Field(index=True)  # logical dataset name or table group
+    table_scope: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))  # list of table_ids
+    cron_expression: str = Field(default="0 2 * * *")  # daily at 2am
+    enabled: bool = Field(default=True)
+    created_by: str = Field(default="user")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+
+
+class EvaluationScheduleCreate(SQLModel):
+    dataset_id: str
+    table_scope: Optional[list[str]] = None
+    cron_expression: str = "0 2 * * *"
+    enabled: bool = True
+    created_by: str = "user"
+
+
+class EvaluationScheduleUpdate(SQLModel):
+    dataset_id: Optional[str] = None
+    table_scope: Optional[list[str]] = None
+    cron_expression: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class EvaluationScheduleRead(SQLModel):
+    id: str
+    dataset_id: str
+    table_scope: Optional[list[str]]
+    cron_expression: str
+    enabled: bool
+    created_by: str
+    created_at: datetime
+    last_run_at: Optional[datetime]
+    next_run_at: Optional[datetime]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVALUATION HISTORY METRICS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EvaluationHistoryMetric(SQLModel, table=True):
+    __tablename__ = "evaluation_history_metrics"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    run_id: str = Field(foreign_key="eval_runs.id", index=True)
+    metric_name: str  # e.g. "score", "pass_rate", "wrong_table_count"
+    metric_value: float
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EvaluationHistoryMetricRead(SQLModel):
+    id: str
+    run_id: str
+    metric_name: str
+    metric_value: float
+    created_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVALUATION ALERT MODELS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AlertSeverity(str, Enum):
+    info = "info"
+    warning = "warning"
+    critical = "critical"
+
+
+class EvaluationAlert(SQLModel, table=True):
+    __tablename__ = "evaluation_alerts"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    table_id: Optional[str] = Field(default=None, foreign_key="tables.id", index=True)
+    alert_type: str  # "regression", "failed_run", "low_score"
+    severity: AlertSeverity = Field(default=AlertSeverity.warning)
+    message: str
+    details: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    acknowledged: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EvaluationAlertRead(SQLModel):
+    id: str
+    run_id: Optional[str]
+    table_id: Optional[str]
+    alert_type: str
+    severity: AlertSeverity
+    message: str
+    details: Optional[dict]
+    acknowledged: bool
     created_at: datetime
 
 

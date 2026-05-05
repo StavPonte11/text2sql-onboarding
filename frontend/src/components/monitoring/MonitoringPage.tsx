@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Activity } from "lucide-react";
+import { Activity, Check, X } from "lucide-react";
 import { auditApi } from "../../api/client";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
@@ -82,8 +82,8 @@ export function MonitoringPage() {
                   </td>
                   <td>{row.execution_time_ms ?? "—"}</td>
                   <td>
-                    <span style={{ color: row.status === "success" ? "var(--status-production)" : "var(--status-degraded)", fontWeight: 700 }}>
-                      {row.status === "success" ? "✓" : "✗"}
+                    <span style={{ color: row.status === "success" ? "var(--status-production)" : "var(--status-degraded)", fontWeight: 700, display: "flex", alignItems: "center" }}>
+                      {row.status === "success" ? <Check size={14} /> : <X size={14} />}
                     </span>
                   </td>
                 </tr>
