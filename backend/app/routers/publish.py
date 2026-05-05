@@ -115,6 +115,12 @@ def publish_table(table_id: str, session: Session = Depends(get_session)):
                 "score": latest_run.score,
                 "required": BLOCK_THRESHOLD,
             })
+        elif latest_run.score < 0.90:
+            warnings.append({
+                "code": "MARGINAL_EVAL_SCORE",
+                "message": f"Eval score {latest_run.score:.0%} is below 90% (Production Ready). Proceed with caution.",
+                "severity": "warning",
+            })
 
         # ── Gate 5: Regression check ───────────────────────────────────────────
         if not blocking_errors:  # Only check regression if other gates pass

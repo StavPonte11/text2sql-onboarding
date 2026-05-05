@@ -90,8 +90,8 @@ export function LandingPage() {
       >
         <div className="landing-nav-content">
           <div className="landing-logo">
-            <Database className="text-primary" size={24} />
-            <span>Text2SQL Studio</span>
+            <img src="/jarvis-logo.png" alt="Jarvis Studio Logo" style={{ height: "32px", width: "auto" }} />
+            <span style={{ fontWeight: 700, letterSpacing: "0.5px" }}>Jarvis Studio</span>
           </div>
           <div className="landing-nav-links">
             <a href="#features">Features</a>
@@ -240,7 +240,7 @@ export function LandingPage() {
             viewport={{ once: true, margin: "-100px" }}
             variants={staggerContainer}
           >
-            <motion.h2 variants={fadeInUp}>Everything you need for production Text2SQL</motion.h2>
+            <motion.h2 variants={fadeInUp}>Everything you need for production TextToSQL</motion.h2>
             <motion.p variants={fadeInUp}>A complete gateway that handles schema translation, query generation, caching, and safety.</motion.p>
           </motion.div>
           
@@ -298,8 +298,8 @@ export function LandingPage() {
         <div className="footer-content">
           <div className="footer-brand">
             <div className="landing-logo">
-              <Database className="text-primary" size={20} />
-              <span>Text2SQL Studio</span>
+              <img src="/jarvis-logo.png" alt="Jarvis Studio Logo" style={{ height: "24px", width: "auto" }} />
+              <span style={{ fontWeight: 700, letterSpacing: "0.5px" }}>Jarvis Studio</span>
             </div>
             <p className="footer-desc">
               The enterprise API gateway for deploying Text-to-SQL models in production.
@@ -327,7 +327,7 @@ export function LandingPage() {
           </div>
         </div>
         <div className="footer-bottom">
-          <p>&copy; {new Date().getFullYear()} Text2SQL Studio. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} Jarvis Studio. All rights reserved.</p>
         </div>
       </footer>
     </div>

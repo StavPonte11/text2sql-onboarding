@@ -30,6 +30,10 @@ from app.services.scoring import (
     compute_score, compute_dataset_score,
     PASS_THRESHOLD,
 )
+from app.services.llm_judge import evaluate_with_llm
+from app.services.trino_client import execute_query_sync
+from langfuse import Langfuse
+from langfuse.decorators import observe, langfuse_context
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -41,22 +45,36 @@ LOW_SCORE_THRESHOLD = 0.70
 
 # ── Stubbed external calls (same as in evaluation.py) ─────────────────────────
 
-def _stub_agent(question: str, table_id: str) -> dict:
-    success = random.random() > 0.1
-    row_count = random.randint(0, 5000) if success else 0
-    iterations = random.choices([0, 1, 2, 3], weights=[60, 25, 10, 5])[0]
+@observe(as_type="generation", name="text2sql_agent")
+def run_text2sql_agent(question: str, table_id: str) -> dict:
+    """Simulates the LangGraph Text2SQL agent flow with up to 4 refinement iterations."""
+    # In reality, this would invoke the LangGraph text2sql workflow
+    # For evaluation, we execute the generated SQL against real Trino
+    
+    generated_sql = f"SELECT id, name, value FROM {table_id[:8]} LIMIT 100;"
+    
+    # Execute against Trino
+    trino_result = execute_query_sync(generated_sql, table_id)
+    
+    iterations = random.choices([1, 2, 3, 4], weights=[60, 25, 10, 5])[0]
+    
+    langfuse_context.update_current_trace(
+        tags=["evaluation", f"table_{table_id[:8]}"],
+        metadata={"iterations": iterations, "success": trino_result.success}
+    )
+    
     return {
-        "generated_sql": f"SELECT * FROM {table_id[:8]}.stub LIMIT 100",
-        "tables_used": [f"{table_id[:8]}.stub"],
-        "generated_columns": ["id", "name", "value"],
+        "generated_sql": generated_sql,
+        "tables_used": [f"{table_id[:8]}"],
+        "generated_columns": trino_result.columns,
         "refiner_iterations": iterations,
         "execution": {
-            "success": success,
-            "rows": [],
-            "columns": ["id", "name", "value"] if success else [],
-            "row_count": row_count,
-            "execution_time_ms": random.randint(200, 8000),
-            "error_message": None if success else "Stub execution error",
+            "success": trino_result.success,
+            "rows": trino_result.rows,
+            "columns": trino_result.columns,
+            "row_count": trino_result.row_count,
+            "execution_time_ms": trino_result.execution_time_ms,
+            "error_message": trino_result.error_message,
         },
     }
 
@@ -77,26 +95,40 @@ def _stub_judge(exec_success: bool) -> dict:
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
+@observe(name="evaluation_pipeline")
 def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: str = "user"):
     """Run evaluation for multiple tables (one run per table)."""
+    langfuse_context.update_current_trace(
+        tags=["evaluation_run"],
+        metadata={"table_ids": table_ids, "run_ids": run_ids, "triggered_by": triggered_by}
+    )
+    
     with Session(engine) as session:
         for table_id, run_id in zip(table_ids, run_ids):
             run = session.get(EvalRun, run_id)
             if not run:
                 continue
 
-            questions = session.exec(
-                select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
-            ).all()
-
-            if not questions:
+            # Initialize Langfuse client
+            langfuse_client = Langfuse()
+            dataset_name = f"text2sql_{table_id[:8]}"
+            
+            try:
+                dataset = langfuse_client.get_dataset(dataset_name)
+            except Exception as e:
                 run.status = EvalStatus.failed
                 run.completed_at = datetime.utcnow()
                 session.add(run)
                 session.commit()
                 _create_alert(session, run_id, table_id, "failed_run", AlertSeverity.critical,
-                              f"Table {table_id[:8]} has no golden questions — evaluation aborted.")
+                              f"Langfuse Dataset {dataset_name} not found or failed to load. {str(e)}")
                 continue
+
+            if len(dataset.items) == 0:
+                continue
+
+            # Create Langfuse experiment run
+            langfuse_run_name = f"eval_run_{run_id}"
 
             question_scores: list[tuple[float, str]] = []
             failure_counts = {
@@ -107,9 +139,21 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
 
             t_start = time.time()
 
-            for q in questions:
-                agent_result = _stub_agent(q.question, table_id)
-                exec_data = agent_result["execution"]
+            for item in dataset.items:
+                # Observe individual question trace
+                trace_name = f"eval_item_{item.id}"
+                with langfuse_context.observe(name=trace_name) as question_trace:
+                    
+                    # Extract inputs from Langfuse dataset item
+                    user_question = item.input.get("question", item.input) if isinstance(item.input, dict) else item.input
+                    expected_sql = item.expected_output.get("expected_sql", "") if isinstance(item.expected_output, dict) else item.expected_output
+                    question_type = item.metadata.get("question_type", "simple") if item.metadata else "simple"
+                    
+                    agent_result = run_text2sql_agent(user_question, table_id)
+                    exec_data = agent_result["execution"]
+
+                    # Link trace to Langfuse dataset run
+                    item.link(question_trace, run_name=langfuse_run_name)
 
                 execution = ExecutionResult(
                     success=exec_data["success"],
@@ -121,15 +165,13 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
                 )
                 expected_shape = ExpectedShape(row_count_min=0, row_count_max=999_999, expected_columns=["id", "name", "value"])
 
-                judge_raw = _stub_judge(exec_data["success"])
-                judge = JudgeOutput(
-                    table_selection_correctness=judge_raw["table_selection_correctness"],
-                    sql_semantic_equivalence=judge_raw["sql_semantic_equivalence"],
-                    result_correctness=judge_raw["result_correctness"],
-                    hallucination_detected=judge_raw["hallucination_detected"],
-                    failure_type=judge_raw.get("failure_type"),
-                    reasoning=judge_raw.get("reasoning", {}),
-                    confidence_in_judgment=judge_raw.get("confidence_in_judgment", 0.8),
+                judge = evaluate_with_llm(
+                    user_question=user_question,
+                    expected_sql=expected_sql,
+                    generated_sql=agent_result["generated_sql"],
+                    execution=execution,
+                    expected_shape=expected_shape,
+                    schema_block=f"CREATE TABLE {table_id[:8]} (id INT, name VARCHAR, value DOUBLE);"
                 )
 
                 breakdown = compute_score(
@@ -141,19 +183,27 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
                     generated_columns=agent_result["generated_columns"],
                     schema_columns=["id", "name", "value"],
                     refiner_iterations=agent_result["refiner_iterations"],
-                    question_type=q.question_type.value if hasattr(q.question_type, 'value') else str(q.question_type),
+                    question_type=question_type,
                 )
-
+                
+                # Log score natively to Langfuse
+                langfuse_client.score(
+                    trace_id=question_trace.id,
+                    name="accuracy",
+                    value=breakdown.final_score,
+                    comment=f"Status: {breakdown.question_status}. Failure: {breakdown.failure_type}"
+                )
+                
                 result = EvalResult(
                     run_id=run_id,
-                    question_id=q.id,
+                    question_id=str(item.id),
                     score=breakdown.final_score,
                     status="pass" if breakdown.question_status == "pass" else "fail",
                     error_type=breakdown.failure_type,
                 )
                 session.add(result)
 
-                question_scores.append((breakdown.final_score, str(q.question_type)))
+                question_scores.append((breakdown.final_score, question_type))
                 if breakdown.failure_type and breakdown.failure_type in failure_counts:
                     failure_counts[breakdown.failure_type] += 1
 
@@ -163,7 +213,7 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
 
             duration = time.time() - t_start
             agg = compute_dataset_score(question_scores)
-            n = len(questions)
+            n = len(dataset.items)
 
             passes = sum(1 for s, _ in question_scores if s >= PASS_THRESHOLD)
             fails = n - passes

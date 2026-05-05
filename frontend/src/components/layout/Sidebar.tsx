@@ -58,9 +58,12 @@ export function Sidebar() {
 
   return (
     <aside className="layout__sidebar">
-      <div className="sidebar__logo">
-        <div className="sidebar__logo-text">⚡ The Agency</div>
-        <div className="sidebar__logo-sub">Data Intelligence Studio</div>
+      <div className="sidebar__logo" style={{ padding: "16px 12px", display: "flex", alignItems: "center", gap: "10px", borderBottom: "1px solid var(--border-subtle)", marginBottom: "8px" }}>
+        <img src="/jarvis-logo.png" alt="Jarvis Studio Logo" style={{ height: "32px", width: "auto" }} />
+        <div>
+          <div className="sidebar__logo-text" style={{ fontSize: "14px", fontWeight: "700", letterSpacing: "0.5px" }}>JARVIS</div>
+          <div className="sidebar__logo-sub" style={{ fontSize: "11px", color: "var(--text-muted)", letterSpacing: "1px" }}>STUDIO</div>
+        </div>
       </div>
 
       {/* System health mini-indicator */}
