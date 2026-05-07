@@ -92,3 +92,89 @@ CREATE TABLE IF NOT EXISTS audit_queries (
 
 CREATE INDEX IF NOT EXISTS idx_audit_table_id   ON audit_queries(table_id);
 CREATE INDEX IF NOT EXISTS idx_audit_executed_at ON audit_queries(executed_at DESC);
+
+-- ============================================================
+-- Profiling System
+-- ============================================================
+
+-- Table Profiles
+CREATE TABLE IF NOT EXISTS table_profiles (
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    table_id     TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL DEFAULT 1,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','running','completed','failed')),
+    row_count    BIGINT,
+    sample_size  BIGINT,
+    column_count INTEGER,
+    size_bytes   BIGINT,
+    null_rate_avg FLOAT,
+    duplicate_rate FLOAT,
+    sample_data  JSONB,
+    auto_insights JSONB,
+    profile_json JSONB,
+    cached_until TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_table_profiles_table_id  ON table_profiles(table_id);
+CREATE INDEX IF NOT EXISTS idx_table_profiles_version   ON table_profiles(table_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_table_profiles_status    ON table_profiles(status);
+
+-- Column Profiles
+CREATE TABLE IF NOT EXISTS column_profiles (
+    id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    table_id       TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
+    profile_id     TEXT NOT NULL REFERENCES table_profiles(id) ON DELETE CASCADE,
+    column_name    TEXT NOT NULL,
+    data_type      TEXT,
+    null_count     BIGINT,
+    null_rate      FLOAT,
+    distinct_count BIGINT,
+    min_value      TEXT,
+    max_value      TEXT,
+    avg_value      FLOAT,
+    median_value   FLOAT,
+    top_values     JSONB,
+    is_categorical BOOLEAN NOT NULL DEFAULT FALSE,
+    is_geo         BOOLEAN NOT NULL DEFAULT FALSE,
+    is_time        BOOLEAN NOT NULL DEFAULT FALSE,
+    semantic_type  TEXT CHECK (semantic_type IN ('categorical','continuous','time','geo')),
+    stats_json     JSONB,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_col_profiles_profile_id   ON column_profiles(profile_id);
+CREATE INDEX IF NOT EXISTS idx_col_profiles_table_id     ON column_profiles(table_id);
+CREATE INDEX IF NOT EXISTS idx_col_profiles_col_name     ON column_profiles(column_name);
+CREATE INDEX IF NOT EXISTS idx_col_profiles_semantic     ON column_profiles(semantic_type);
+CREATE INDEX IF NOT EXISTS idx_col_profiles_categorical  ON column_profiles(is_categorical) WHERE is_categorical = TRUE;
+
+-- Cross-Table Profiles (join suggestions)
+CREATE TABLE IF NOT EXISTS cross_table_profiles (
+    id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    source_table_id  TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
+    target_table_id  TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
+    join_suggestion  TEXT,
+    match_strength   TEXT NOT NULL DEFAULT 'weak' CHECK (match_strength IN ('strong','weak')),
+    common_columns   JSONB,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cross_profiles_source ON cross_table_profiles(source_table_id);
+
+-- ============================================================
+-- Migration: Add new columns to existing deployments
+-- (idempotent — safe to run multiple times)
+-- ============================================================
+ALTER TABLE table_profiles
+    ADD COLUMN IF NOT EXISTS version      INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS sample_size  BIGINT,
+    ADD COLUMN IF NOT EXISTS profile_json JSONB;
+
+ALTER TABLE column_profiles
+    ADD COLUMN IF NOT EXISTS median_value   FLOAT,
+    ADD COLUMN IF NOT EXISTS is_categorical BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS semantic_type  TEXT,
+    ADD COLUMN IF NOT EXISTS stats_json     JSONB;

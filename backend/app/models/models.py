@@ -371,14 +371,17 @@ class TableProfile(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     table_id: str = Field(foreign_key="tables.id", index=True)
+    version: int = Field(default=1)              # monotonically increasing per table
     status: ProfilingStatus = Field(default=ProfilingStatus.pending)
     row_count: Optional[int] = None
+    sample_size: Optional[int] = None            # rows returned by TABLESAMPLE
     column_count: Optional[int] = None
     size_bytes: Optional[int] = None
-    null_rate_avg: Optional[float] = None        # avg null % across columns
+    null_rate_avg: Optional[float] = None
     duplicate_rate: Optional[float] = None
-    sample_data: Optional[Any] = Field(default=None, sa_column=Column(JSON))  # list of row dicts
+    sample_data: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     auto_insights: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
+    profile_json: Optional[Any] = Field(default=None, sa_column=Column(JSON))  # full structured profile
     cached_until: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -387,14 +390,17 @@ class TableProfile(SQLModel, table=True):
 class TableProfileRead(SQLModel):
     id: str
     table_id: str
+    version: int
     status: ProfilingStatus
     row_count: Optional[int]
+    sample_size: Optional[int]
     column_count: Optional[int]
     size_bytes: Optional[int]
     null_rate_avg: Optional[float]
     duplicate_rate: Optional[float]
     sample_data: Optional[Any]
     auto_insights: Optional[list[str]]
+    profile_json: Optional[Any]
     cached_until: Optional[datetime]
     created_at: datetime
     updated_at: datetime
@@ -414,9 +420,13 @@ class ColumnProfile(SQLModel, table=True):
     min_value: Optional[str] = None
     max_value: Optional[str] = None
     avg_value: Optional[float] = None
-    top_values: Optional[Any] = Field(default=None, sa_column=Column(JSON))  # [{value, count}]
+    median_value: Optional[float] = None
+    top_values: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    is_categorical: bool = Field(default=False)           # computed from cardinality + coverage
     is_geo: bool = Field(default=False)
     is_time: bool = Field(default=False)
+    semantic_type: Optional[str] = None                   # categorical | continuous | time | geo
+    stats_json: Optional[Any] = Field(default=None, sa_column=Column(JSON))  # full stats blob
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -432,9 +442,13 @@ class ColumnProfileRead(SQLModel):
     min_value: Optional[str]
     max_value: Optional[str]
     avg_value: Optional[float]
+    median_value: Optional[float]
     top_values: Optional[Any]
+    is_categorical: bool
     is_geo: bool
     is_time: bool
+    semantic_type: Optional[str]
+    stats_json: Optional[Any]
     created_at: datetime
 
 

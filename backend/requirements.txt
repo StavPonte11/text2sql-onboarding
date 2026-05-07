@@ -7,3 +7,5 @@ pydantic-settings==2.7.0
 langfuse==2.56.2
 python-dotenv==1.0.1
 httpx==0.28.1
+apscheduler==3.10.4
+trino==0.328.0

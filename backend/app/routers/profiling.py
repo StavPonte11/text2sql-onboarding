@@ -1,82 +1,127 @@
 """
-Profiling router — handles table profiling jobs, column profiles, and cross-table analysis.
-AI/Trino execution is stubbed; the router handles persistence and async orchestration only.
+profiling.py — Production-grade profiling router.
+
+Replaces all stubs with real Trino-backed execution via profiling_engine.
+New endpoint: GET /tables/{id}/profile/context — LLM-ready context blob.
 """
-import uuid
+import logging
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from typing import Any, Dict
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
-from app.db.engine import get_session, engine
+
+from app.db.engine import engine, get_session
 from app.models.models import (
-    Table, TableProfile, TableProfileRead,
     ColumnProfile, ColumnProfileRead,
     CrossTableProfile, CrossTableProfileRead,
-    ProfilingStatus,
+    ProfilingStatus, Table,
+    TableProfile, TableProfileRead,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["profiling"])
 
 
+# ── Background worker ──────────────────────────────────────────────────────────
 def _run_profile_job(table_id: str, profile_id: str):
     """
-    Background worker. In production this calls Trino via sampling queries.
-    Here we populate realistic stub values so the UI renders correctly.
+    Background task: runs real Trino profiling via profiling_engine,
+    then persists results into table_profiles + column_profiles.
     """
-    import time
-    import random
-    time.sleep(3)  # simulate Trino latency
+    from app.config import settings
+    from app.services.profiling_engine import run_table_profiling
 
+    with Session(engine) as session:
+        profile = session.get(TableProfile, profile_id)
+        table = session.get(Table, table_id)
+        if not profile or not table:
+            logger.error(f"[Profiling] profile_id={profile_id} or table_id={table_id} not found")
+            return
+
+        # Determine next version
+        latest = session.exec(
+            select(TableProfile)
+            .where(TableProfile.table_id == table_id)
+            .order_by(TableProfile.version.desc())
+        ).first()
+        version = (latest.version if latest else 0) + 1
+
+        profile.status = ProfilingStatus.running
+        profile.version = version
+        session.add(profile)
+        session.commit()
+
+    # Run engine OUTSIDE the session to avoid long-held DB connections
+    try:
+        result = run_table_profiling(
+            table_id=table_id,
+            catalog=settings.TRINO_CATALOG,
+            schema=table.schema_name,
+            table=table.name,
+            version=version,
+        )
+    except Exception as exc:
+        logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
+        with Session(engine) as session:
+            profile = session.get(TableProfile, profile_id)
+            if profile:
+                profile.status = ProfilingStatus.failed
+                profile.updated_at = datetime.utcnow()
+                session.add(profile)
+                session.commit()
+        return
+
+    # Persist results
     with Session(engine) as session:
         profile = session.get(TableProfile, profile_id)
         if not profile:
             return
 
-        profile.status = ProfilingStatus.completed
-        profile.row_count = random.randint(10_000, 5_000_000)
-        profile.column_count = random.randint(5, 40)
-        profile.null_rate_avg = round(random.uniform(0.01, 0.25), 3)
-        profile.duplicate_rate = round(random.uniform(0.0, 0.05), 3)
-        profile.auto_insights = [
-            "Column 'event_date' has no nulls — suitable as partition key.",
-            "Column 'user_id' has 98% distinct values — likely a primary key candidate.",
-            f"~{profile.row_count:,} rows sampled (APPROX_DISTINCT applied).",
-        ]
-        profile.sample_data = [
-            {"id": i, "user_id": f"u-{random.randint(1000,9999)}", "value": round(random.uniform(0, 100), 2)}
-            for i in range(1, 6)
-        ]
+        profile.status = ProfilingStatus.completed if result.success else ProfilingStatus.failed
+        profile.version = result.version
+        profile.row_count = result.row_count
+        profile.sample_size = result.sample_size
+        profile.column_count = result.column_count
+        profile.null_rate_avg = result.null_rate_avg
+        profile.auto_insights = result.auto_insights
+        profile.sample_data = result.sample_data
+        profile.profile_json = result.profile_json
         profile.cached_until = datetime.utcnow() + timedelta(hours=24)
         profile.updated_at = datetime.utcnow()
         session.add(profile)
 
-        # Stub column profiles
-        col_names = [f"col_{i}" for i in range(1, (profile.column_count or 5) + 1)]
-        type_pool = ["VARCHAR", "BIGINT", "DOUBLE", "DATE", "BOOLEAN", "TIMESTAMP"]
-        for col in col_names:
+        # Persist column profiles
+        for cs in result.column_stats:
             cp = ColumnProfile(
                 table_id=table_id,
                 profile_id=profile_id,
-                column_name=col,
-                data_type=random.choice(type_pool),
-                null_count=random.randint(0, 5000),
-                null_rate=round(random.uniform(0.0, 0.3), 3),
-                distinct_count=random.randint(2, 100_000),
-                min_value=str(random.randint(0, 100)),
-                max_value=str(random.randint(100, 10_000)),
-                avg_value=round(random.uniform(0, 1000), 2),
-                top_values=[
-                    {"value": f"val_{j}", "count": random.randint(100, 50_000)}
-                    for j in range(1, 6)
-                ],
-                is_geo=col in ["lat", "lon", "geometry", "location"],
-                is_time=col in ["event_date", "created_at", "timestamp"],
+                column_name=cs.column_name,
+                data_type=cs.data_type,
+                null_count=cs.null_count,
+                null_rate=cs.null_rate,
+                distinct_count=cs.distinct_count,
+                min_value=cs.min_value,
+                max_value=cs.max_value,
+                avg_value=cs.avg_value,
+                median_value=cs.median_value,
+                top_values=cs.top_values,
+                is_categorical=cs.is_categorical,
+                is_geo=cs.is_geo,
+                is_time=cs.is_time,
+                semantic_type=cs.semantic_type,
+                stats_json=cs.stats_json,
             )
             session.add(cp)
 
         session.commit()
+        logger.info(
+            f"[Profiling] Persisted profile {profile_id} for table {table_id} "
+            f"(v{result.version}, {len(result.column_stats)} columns)"
+        )
 
 
-# ── GET latest profile ─────────────────────────────────────────────────────────
+# ── GET /tables/{id}/profile ───────────────────────────────────────────────────
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)
 def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
@@ -90,43 +135,51 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     ).first()
 
     if not profile:
-        raise HTTPException(status_code=404, detail="No profile found. Run a profiling job first.")
+        raise HTTPException(status_code=404, detail="No profile found. Run POST /profile/run first.")
     return profile
 
 
-# ── POST trigger new profiling run ────────────────────────────────────────────
+# ── POST /tables/{id}/profile/run ─────────────────────────────────────────────
 @router.post("/tables/{table_id}/profile/run", response_model=TableProfileRead, status_code=202)
 def run_table_profile(
     table_id: str,
     background_tasks: BackgroundTasks,
+    force: bool = False,
     session: Session = Depends(get_session),
 ):
+    """
+    Trigger a new profiling run against Trino.
+    Returns immediately (202) while profiling runs in the background.
+    Respects a 24h cache unless force=True.
+    """
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    # Check if a cached profile is still valid
-    existing = session.exec(
-        select(TableProfile)
-        .where(TableProfile.table_id == table_id)
-        .order_by(TableProfile.created_at.desc())
-    ).first()
-    if existing and existing.cached_until and existing.cached_until > datetime.utcnow():
-        return existing  # serve from cache
+    # Serve from cache unless force re-run requested
+    if not force:
+        existing = session.exec(
+            select(TableProfile)
+            .where(TableProfile.table_id == table_id)
+            .order_by(TableProfile.created_at.desc())
+        ).first()
+        if existing and existing.cached_until and existing.cached_until > datetime.utcnow():
+            logger.info(f"[Profiling] Serving cached profile for {table_id}")
+            return existing
 
-    profile = TableProfile(table_id=table_id, status=ProfilingStatus.running)
+    profile = TableProfile(table_id=table_id, status=ProfilingStatus.running, version=1)
     session.add(profile)
     session.commit()
     session.refresh(profile)
 
     background_tasks.add_task(_run_profile_job, table_id, profile.id)
+    logger.info(f"[Profiling] Queued profiling job: table={table_id}, profile={profile.id}")
     return profile
 
 
-# ── GET column profiles for a table ──────────────────────────────────────────
+# ── GET /tables/{id}/profile/columns ──────────────────────────────────────────
 @router.get("/tables/{table_id}/profile/columns", response_model=list[ColumnProfileRead])
 def get_column_profiles(table_id: str, session: Session = Depends(get_session)):
-    # Get latest completed profile
     profile = session.exec(
         select(TableProfile)
         .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
@@ -139,7 +192,7 @@ def get_column_profiles(table_id: str, session: Session = Depends(get_session)):
     ).all()
 
 
-# ── GET column-level profile ──────────────────────────────────────────────────
+# ── GET /tables/{id}/columns/{col}/profile ────────────────────────────────────
 @router.get("/tables/{table_id}/columns/{column}/profile", response_model=ColumnProfileRead)
 def get_single_column_profile(table_id: str, column: str, session: Session = Depends(get_session)):
     profile = session.exec(
@@ -154,24 +207,60 @@ def get_single_column_profile(table_id: str, column: str, session: Session = Dep
         .where(ColumnProfile.profile_id == profile.id, ColumnProfile.column_name == column)
     ).first()
     if not cp:
-        raise HTTPException(status_code=404, detail="Column profile not found")
+        raise HTTPException(status_code=404, detail=f"Column '{column}' not profiled")
     return cp
 
 
-# ── POST cross-table analysis ─────────────────────────────────────────────────
+# ── GET /tables/{id}/profile/context (LLM context injection) ──────────────────
+@router.get("/tables/{table_id}/profile/context")
+def get_profile_context(table_id: str, session: Session = Depends(get_session)) -> Dict[str, Any]:
+    """
+    Returns a compact, LLM-ready context blob built from the latest
+    completed profile. Used by the TextToSQL context builder for
+    system-prompt injection, enrichment suggestions, and join suggestions.
+    """
+    from app.services.profiling_engine import build_context_for_llm
+
+    table = session.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    profile = session.exec(
+        select(TableProfile)
+        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .order_by(TableProfile.created_at.desc())
+    ).first()
+    if not profile:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed profile. Run POST /tables/{id}/profile/run first.",
+        )
+
+    col_profiles = session.exec(
+        select(ColumnProfile).where(ColumnProfile.profile_id == profile.id)
+    ).all()
+
+    context = build_context_for_llm(
+        table_name=f"{table.schema_name}.{table.name}",
+        profile_json=profile.profile_json or {},
+        column_profiles=col_profiles,
+    )
+    context["profile_id"] = profile.id
+    context["profile_version"] = profile.version
+    context["computed_at"] = profile.created_at.isoformat()
+    return context
+
+
+# ── POST /tables/{id}/cross-profile ───────────────────────────────────────────
 @router.post("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead], status_code=201)
 def cross_profile(table_id: str, session: Session = Depends(get_session)):
-    """
-    Stub: in production this calls the metadata discovery service to find join candidates.
-    Returns existing cross-profiles for this table (or empty list).
-    """
-    results = session.exec(
+    """Returns existing cross-table join suggestions for this table."""
+    return session.exec(
         select(CrossTableProfile).where(CrossTableProfile.source_table_id == table_id)
     ).all()
-    return results
 
 
-# ── GET cross-table profiles ──────────────────────────────────────────────────
+# ── GET /tables/{id}/cross-profile ────────────────────────────────────────────
 @router.get("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead])
 def get_cross_profiles(table_id: str, session: Session = Depends(get_session)):
     return session.exec(
