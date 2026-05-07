@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     TRINO_PORT: int = 8080
     TRINO_USER: str = "trino"
     TRINO_PASSWORD: str = ""
-    TRINO_CATALOG: str = "hive"
-    TRINO_SCHEMA: str = "default"
+    TRINO_CATALOG: str = "tpch"
+    TRINO_SCHEMA: str = "tiny"
     TRINO_HTTP_SCHEME: str = "http"
     TRINO_REQUEST_TIMEOUT: float = 30.0
     TRINO_ENABLED: bool = True  # Set False to disable real Trino calls

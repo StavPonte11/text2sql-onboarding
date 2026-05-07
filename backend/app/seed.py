@@ -22,9 +22,9 @@ def seed():
         session.add_all([scope1, scope2])
 
         # 2. Tables
-        t1 = Table(name="orders", schema_name="public", status=TableStatus.production, owner_id="user-1")
-        t2 = Table(name="customers", schema_name="public", status=TableStatus.sandbox, owner_id="user-1")
-        t3 = Table(name="marketing_campaigns", schema_name="public", status=TableStatus.draft, owner_id="user-2")
+        t1 = Table(name="orders", schema_name="tiny", status=TableStatus.production, owner_id="user-1")
+        t2 = Table(name="customer", schema_name="tiny", status=TableStatus.production, owner_id="user-1")
+        t3 = Table(name="lineitem", schema_name="tiny", status=TableStatus.sandbox, owner_id="user-2")
         session.add_all([t1, t2, t3])
         session.flush()
 
@@ -33,12 +33,12 @@ def seed():
             table_id=t1.id,
             version=1,
             data={
-                "table_description": "Contains all finalized e-commerce orders. Updated in real-time.",
+                "table_description": "Contains all finalized e-commerce orders from the TPC-H dataset.",
                 "columns": [
-                    {"name": "id", "description": "Primary key for the order. Unique identifier.", "is_geo": False, "is_time": False},
-                    {"name": "customer_id", "description": "Foreign key to the customers table.", "is_geo": False, "is_time": False},
-                    {"name": "amount", "description": "Total order amount in USD.", "is_geo": False, "is_time": False},
-                    {"name": "created_at", "description": "Timestamp when the order was placed.", "is_geo": False, "is_time": True}
+                    {"name": "orderkey", "description": "Primary key for the order. Unique identifier.", "is_geo": False, "is_time": False},
+                    {"name": "custkey", "description": "Foreign key to the customers table.", "is_geo": False, "is_time": False},
+                    {"name": "totalprice", "description": "Total order amount.", "is_geo": False, "is_time": False},
+                    {"name": "orderdate", "description": "Timestamp when the order was placed.", "is_geo": False, "is_time": True}
                 ]
             }
         )

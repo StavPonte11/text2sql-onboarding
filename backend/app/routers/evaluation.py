@@ -12,6 +12,7 @@ Pipeline per question:
 All heavy work runs in FastAPI BackgroundTasks (async from the HTTP perspective).
 In production, migrate this to a Celery/Temporal worker.
 """
+
 import uuid
 import time
 import random
@@ -19,18 +20,26 @@ import json
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlmodel import Session, select
+from sqlmodel import Session, select, desc
 from app.db.engine import get_session, engine
 from app.models.models import (
-    Table, GoldenQuestion,
-    EvalRun, EvalRunRead, EvalStatus,
-    EvalResult, EvalResultRead,
+    Table,
+    GoldenQuestion,
+    EvalRun,
+    EvalRunRead,
+    EvalStatus,
+    EvalResult,
+    EvalResultRead,
     AuditQuery,
 )
 from app.services.scoring import (
-    JudgeOutput, ExecutionResult, ExpectedShape,
-    compute_score, compute_dataset_score,
-    PASS_THRESHOLD, PARTIAL_THRESHOLD,
+    JudgeOutput,
+    ExecutionResult,
+    ExpectedShape,
+    compute_score,
+    compute_dataset_score,
+    PASS_THRESHOLD,
+    PARTIAL_THRESHOLD,
 )
 
 router = APIRouter(tags=["evaluation"])
@@ -38,6 +47,7 @@ router = APIRouter(tags=["evaluation"])
 
 # ─── Stubbed external service calls ───────────────────────────────────────────
 # Replace each stub with a real HTTP call to your LangGraph/Trino/LLM service.
+
 
 def call_agent(question: str, table_id: str) -> dict:
     """
@@ -56,7 +66,7 @@ def call_agent(question: str, table_id: str) -> dict:
     }
     """
     # Simulates a realistic agent call with variable quality
-    success = random.random() > 0.1          # 90% execution success rate
+    success = random.random() > 0.1  # 90% execution success rate
     row_count = random.randint(0, 5000) if success else 0
     iterations = random.choices([0, 1, 2, 3], weights=[60, 25, 10, 5])[0]
 
@@ -93,11 +103,15 @@ def call_llm_judge(
     base = random.uniform(0.55, 0.95) if exec_success else random.uniform(0.0, 0.35)
 
     return {
-        "table_selection_correctness": round(min(1.0, base + random.uniform(-0.1, 0.1)), 3),
-        "sql_semantic_equivalence":    round(min(1.0, base + random.uniform(-0.15, 0.1)), 3),
-        "result_correctness":          round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
-        "hallucination_detected":      random.random() < 0.05,  # 5% hallucination rate
-        "failure_type":                None,
+        "table_selection_correctness": round(
+            min(1.0, base + random.uniform(-0.1, 0.1)), 3
+        ),
+        "sql_semantic_equivalence": round(
+            min(1.0, base + random.uniform(-0.15, 0.1)), 3
+        ),
+        "result_correctness": round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
+        "hallucination_detected": random.random() < 0.05,  # 5% hallucination rate
+        "failure_type": None,
         "reasoning": {
             "table_selection": "Stub reasoning",
             "sql_equivalence": "Stub reasoning",
@@ -119,10 +133,13 @@ def emit_langfuse_trace(
     STUB — replace with real langfuse.score() call.
     In production: emit trace, link to dataset run, log all dimension scores.
     """
-    print(f"[Langfuse STUB] trace={trace_id} run={eval_run_id} q={question_id} score={score:.3f} failure={failure_type}")
+    print(
+        f"[Langfuse STUB] trace={trace_id} run={eval_run_id} q={question_id} score={score:.3f} failure={failure_type}"
+    )
 
 
 # ─── Core evaluation pipeline ──────────────────────────────────────────────────
+
 
 def _run_evaluation_pipeline(table_id: str, run_id: str):
     """
@@ -175,7 +192,11 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
             expected_shape = ExpectedShape(
                 row_count_min=0,
                 row_count_max=999_999,
-                expected_columns=["id", "name", "value"],  # TODO: store in dataset_questions
+                expected_columns=[
+                    "id",
+                    "name",
+                    "value",
+                ],  # TODO: store in dataset_questions
             )
 
             # 2. Call LLM judge
@@ -202,11 +223,15 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
                 expected_shape=expected_shape,
                 judge=judge,
                 tables_used=agent_result["tables_used"],
-                expected_tables=[],   # TODO: derive from expected_sql
+                expected_tables=[],  # TODO: derive from expected_sql
                 generated_columns=agent_result["generated_columns"],
                 schema_columns=["id", "name", "value"],  # TODO: inject from enrichment
                 refiner_iterations=agent_result["refiner_iterations"],
-                question_type=q.question_type.value if hasattr(q.question_type, 'value') else str(q.question_type),
+                question_type=(
+                    q.question_type.value
+                    if hasattr(q.question_type, "value")
+                    else str(q.question_type)
+                ),
             )
 
             # 4. Persist EvalResult with full breakdown
@@ -221,7 +246,9 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
 
             # 5. Langfuse trace (stub)
             trace_id = str(uuid.uuid4())
-            emit_langfuse_trace(trace_id, run_id, q.id, breakdown.final_score, breakdown.failure_type)
+            emit_langfuse_trace(
+                trace_id, run_id, q.id, breakdown.final_score, breakdown.failure_type
+            )
 
             # Accumulate
             question_scores.append((breakdown.final_score, str(q.question_type)))
@@ -239,6 +266,7 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
+
 @router.post("/tables/{table_id}/eval/run", response_model=EvalRunRead, status_code=202)
 def trigger_eval(
     table_id: str,
@@ -255,7 +283,7 @@ def trigger_eval(
     if not questions:
         raise HTTPException(
             status_code=422,
-            detail="Table has no golden questions. Add at least 1 question before running an evaluation."
+            detail="Table has no golden questions. Add at least 1 question before running an evaluation.",
         )
 
     run = EvalRun(table_id=table_id, status=EvalStatus.running)
@@ -272,14 +300,14 @@ def list_runs(table_id: str, session: Session = Depends(get_session)):
     return session.exec(
         select(EvalRun)
         .where(EvalRun.table_id == table_id)
-        .order_by(EvalRun.created_at.desc())
+        .order_by(desc(EvalRun.created_at))
     ).all()
 
 
 @router.get("/eval/runs/all", response_model=list[EvalRunRead])
 def get_all_eval_runs(session: Session = Depends(get_session)):
     return session.exec(
-        select(EvalRun).order_by(EvalRun.created_at.desc()).limit(100)
+        select(EvalRun).order_by(desc(EvalRun.created_at)).limit(100)
     ).all()
 
 
@@ -293,9 +321,7 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
 
 @router.get("/eval/{run_id}/results", response_model=list[EvalResultRead])
 def get_results(run_id: str, session: Session = Depends(get_session)):
-    return session.exec(
-        select(EvalResult).where(EvalResult.run_id == run_id)
-    ).all()
+    return session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
 
 
 @router.get("/eval/{run_id}/report")
@@ -305,9 +331,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
 
-    results = session.exec(
-        select(EvalResult).where(EvalResult.run_id == run_id)
-    ).all()
+    results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
 
     total = len(results)
     passes = sum(1 for r in results if r.status == "pass")

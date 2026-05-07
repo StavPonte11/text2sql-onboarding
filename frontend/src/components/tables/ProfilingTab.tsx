@@ -203,7 +203,7 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
           <div className="empty-state">
             <BarChart2 size={36} className="empty-state__icon" />
             <div className="empty-state__text">No profile yet</div>
-            <div className="empty-state__sub">Click "Run Profiling" to analyze this table with Trino sampling queries.</div>
+            <div className="empty-state__sub">Click "Run Profiling" to analyze this table with full Trino queries.</div>
           </div>
         </div>
       )}
@@ -211,7 +211,7 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
       {isRunning && (
         <div className="card" style={{ textAlign: "center", padding: 40 }}>
           <div className="spinner" style={{ margin: "0 auto 12px" }} />
-          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Profiling in progress — running APPROX queries via Trino…</div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Profiling in progress — running full analytics queries via Trino…</div>
         </div>
       )}
 

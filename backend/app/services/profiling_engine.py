@@ -1,12 +1,12 @@
 """
 profiling_engine.py — Real Trino-backed data profiling engine.
 
-Runs sampling + approx queries against Trino, computes column statistics,
+Runs full scan queries against Trino, computes column statistics,
 detects categorical vs continuous columns, and produces structured output
 ready for PostgreSQL persistence and LLM context injection.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -82,8 +82,8 @@ def build_row_count_query(fqn: str) -> str:
     return f"SELECT COUNT(*) FROM {fqn}"
 
 
-def build_sample_query(fqn: str, pct: int = SAMPLE_PERCENT, limit: int = SAMPLE_LIMIT) -> str:
-    return f"SELECT * FROM {fqn} TABLESAMPLE BERNOULLI ({pct}) LIMIT {limit}"
+def build_sample_query(fqn: str, limit: int = SAMPLE_LIMIT) -> str:
+    return f"SELECT * FROM {fqn} LIMIT {limit}"
 
 
 def build_column_metadata_query(catalog: str, schema: str, table: str) -> str:
@@ -96,7 +96,7 @@ def build_column_metadata_query(catalog: str, schema: str, table: str) -> str:
 
 
 def build_distinct_count_query(fqn: str, col: str) -> str:
-    return f'SELECT approx_distinct("{col}") FROM {fqn}'
+    return f'SELECT COUNT(DISTINCT "{col}") FROM {fqn}'
 
 
 def build_null_ratio_query(fqn: str, col: str) -> str:
@@ -134,7 +134,7 @@ def _safe_float(val) -> Optional[float]:
 
 
 def _detect_semantic_type(
-    col_name: str, data_type: str, is_categorical: bool, is_geo: bool, is_time: bool
+    is_categorical: bool, is_geo: bool, is_time: bool
 ) -> str:
     if is_geo:
         return "geo"
@@ -156,7 +156,7 @@ def _analyze_column(
     stats.is_geo = col_lower in GEO_HINTS or "geo" in col_lower or "coord" in col_lower
     stats.is_time = dtype_lower in TIME_TYPES or any(h in col_lower for h in TIME_HINTS)
 
-    # 1. Approx distinct count
+    # 1. Exact distinct count
     r = execute_query_sync(build_distinct_count_query(fqn, col_name), table_id)
     if r.success and r.rows:
         stats.distinct_count = int(r.rows[0][0] or 0)
@@ -202,7 +202,7 @@ def _analyze_column(
 
     # 5. Semantic type
     stats.semantic_type = _detect_semantic_type(
-        col_name, data_type, stats.is_categorical, stats.is_geo, stats.is_time
+        stats.is_categorical, stats.is_geo, stats.is_time
     )
 
     # 6. stats_json blob (stored in column_profiles.stats_json)
@@ -238,7 +238,7 @@ def run_table_profiling(
     version: int = 1,
 ) -> TableProfilingResult:
     """
-    Full profiling pipeline for a single table. Uses sampling + approx functions.
+    Full profiling pipeline for a single table. Uses exact aggregate functions.
     Never does full column scans for numeric stats.
     """
     fqn = _fqn(catalog, schema, table)
@@ -249,7 +249,7 @@ def run_table_profiling(
         version=version,
         computed_at=computed_at,
     )
-    logger.info(f"[ProfilingEngine] Starting: {fqn} (v{version})")
+    logger.info("[ProfilingEngine] Starting: %s (v%s)", fqn, version)
 
     # Step 1: Row count
     r = execute_query_sync(build_row_count_query(fqn), table_id)
@@ -264,7 +264,10 @@ def run_table_profiling(
     if r.success and r.rows:
         result.sample_size = len(r.rows)
         sample_cols = r.columns
-        result.sample_data = [dict(zip(sample_cols, row)) for row in r.rows[:5]]
+        result.sample_data = [
+            {k: (str(v) if isinstance(v, (datetime, date)) else v) for k, v in zip(sample_cols, row)}
+            for row in r.rows[:50]
+        ]
     else:
         result.errors.append(f"sample: {r.error_message}")
 
@@ -284,12 +287,12 @@ def run_table_profiling(
     # Step 4: Per-column analysis
     col_stats: List[ColumnStats] = []
     for col_name, data_type in columns_meta:
-        logger.info(f"[ProfilingEngine]   → {col_name} ({data_type})")
+        logger.info("[ProfilingEngine]   → %s (%s)", col_name, data_type)
         try:
             cs = _analyze_column(fqn, table_id, col_name, data_type, result.row_count)
             col_stats.append(cs)
         except Exception as exc:
-            logger.error(f"[ProfilingEngine] Column {col_name} failed: {exc}")
+            logger.error("[ProfilingEngine] Column %s failed: %s", col_name, exc)
             col_stats.append(ColumnStats(column_name=col_name, data_type=data_type, errors=[str(exc)]))
     result.column_stats = col_stats
 
@@ -302,7 +305,7 @@ def run_table_profiling(
     if result.row_count:
         insights.append(f"~{result.row_count:,} rows (COUNT(*)).")
     if result.sample_size:
-        insights.append(f"{result.sample_size:,} rows sampled via TABLESAMPLE BERNOULLI(10).")
+        insights.append(f"{result.sample_size:,} rows sampled via LIMIT {SAMPLE_LIMIT}.")
     cat_cols = [c for c in col_stats if c.is_categorical]
     if cat_cols:
         insights.append(f"{len(cat_cols)} categorical column(s): {', '.join(c.column_name for c in cat_cols[:5])}.")
@@ -348,8 +351,8 @@ def run_table_profiling(
 
     result.success = result.row_count > 0 or not result.errors
     logger.info(
-        f"[ProfilingEngine] Done: {fqn} — {len(col_stats)} cols, {result.row_count:,} rows, "
-        f"{len(result.errors)} error(s)"
+        "[ProfilingEngine] Done: %s — %d cols, %s rows, %d error(s)",
+        fqn, len(col_stats), format(result.row_count, ","), len(result.errors)
     )
     return result
 

@@ -18,3 +18,14 @@ Here is the projected deployment scope for following iterations regarding struct
 - **Workflow**:
   - Connect prompts directly using Langfuse APIs.
   - Evaluate accuracy thresholds comprehensively over targeted queries.
+
+### 1. Stability & Scaling
+- **[MANDATORY] Alembic Migration**: Replace `migrate.py` with standard Alembic migrations for production schema management.
+- **[INFRA] Docker Integration**: Add Trino (Coordinator/Worker) and Minio (S3 storage) to the Docker Compose stack.
+
+### 2. Data Seeding
+- **Real Data Injection**: Update seeding scripts to populate Minio/Trino with TPC-H or real production-representative datasets for testing the profiling engine.
+
+### 3. Verification & Testing
+- **E2E Validation**: Verify the full chain: Trino Data -> Profiling Engine -> Postgres Store -> LLM Context.
+- **Join Detection**: Implement cross-table relationship discovery based on profiling statistics.

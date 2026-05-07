@@ -51,17 +51,24 @@ def _run_profile_job(table_id: str, profile_id: str):
         profile.version = version
         session.add(profile)
         session.commit()
+        
+        # Extract variables before session closes
+        schema_name = table.schema_name
+        table_name = table.name
 
     # Run engine OUTSIDE the session to avoid long-held DB connections
     try:
         result = run_table_profiling(
             table_id=table_id,
             catalog=settings.TRINO_CATALOG,
-            schema=table.schema_name,
-            table=table.name,
+            schema=schema_name,
+            table=table_name,
             version=version,
         )
     except Exception as exc:
+        import traceback
+        with open("error.log", "w") as f:
+            f.write(traceback.format_exc())
         logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
         with Session(engine) as session:
             profile = session.get(TableProfile, profile_id)
@@ -254,10 +261,9 @@ def get_profile_context(table_id: str, session: Session = Depends(get_session)) 
 # ── POST /tables/{id}/cross-profile ───────────────────────────────────────────
 @router.post("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead], status_code=201)
 def cross_profile(table_id: str, session: Session = Depends(get_session)):
-    """Returns existing cross-table join suggestions for this table."""
-    return session.exec(
-        select(CrossTableProfile).where(CrossTableProfile.source_table_id == table_id)
-    ).all()
+    """Discover cross-table join suggestions based on profiling statistics."""
+    from app.services.join_detection import discover_joins_for_table
+    return discover_joins_for_table(table_id)
 
 
 # ── GET /tables/{id}/cross-profile ────────────────────────────────────────────
@@ -266,3 +272,22 @@ def get_cross_profiles(table_id: str, session: Session = Depends(get_session)):
     return session.exec(
         select(CrossTableProfile).where(CrossTableProfile.source_table_id == table_id)
     ).all()
+
+@router.post("/tables/{table_id}/profile/debug")
+def debug_run_profile(table_id: str, session: Session = Depends(get_session)):
+    from app.config import settings
+    from app.services.profiling_engine import run_table_profiling
+    import traceback
+
+    table = session.get(Table, table_id)
+    try:
+        result = run_table_profiling(
+            table_id=table_id,
+            catalog=settings.TRINO_CATALOG,
+            schema=table.schema_name,
+            table=table.name,
+            version=1,
+        )
+        return {"success": True}
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "traceback": traceback.format_exc()}

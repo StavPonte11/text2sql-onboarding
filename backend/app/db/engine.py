@@ -6,7 +6,15 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args=connect_a
 
 
 def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
+    """Run Alembic migrations to update the database schema."""
+    from alembic.config import Config
+    from alembic import command
+    import os
+
+    # Path to alembic.ini
+    alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "../../alembic.ini"))
+    # Run the migrations
+    command.upgrade(alembic_cfg, "head")
 
 
 def get_session():
