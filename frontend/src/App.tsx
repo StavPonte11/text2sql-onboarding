@@ -57,7 +57,8 @@ function AppLayout() {
           <Route path="/evaluations" element={<EvaluationsPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/tables" element={<TableList />} />
-          <Route path="/tables/:id" element={<TableDetails />} />
+          <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
+          <Route path="/tables/:id/:tab" element={<TableDetails />} />
           <Route path="/wizard" element={<OnboardingWizard />} />
           <Route path="/sandbox" element={<SandboxPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />

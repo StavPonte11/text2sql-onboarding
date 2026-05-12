@@ -80,7 +80,8 @@ def run_text2sql_agent(question: str, table_id: str) -> dict:
 
 
 def _stub_judge(exec_success: bool) -> dict:
-    base = random.uniform(0.55, 0.95) if exec_success else random.uniform(0.0, 0.35)
+    # INCREASED BASE SCORE: 0.70 to 0.95 for success, 0.2 to 0.45 for fail
+    base = random.uniform(0.70, 0.95) if exec_success else random.uniform(0.20, 0.45)
     failure_types = [None, None, None, "wrong_table", "wrong_join", "wrong_filter"]
     return {
         "table_selection_correctness": round(min(1.0, base + random.uniform(-0.1, 0.1)), 3),
@@ -332,12 +333,19 @@ def list_runs(
     table_id: Optional[str] = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    query = select(EvalRun).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
+    query = select(EvalRun, Table.name).join(Table, EvalRun.table_id == Table.id).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
     if status:
         query = query.where(EvalRun.status == status)
     if table_id:
         query = query.where(EvalRun.table_id == table_id)
-    return session.exec(query).all()
+        
+    results = session.exec(query).all()
+    runs = []
+    for run, table_name in results:
+        read = EvalRunRead.model_validate(run)
+        read.table_name = table_name
+        runs.append(read)
+    return runs
 
 
 @router.get("/runs/{run_id}", response_model=EvalRunRead)
@@ -446,9 +454,12 @@ def get_trends(
     # Group by day for sparkline data
     points = []
     for r in runs:
+        # Get table name for each run (could be optimized with a join above)
+        table = session.get(Table, r.table_id)
         points.append({
             "run_id": r.id,
             "table_id": r.table_id,
+            "table_name": table.name if table else r.table_id,
             "date": r.created_at.strftime("%Y-%m-%d"),
             "timestamp": r.created_at.isoformat(),
             "score": round(r.score, 3),

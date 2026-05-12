@@ -55,9 +55,9 @@ export function EvaluationTab({ tableId }: Props) {
         <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 20 }}>
           <ScoreRing score={triggerMutation.data.score} />
           <div>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>Latest Run</div>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>Latest Run: {triggerMutation.data.table_name || tableId.slice(0,8)}</div>
             <div style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
-              ID: {triggerMutation.data.id} · Status: {triggerMutation.data.status}
+              Run ID: {triggerMutation.data.id.slice(0,8)}… · Status: {triggerMutation.data.status}
             </div>
           </div>
         </div>
@@ -79,13 +79,14 @@ export function EvaluationTab({ tableId }: Props) {
                 <th>Run ID</th>
                 <th>{t("evaluations.score")}</th>
                 <th>{t("evaluations.status")}</th>
+                <th>Type</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
               {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])].map((run) => (
                 <tr key={run.id}>
-                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id}</code></td>
+                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id.slice(0,8)}…</code></td>
                   <td><ScoreRing score={run.score} /></td>
                   <td>
                     <span style={{
@@ -97,8 +98,13 @@ export function EvaluationTab({ tableId }: Props) {
                       {run.status}
                     </span>
                   </td>
+                  <td>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
+                      {run.triggered_by}
+                    </span>
+                  </td>
                   <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    {dayjs(run.created_at).format("MMM D, YYYY HH:mm")}
+                    {dayjs(run.created_at).format("MMM D, HH:mm")}
                   </td>
                 </tr>
               ))}

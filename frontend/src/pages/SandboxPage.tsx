@@ -48,7 +48,7 @@ export function SandboxPage() {
             <thead>
               <tr>
                 <th>Run ID</th>
-                <th>Table ID</th>
+                <th>Table</th>
                 <th>Score</th>
                 <th>Status</th>
                 <th>Created</th>
@@ -57,10 +57,10 @@ export function SandboxPage() {
             <tbody>
               {runs.map((run) => (
                 <tr key={run.id}>
-                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id}</code></td>
+                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id.slice(0,8)}…</code></td>
                   <td>
-                    <Link to={`/tables/${run.table_id}`} style={{ fontSize: 12, color: "var(--accent-hover)", textDecoration: "none" }}>
-                      {run.table_id}
+                    <Link to={`/tables/${run.table_id}/overview`} style={{ fontSize: 12, color: "var(--accent-hover)", fontWeight: 600, textDecoration: "none" }}>
+                      {run.table_name || run.table_id.slice(0, 8)}
                     </Link>
                   </td>
                   <td><ScoreRing score={run.score} /></td>

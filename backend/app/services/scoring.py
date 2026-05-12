@@ -225,6 +225,9 @@ def classify_failure(
 
 # ─── Main Scoring Function ─────────────────────────────────────────────────────
 
+from langfuse.decorators import observe
+
+@observe()
 def compute_score(
     execution: ExecutionResult,
     expected_shape: ExpectedShape,
@@ -301,6 +304,7 @@ def compute_score(
 
 # ─── Dataset Aggregation ───────────────────────────────────────────────────────
 
+@observe()
 def compute_dataset_score(question_scores: list[tuple[float, str]]) -> dict:
     """
     Args:

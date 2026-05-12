@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from typing import Optional, List
+
 from sqlmodel import Session, select
 from datetime import datetime
 from app.db.engine import get_session
@@ -10,12 +12,12 @@ from app.models.models import (
 router = APIRouter(prefix="/tables", tags=["tables"])
 
 
-@router.get("", response_model=list[TableRead])
+@router.get("", response_model=List[TableRead])
 def list_tables(
-    status: TableStatus | None = Query(default=None),
-    owner_id: str | None = Query(default=None),
-    search: str | None = Query(default=None),
-    x_scope_id: str | None = Header(default=None),
+    status: Optional[TableStatus] = Query(default=None),
+    owner_id: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    x_scope_id: Optional[str] = Header(default=None),
     session: Session = Depends(get_session),
 ):
     q = select(Table)
@@ -49,6 +51,22 @@ def get_table(table_id: str, session: Session = Depends(get_session)):
 @router.post("", response_model=TableRead, status_code=201)
 def create_table(payload: TableCreate, session: Session = Depends(get_session)):
     table = Table(**payload.model_dump())
+    session.add(table)
+    session.commit()
+    session.refresh(table)
+    return table
+@router.patch("/{table_id}/status", response_model=TableRead)
+def update_table_status(
+    table_id: str, 
+    status: TableStatus, 
+    session: Session = Depends(get_session)
+):
+    table = session.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+    
+    table.status = status
+    table.updated_at = datetime.utcnow()
     session.add(table)
     session.commit()
     session.refresh(table)

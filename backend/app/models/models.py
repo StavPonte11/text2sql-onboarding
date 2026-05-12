@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
+
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, JSON, text
 
@@ -53,14 +54,16 @@ class EnrichmentVersion(SQLModel, table=True):
 
 
 class EnrichmentCreate(SQLModel):
-    data: dict
+    data: Dict
+
 
 
 class EnrichmentRead(SQLModel):
     id: str
     table_id: str
     version: int
-    data: Optional[dict]
+    data: Optional[Dict]
+
     created_at: datetime
 
 
@@ -142,6 +145,7 @@ class EvalRun(SQLModel, table=True):
 class EvalRunRead(SQLModel):
     id: str
     table_id: str
+    table_name: Optional[str] = None
     dataset_id: Optional[str]
     score: float
     pass_rate: float
@@ -317,10 +321,12 @@ class AuditQuery(SQLModel, table=True):
     session_id: Optional[str] = None
     raw_question: str
     normalized_question: Optional[str] = None
-    tables_accessed: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
+    tables_accessed: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+
     final_sql: Optional[str] = None
     result_row_count: Optional[int] = None
-    result_columns: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
+    result_columns: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+
     execution_time_ms: Optional[int] = None
     refiner_iterations: Optional[int] = Field(default=0)
     status: str = Field(default="success")  # success/error/timeout
@@ -340,10 +346,12 @@ class AuditQueryRead(SQLModel):
     session_id: Optional[str]
     raw_question: str
     normalized_question: Optional[str]
-    tables_accessed: Optional[list[str]]
+    tables_accessed: Optional[List[str]]
+
     final_sql: Optional[str]
     result_row_count: Optional[int]
-    result_columns: Optional[list[str]]
+    result_columns: Optional[List[str]]
+
     execution_time_ms: Optional[int]
     refiner_iterations: Optional[int]
     status: str

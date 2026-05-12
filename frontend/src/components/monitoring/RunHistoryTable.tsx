@@ -226,8 +226,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                   </td>
                 )}
                 {!tableId && (
-                  <td style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
-                    {run.table_id.slice(0, 8)}…
+                  <td style={{ fontSize: 12.5, color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {run.table_name || run.table_id.slice(0, 8)}
                   </td>
                 )}
                 <td>
