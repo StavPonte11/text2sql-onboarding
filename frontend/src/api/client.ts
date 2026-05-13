@@ -29,6 +29,8 @@ export const tablesApi = {
   get: (id: string) => api.get<Table>(`/tables/${id}`).then((r) => r.data),
   create: (payload: TableCreate) =>
     api.post<Table>("/tables", payload).then((r) => r.data),
+  syncSchema: (id: string) =>
+    api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
 };
 
 // ── Enrichment ────────────────────────────────────────────────────────────────

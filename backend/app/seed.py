@@ -22,9 +22,9 @@ def seed():
         session.add_all([scope1, scope2])
 
         # 2. Tables
-        t1 = Table(name="orders", schema_name="tiny", status=TableStatus.production, owner_id="user-1")
-        t2 = Table(name="customer", schema_name="tiny", status=TableStatus.production, owner_id="user-1")
-        t3 = Table(name="lineitem", schema_name="tiny", status=TableStatus.sandbox, owner_id="user-2")
+        t1 = Table(name="orders", schema_name="tiny", status=TableStatus.production,oasis_source_id="1", owner_id="user-1")
+        t2 = Table(name="customer", schema_name="tiny", status=TableStatus.production,oasis_source_id="2", owner_id="user-1")
+        t3 = Table(name="lineitem", schema_name="tiny", status=TableStatus.sandbox, oasis_source_id="3", owner_id="user-2")
         session.add_all([t1, t2, t3])
         session.flush()
 

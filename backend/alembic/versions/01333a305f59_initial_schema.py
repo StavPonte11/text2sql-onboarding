@@ -40,7 +40,7 @@ def upgrade() -> None:
     sa.Column('schema_name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('status', sa.Enum('draft', 'sandbox', 'verified', 'production', 'degraded', name='tablestatus'), nullable=False),
     sa.Column('owner_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('oasis_source_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('oasis_source_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('openmetadata_json', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
