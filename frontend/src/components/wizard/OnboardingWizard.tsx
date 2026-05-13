@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CloudDownload, Check } from "lucide-react";
 import { App } from "antd";
 import { tablesApi, enrichmentApi, questionsApi } from "../../api/client";
-import type { TableCreate, EnrichmentData, GoldenQuestionCreate } from "../../types";
+import type { TableCreate, EnrichmentData, GoldenQuestionCreate, Table } from "../../types";
 
 const STEPS = ["select", "schema", "enrichment", "validate", "questions", "submit"] as const;
 type Step = (typeof STEPS)[number];
@@ -19,10 +19,11 @@ export function OnboardingWizard() {
   const [currentStep, setCurrentStep] = useState(0);
   const [done, setDone] = useState(false);
 
-  const [tableForm, setTableForm] = useState<TableCreate>({ name: "", schema_name: "public", owner_id: "user-1" });
+  const [tableForm, setTableForm] = useState<TableCreate>({ oasis_source_id: "" });
   const [enrichmentForm, setEnrichmentForm] = useState<EnrichmentData>({ table_description: "", columns: [] });
   const [questions, setQuestions] = useState<GoldenQuestionCreate[]>([]);
   const [createdTableId, setCreatedTableId] = useState<string | null>(null);
+  const [createdTable, setCreatedTable] = useState<Table | null>(null);
   const [isFetchingSchema, setIsFetchingSchema] = useState(false);
 
   const createTableMutation = useMutation({ mutationFn: tablesApi.create });
@@ -32,7 +33,7 @@ export function OnboardingWizard() {
   const step = STEPS[currentStep];
 
   const canNext = () => {
-    if (step === "select") return !!tableForm.name && !!tableForm.schema_name;
+    if (step === "select") return !!tableForm.oasis_source_id;
     if (step === "enrichment") return enrichmentForm.table_description.length >= 20;
     if (step === "validate") {
       return enrichmentForm.table_description.length >= 20 &&
@@ -53,7 +54,7 @@ export function OnboardingWizard() {
         ]
       }));
       setIsFetchingSchema(false);
-      message.success(`Fetched 3 columns for ${tableForm.name} from OpenMetadata`);
+      message.success(`Fetched 3 columns from OpenMetadata`);
     }, 1500);
   };
 
@@ -61,6 +62,7 @@ export function OnboardingWizard() {
     if (step === "select") {
       const t = await createTableMutation.mutateAsync(tableForm);
       setCreatedTableId(t.id);
+      setCreatedTable(t);
       // Ensure columns aren't overwritten if already fetched
       setEnrichmentForm((f) => ({ ...f, columns: f.columns.length ? f.columns : [] }));
     }
@@ -132,21 +134,10 @@ export function OnboardingWizard() {
           <div>
             <h3 style={{ fontWeight: 700, marginBottom: 16 }}>{t("wizard.steps.select")}</h3>
             <div className="form-group">
-              <label className="form-label">Table Name</label>
-              <input className="form-input" value={tableForm.name}
-                onChange={(e) => setTableForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. orders" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Schema</label>
-              <input className="form-input" value={tableForm.schema_name}
-                onChange={(e) => setTableForm((f) => ({ ...f, schema_name: e.target.value }))}
-                placeholder="e.g. public" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Owner ID</label>
-              <input className="form-input" value={tableForm.owner_id}
-                onChange={(e) => setTableForm((f) => ({ ...f, owner_id: e.target.value }))} />
+              <label className="form-label">Oasis Source ID</label>
+              <input className="form-input" value={tableForm.oasis_source_id}
+                onChange={(e) => setTableForm({ oasis_source_id: e.target.value })}
+                placeholder="e.g. some-uuid-or-fqn" />
             </div>
           </div>
         )}
@@ -161,8 +152,8 @@ export function OnboardingWizard() {
                 </button>
             </div>
             <div style={{ background: "var(--bg-base)", borderRadius: 8, padding: 16 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Table: <code>{tableForm.name}</code></div>
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Schema: <code>{tableForm.schema_name}</code></div>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Table: <code>{createdTable?.name || tableForm.oasis_source_id}</code></div>
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Schema: <code>{createdTable?.schema_name || ""}</code></div>
               
               {enrichmentForm.columns.length > 0 ? (
                   <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
@@ -250,7 +241,7 @@ export function OnboardingWizard() {
           <div style={{ textAlign: "center", padding: "24px 0" }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Ready to submit!</div>
             <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              Table <strong>{tableForm.name}</strong> with {enrichmentForm.columns.length} columns and {questions.length} golden questions.
+              Table <strong>{createdTable?.name || tableForm.oasis_source_id}</strong> with {enrichmentForm.columns.length} columns and {questions.length} golden questions.
             </div>
           </div>
         )}
