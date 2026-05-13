@@ -65,8 +65,21 @@ export interface GoldenQuestionCreate {
 export interface EvalRun {
   id: string;
   table_id: string;
+  table_name?: string;
   score: number;
+  pass_rate: number;
+  fail_rate: number;
+  total_questions: number;
+  duration_seconds?: number;
+  triggered_by: string;
   status: EvalStatus;
+  started_at: string;
+  completed_at?: string;
+  failure_breakdown?: Record<string, number>;
+  dimension_averages?: Record<string, number>;
+  regression_detected: boolean;
+  regression_delta?: number;
+  promotion_run_id?: string;
   created_at: string;
 }
 

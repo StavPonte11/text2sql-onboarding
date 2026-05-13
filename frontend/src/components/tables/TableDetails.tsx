@@ -72,11 +72,22 @@ export function TableDetails() {
     },
   });
 
-  const activePromotion = runs?.find(r => r.status === "running" && r.triggered_by === "promotion");
-  const activeRegressions = allRuns?.filter(r => r.status === "running" && r.triggered_by === "regression");
-  const isPromoting = !!activePromotion || (!!activeRegressions && activeRegressions.length > 0);
+  const latestPromotion = runs?.find(r => r.triggered_by === "promotion");
+  const activePromotion = latestPromotion?.status === "running" ? latestPromotion : undefined;
+
+  // Precise filter: only regression runs that were created by THIS promotion run
+  const currentBatchRegressions = latestPromotion
+    ? (allRuns?.filter(r => r.triggered_by === "regression" && r.promotion_run_id === latestPromotion.id) || [])
+    : [];
+
+  const activeRegressions = currentBatchRegressions.filter(r => r.status === "running");
   
-  const phase = activePromotion ? "Phase 1: Evaluating Target Table" : "Phase 2: Running Regression Suite";
+  // Keep banner visible while running, or up to 5 minutes after completion so users can review
+  const isRecentPromotion = latestPromotion && dayjs().diff(dayjs(latestPromotion.created_at), 'minute') < 5;
+  const isPromoting = !!activePromotion || activeRegressions.length > 0 || (isRecentPromotion && currentBatchRegressions.length > 0);
+  
+  const phase = activePromotion ? "Phase 1: Evaluating Target Table" : 
+                activeRegressions.length > 0 ? "Phase 2: Running Regression Suite" : "Promotion Complete";
 
   const tabs: Array<{ key: TabKey; label: string }> = [
     { key: "overview",     label: t("tabs.overview") },
@@ -146,9 +157,9 @@ export function TableDetails() {
             <div className="spinner-mini" style={{ width: 14, height: 14, border: "2px solid var(--accent)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
             <div style={{ display: "flex", flexDirection: "column" }}>
               <span style={{ fontWeight: 600 }}>{phase}...</span>
-              {!activePromotion && activeRegressions && (
+              {!activePromotion && currentBatchRegressions.length > 0 && (
                 <span style={{ fontSize: 11, opacity: 0.8 }}>
-                  {activeRegressions.filter(r => r.status === "completed").length} / {activeRegressions.length} Production Tables Validated
+                  {currentBatchRegressions.filter(r => r.status === "completed" || r.status === "failed").length} / {currentBatchRegressions.length} Production Tables Validated
                 </span>
               )}
             </div>
@@ -296,7 +307,7 @@ export function TableDetails() {
                   </tr>
                 </thead>
                 <tbody>
-                  {allRuns?.filter(r => r.triggered_by === "regression").slice(0, 10).map(run => (
+                  {currentBatchRegressions.map(run => (
                     <tr key={run.id}>
                       <td style={{ fontWeight: 600, fontSize: 13 }}>{run.table_name || run.table_id.slice(0,8)}</td>
                       <td>

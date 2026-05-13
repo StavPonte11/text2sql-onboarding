@@ -39,6 +39,7 @@ def create_question(
     # Sync to Langfuse Dataset (uses shared singleton client)
     langfuse_client.sync_question_to_dataset(
         table_id=table_id,
+        schema_name=table.schema_name,
         question_id=q.id,
         question_text=q.question,
         expected_sql=q.expected_sql,

@@ -139,6 +139,7 @@ class EvalRun(SQLModel, table=True):
     dimension_averages: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     regression_detected: bool = Field(default=False)
     regression_delta: Optional[float] = None
+    promotion_run_id: Optional[str] = Field(default=None, index=True)  # set on regression runs
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -160,6 +161,7 @@ class EvalRunRead(SQLModel):
     dimension_averages: Optional[dict]
     regression_detected: bool
     regression_delta: Optional[float]
+    promotion_run_id: Optional[str] = None
     created_at: datetime
 
 

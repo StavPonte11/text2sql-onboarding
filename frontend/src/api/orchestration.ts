@@ -17,6 +17,7 @@ api.interceptors.request.use((config) => {
 export interface EvalRunFull {
   id: string;
   table_id: string;
+  table_name?: string;
   dataset_id: string | null;
   score: number;
   pass_rate: number;
@@ -31,6 +32,7 @@ export interface EvalRunFull {
   dimension_averages: Record<string, number> | null;
   regression_detected: boolean;
   regression_delta: number | null;
+  promotion_run_id: string | null;
   created_at: string;
 }
 

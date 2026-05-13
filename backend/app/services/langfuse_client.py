@@ -49,6 +49,57 @@ class Langfuse:
             raise RuntimeError("Langfuse is not enabled or client not initialized.")
         return self.client.get_dataset(name)
 
+    def dataset_exists(self, name: str) -> bool:
+        """Check whether a dataset exists in Langfuse."""
+        if not self.enabled or not self.client:
+            return False
+        try:
+            self.client.get_dataset(name)
+            return True
+        except Exception:
+            return False
+
+    def ensure_dataset_synced(self, dataset_name: str, questions: list) -> object:
+        """
+        Ensure the Langfuse dataset exists and contains all given questions.
+        Creates/recreates the dataset if missing, then upserts every item.
+        Returns the dataset object (ready for run_experiment).
+        """
+        if not self.enabled or not self.client:
+            return None
+        try:
+            # Always create (idempotent — Langfuse ignores if already exists)
+            self.client.create_dataset(name=dataset_name)
+        except Exception as e:
+            print(f"[Langfuse] create_dataset warning: {e}")
+
+        print(f"[Langfuse] Syncing {len(questions)} questions to dataset '{dataset_name}'")
+        for q in questions:
+            try:
+                self.client.create_dataset_item(
+                    dataset_name=dataset_name,
+                    input={
+                        "query": q["question_text"],
+                        "databases": [q.get("schema_name", q["table_id"])],
+                    },
+                    expected_output={"response": q["expected_sql"]},
+                    metadata={
+                        "split": q.get("split", ""),
+                        "difficulty": str(q.get("difficulty", "")).lower().strip(),
+                        "question_id": q["question_id"],
+                        "question_type": str(q.get("question_type", "")).lower().strip(),
+                    },
+                )
+            except Exception as e:
+                print(f"[Langfuse] Failed to upsert question {q.get('question_id')}: {e}")
+
+        self.flush()
+        try:
+            return self.client.get_dataset(dataset_name)
+        except Exception as e:
+            print(f"[Langfuse] Could not retrieve dataset after sync: {e}")
+            return None
+
     def flush(self):
         if self.client:
             self.client.flush()
@@ -65,12 +116,22 @@ class Langfuse:
                 pass
             self.client.create_dataset_item(
                 dataset_name=dataset_name,
-                input={"question": kwargs["question_text"]},
-                expected_output={"expected_sql": kwargs["expected_sql"]},
+                # ── Input: matches real agent schema ──────────────────────────
+                input={
+                    "query": kwargs["question_text"],
+                    "databases": [kwargs.get("schema_name", kwargs["table_id"])],
+                },
+                # ── Expected output: the gold-standard SQL ────────────────────
+                expected_output={
+                    "response": kwargs["expected_sql"],
+                },
+                # ── Metadata: split, difficulty (matches real agent) ──────────
                 metadata={
+                    "split": kwargs.get("split", ""),
+                    "difficulty": str(kwargs.get("difficulty", "")).lower().strip(),
+                    # internal fields used during evaluation linkage
                     "question_id": kwargs["question_id"],
                     "question_type": str(kwargs["question_type"]).lower().strip(),
-                    "difficulty": str(kwargs["difficulty"]).lower().strip(),
                 },
             )
             self.flush()
