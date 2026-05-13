@@ -21,15 +21,15 @@ class Table(SQLModel, table=True):
     name: str = Field(index=True)
     schema_name: str
     status: TableStatus = Field(default=TableStatus.draft)
-    owner_id: str
+    owner_id: Optional[str] = None
+    oasis_source_id: Optional[str] = None
+    openmetadata_json: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TableCreate(SQLModel):
-    name: str
-    schema_name: str
-    owner_id: str
+    oasis_source_id: str
 
 
 class TableRead(SQLModel):
@@ -37,7 +37,9 @@ class TableRead(SQLModel):
     name: str
     schema_name: str
     status: TableStatus
-    owner_id: str
+    owner_id: Optional[str]
+    oasis_source_id: Optional[str]
+    openmetadata_json: Optional[dict]
     created_at: datetime
     updated_at: datetime
 

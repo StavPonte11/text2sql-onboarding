@@ -4,8 +4,11 @@ from datetime import datetime
 from app.db.engine import get_session
 from app.models.models import (
     Table, TableCreate, TableRead,
-    TableStatus, UserScope
+    TableStatus, UserScope, TableProfile, ProfilingStatus
 )
+import httpx
+from app.config import settings
+from fastapi import BackgroundTasks
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 
@@ -47,9 +50,43 @@ def get_table(table_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("", response_model=TableRead, status_code=201)
-def create_table(payload: TableCreate, session: Session = Depends(get_session)):
-    table = Table(**payload.model_dump())
+def create_table(
+    payload: TableCreate,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    try:
+        url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{payload.oasis_source_id}"
+        response = httpx.get(url, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch table metadata: {str(e)}")
+
+    metadata = data.get("metadata", {})
+    name = metadata.get("name")
+    schema_name = metadata.get("databaseSchema", {}).get("name")
+    
+    if not name or not schema_name:
+        raise HTTPException(status_code=400, detail="Invalid metadata format from OpenMetadata")
+
+    # Create the table
+    table = Table(
+        name=name,
+        schema_name=schema_name,
+        oasis_source_id=payload.oasis_source_id,
+        openmetadata_json=data
+    )
     session.add(table)
     session.commit()
     session.refresh(table)
+
+    # Queue background profiling automatically
+    from app.routers.profiling import _run_profile_job
+    profile = TableProfile(table_id=table.id, status=ProfilingStatus.running, version=1)
+    session.add(profile)
+    session.commit()
+    session.refresh(profile)
+    background_tasks.add_task(_run_profile_job, table.id, profile.id)
+
     return table
