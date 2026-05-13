@@ -51,7 +51,7 @@ def _run_profile_job(table_id: str, profile_id: str):
         profile.version = version
         session.add(profile)
         session.commit()
-        
+
         # Extract variables before session closes
         schema_name = table.schema_name
         table_name = table.name
@@ -272,6 +272,7 @@ def get_cross_profiles(table_id: str, session: Session = Depends(get_session)):
     return session.exec(
         select(CrossTableProfile).where(CrossTableProfile.source_table_id == table_id)
     ).all()
+
 
 @router.post("/tables/{table_id}/profile/debug")
 def debug_run_profile(table_id: str, session: Session = Depends(get_session)):
