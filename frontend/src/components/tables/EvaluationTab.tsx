@@ -6,6 +6,7 @@ import { evalApi } from "../../api/client";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
 import dayjs from "dayjs";
+import "./EvaluationTab.css";
 
 interface Props { tableId: string }
 
@@ -42,8 +43,8 @@ export function EvaluationTab({ tableId }: Props) {
 
   return (
     <div>
-      <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 17, fontWeight: 700 }}>{t("evaluations.title")}</h2>
+      <div className="evaluation-tab__header">
+        <h2 className="evaluation-tab__title">{t("evaluations.title")}</h2>
         <button
           className="btn btn--primary btn--sm"
           onClick={() => triggerMutation.mutate()}
@@ -55,11 +56,11 @@ export function EvaluationTab({ tableId }: Props) {
       </div>
 
       {triggerMutation.data && (
-        <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 20 }}>
+        <div className="card latest-run-card">
           <ScoreRing score={triggerMutation.data.score} />
           <div>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>Latest Run: {triggerMutation.data.table_name || tableId.slice(0,8)}</div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
+            <div className="latest-run-card__title">Latest Run: {triggerMutation.data.table_name || tableId.slice(0,8)}</div>
+            <div className="latest-run-card__info">
               Run ID: {triggerMutation.data.id.slice(0,8)}… · Status: {triggerMutation.data.status}
             </div>
           </div>
@@ -75,7 +76,7 @@ export function EvaluationTab({ tableId }: Props) {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card evaluations-table-card">
           <table className="data-table">
             <thead>
               <tr>
@@ -89,24 +90,23 @@ export function EvaluationTab({ tableId }: Props) {
             <tbody>
               {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])].map((run) => (
                 <tr key={run.id}>
-                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id.slice(0,8)}…</code></td>
+                  <td><code className="run-id-code">{run.id.slice(0,8)}…</code></td>
                   <td><ScoreRing score={run.score} /></td>
                   <td>
-                    <span style={{
+                    <span className="run-status-badge" style={{
                       color: run.status === "completed" ? "var(--status-production)"
                         : run.status === "failed" ? "var(--status-degraded)"
-                        : "var(--status-sandbox)",
-                      fontWeight: 600, fontSize: 12,
+                        : "var(--status-sandbox)"
                     }}>
                       {run.status}
                     </span>
                   </td>
                   <td>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
+                    <span className="run-type-label">
                       {run.triggered_by}
                     </span>
                   </td>
-                  <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  <td className="run-date-label">
                     {dayjs(run.created_at).format("MMM D, HH:mm")}
                   </td>
                 </tr>

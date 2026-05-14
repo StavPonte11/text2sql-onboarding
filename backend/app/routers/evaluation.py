@@ -327,6 +327,23 @@ def get_all_eval_runs(session: Session = Depends(get_session)):
     return runs
 
 
+@router.get("/eval/batch/{promotion_run_id}", response_model=list[EvalRunRead])
+def get_batch_runs(promotion_run_id: str, session: Session = Depends(get_session)):
+    """Get all runs linked to a promotion batch (the promotion run itself + regression tests)."""
+    results = session.exec(
+        select(EvalRun, Table.name)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
+        .where((EvalRun.id == promotion_run_id) | (EvalRun.promotion_run_id == promotion_run_id))
+        .order_by(desc(EvalRun.created_at))
+    ).all()
+
+    runs = []
+    for run, table_name in results:
+        read = EvalRunRead.model_validate(run, update={"table_name": table_name or "Unknown Table"})
+        runs.append(read)
+    return runs
+
+
 @router.get("/eval/{run_id}", response_model=EvalRunRead)
 def get_run(run_id: str, session: Session = Depends(get_session)):
     result = session.exec(

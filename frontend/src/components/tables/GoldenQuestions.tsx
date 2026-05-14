@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, HelpCircle } from "lucide-react";
+import { Plus, Trash2, HelpCircle, Upload } from "lucide-react";
 import { App } from "antd";
 import { questionsApi } from "../../api/client";
 import type { GoldenQuestionCreate, DifficultyLevel } from "../../types";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
 import dayjs from "dayjs";
+import "./GoldenQuestions.css";
 
 interface Props { tableId: string }
 
@@ -41,6 +42,17 @@ export function GoldenQuestions({ tableId }: Props) {
     },
   });
 
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => questionsApi.uploadQuestions(tableId, file),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["questions", tableId] });
+      message.success(res.message || "Questions uploaded successfully");
+    },
+    onError: (err: any) => {
+      message.error(err.response?.data?.detail || "Failed to upload questions");
+    }
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (qid: string) => questionsApi.delete(tableId, qid),
     onSuccess: () => {
@@ -49,16 +61,41 @@ export function GoldenQuestions({ tableId }: Props) {
     },
   });
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadMutation.mutate(file);
+      // reset input
+      e.target.value = "";
+    }
+  };
+
   if (isLoading) return <SkeletonTable rows={4} cols={4} />;
   if (isError) return <ErrorState onRetry={refetch} />;
 
   return (
     <div>
-      <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 17, fontWeight: 700 }}>{t("questions.title")}</h2>
-        <button className="btn btn--primary btn--sm" onClick={() => setShowAdd(true)}>
-          <Plus size={14} /> {t("questions.add")}
-        </button>
+      <div className="questions-header">
+        <h2 className="questions-title">{t("questions.title")}</h2>
+        <div className="questions-actions">
+          <input 
+            type="file" 
+            id="bulk-upload-input" 
+            className="file-upload-input" 
+            accept=".json,.xlsx,.xls"
+            onChange={handleFileUpload}
+          />
+          <button 
+            className="btn btn--ghost btn--sm" 
+            onClick={() => document.getElementById("bulk-upload-input")?.click()}
+            disabled={uploadMutation.isPending}
+          >
+            <Upload size={14} /> {uploadMutation.isPending ? "Uploading..." : "Upload JSON/Excel"}
+          </button>
+          <button className="btn btn--primary btn--sm" onClick={() => setShowAdd(true)}>
+            <Plus size={14} /> {t("questions.add")}
+          </button>
+        </div>
       </div>
 
       {(!data || data.length === 0) ? (
@@ -70,7 +107,7 @@ export function GoldenQuestions({ tableId }: Props) {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card questions-table-card">
           <table className="data-table">
             <thead>
               <tr>
@@ -84,20 +121,20 @@ export function GoldenQuestions({ tableId }: Props) {
             <tbody>
               {data.map((q) => (
                 <tr key={q.id}>
-                  <td style={{ maxWidth: 260 }}>
-                    <span style={{ fontWeight: 500 }}>{q.question}</span>
+                  <td className="question-text-cell">
+                    <span className="question-text">{q.question}</span>
                   </td>
                   <td>
-                    <code style={{ fontSize: 12, color: "var(--text-muted)", background: "var(--bg-base)", padding: "2px 6px", borderRadius: 4 }}>
+                    <code className="sql-code-snippet">
                       {q.expected_sql.length > 60 ? q.expected_sql.slice(0, 60) + "…" : q.expected_sql}
                     </code>
                   </td>
                   <td>
-                    <span style={{ color: DIFFICULTY_COLORS[q.difficulty], fontWeight: 600, fontSize: 12 }}>
+                    <span className="difficulty-badge" style={{ color: DIFFICULTY_COLORS[q.difficulty] }}>
                       {q.difficulty}
                     </span>
                   </td>
-                  <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  <td className="created-date-cell">
                     {dayjs(q.created_at).format("MMM D, YYYY")}
                   </td>
                   <td>

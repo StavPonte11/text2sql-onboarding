@@ -49,7 +49,7 @@ function AppLayout() {
       <Sidebar />
       <div className="layout__content">
         <ScopeBanner />
-        <div style={{ position: "absolute", top: 12, right: 16, zIndex: 100 }}>
+        <div className="layout__lang-toggle">
           <LanguageToggle />
         </div>
         <Routes>

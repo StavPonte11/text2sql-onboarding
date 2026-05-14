@@ -52,13 +52,17 @@ export function TableDetails() {
     queryFn: () => evalApi.listRuns(id!),
     enabled: !!id,
     refetchInterval: (query) => 
-      (query.state.data as any[])?.some((r: any) => r.status === "running") ? 5000 : 30000,
+      (query.state.data as any[])?.some((r: any) => r.status === "running") ? 500 : 30000,
   });
 
-  const { data: allRuns } = useQuery({
-    queryKey: ["eval-runs-all"],
-    queryFn: () => evalApi.listAllRuns(),
-    refetchInterval: 5000,
+  const latestPromotion = runs?.find(r => r.triggered_by === "promotion");
+
+  const { data: batchRuns } = useQuery({
+    queryKey: ["eval-batch", latestPromotion?.id],
+    queryFn: () => evalApi.listBatchRuns(latestPromotion!.id),
+    enabled: !!latestPromotion?.id,
+    refetchInterval: (query) => 
+      (query.state.data as any[])?.some((r: any) => r.status === "running") ? 500 : 30000,
   });
 
   const qc = useQueryClient();
@@ -72,13 +76,10 @@ export function TableDetails() {
     },
   });
 
-  const latestPromotion = runs?.find(r => r.triggered_by === "promotion");
   const activePromotion = latestPromotion?.status === "running" ? latestPromotion : undefined;
 
   // Precise filter: only regression runs that were created by THIS promotion run
-  const currentBatchRegressions = latestPromotion
-    ? (allRuns?.filter(r => r.triggered_by === "regression" && r.promotion_run_id === latestPromotion.id) || [])
-    : [];
+  const currentBatchRegressions = batchRuns?.filter(r => r.triggered_by === "regression") || [];
 
   const activeRegressions = currentBatchRegressions.filter(r => r.status === "running");
   
