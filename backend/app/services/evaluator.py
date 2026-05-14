@@ -80,34 +80,50 @@ class BaseLangfuseEvaluator(ABC):
 
     # ── Provided by base — identical to main app ───────────────────────────────
 
-    def run_single_dataset(self, dataset_name: str) -> Optional[List[Dict]]:
+    def run_single_dataset(self, dataset_name: str):
         """
         Run evaluation on a single Langfuse dataset.
-        Returns list of task results, or None if Langfuse is disabled / errors.
+        Delegates to LangfuseDatasetService.run_experiment() which reliably
+        iterates dataset items, calls task(), and scores each result.
         """
         if not self.lf.enabled:
             return None
         try:
-            dataset = self.lf.get_dataset(dataset_name)
-            if not dataset:
-                return None
-            return dataset.run_experiment(
+            return self.lf.run_experiment(
+                dataset_name=dataset_name,
                 task=self.task,
                 run_name=self.run_name,
                 evaluators=self.get_evaluators(),
             )
         except Exception as e:
-            logger.error(f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}")
+            logger.error(f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}", exc_info=True)
             return None
 
-    def run_all_datasets(self, dataset_names: List[str]) -> Dict[str, Optional[List]]:
+    def run_all_datasets(self, dataset_names: List[str]) -> Dict[str, Any]:
         """
         Run evaluation across multiple datasets (one per table).
-        Returns mapping of dataset_name → results list.
+        Returns mapping of dataset_name → ExperimentResult.
+        Logs a summary of averages and status after all datasets complete.
         """
-        results: Dict[str, Optional[List]] = {}
+        results: Dict[str, Any] = {}
         for name in dataset_names:
             results[name] = self.run_single_dataset(name)
+
+        # ── Summary log ───────────────────────────────────────────────
+        q_scores = getattr(self, "question_scores", [])
+        dim_totals = getattr(self, "dimension_totals", {})
+        n = len(q_scores)
+        if n > 0:
+            avg_score = round(sum(s for s, _ in q_scores) / n, 3)
+            dim_avgs = {k: round(v / n, 3) for k, v in dim_totals.items()}
+            logger.info(
+                f"[Evaluator] Summary — datasets: {list(dataset_names)}, "
+                f"questions: {n}, avg_score: {avg_score}, "
+                f"dim_avgs: {dim_avgs}"
+            )
+        else:
+            logger.info(f"[Evaluator] Summary — no questions evaluated across {list(dataset_names)}")
+
         return results
 
 
@@ -245,14 +261,9 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
             for i in range(min(3, exec_data["row_count"]))
         ]
 
-        # ── Output trace (matches real agent output schema) ────────────────
+        # ── Output trace ───────────────────────────────────────────────────
         langfuse_context.update_current_trace(
-            output={
-                "result": result_rows,
-                "response": agent_result["generated_sql"],
-                "query_translation": agent_result.get("query_translation", ""),
-                "hebrew_answer": agent_result.get("hebrew_answer", ""),
-            }
+            output={"response": agent_result["generated_sql"]}
         )
 
         # ── Persist EvalResult ─────────────────────────────────────────────

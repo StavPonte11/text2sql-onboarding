@@ -261,7 +261,8 @@ def compute_score(
         0.45 * result_correctness +
         0.20 * judge.table_selection_correctness +
         0.15 * judge.sql_semantic_equivalence +
-        0.10 * result_shape
+        0.10 * result_shape +
+        0.10 * judge.result_correctness          # was missing — weights now sum to 1.0
     )
 
     bd.result_correctness           = round(result_correctness, 3)

@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import langfuse as sdk
-from langfuse.client import DatasetClient
 from langfuse.api.resources.dataset_run_items.types.create_dataset_run_item_request import (
     CreateDatasetRunItemRequest,
 )
@@ -408,25 +407,3 @@ langfuse_tracer = LangfuseTracer()
 langfuse_client = LangfuseDatasetService(langfuse_tracer)
 
 
-# ─── Monkey-patch DatasetClient ───────────────────────────────────────────────
-
-def _dataset_run_experiment(
-    self,
-    task,
-    run_name=None,
-    run_description=None,
-    run_metadata=None,
-    evaluators=None,
-):
-    return langfuse_client.run_experiment(
-        dataset_name=self.name,
-        task=task,
-        run_name=run_name,
-        run_description=run_description,
-        run_metadata=run_metadata,
-        evaluators=evaluators,
-    )
-
-
-if not hasattr(DatasetClient, "run_experiment"):
-    DatasetClient.run_experiment = _dataset_run_experiment
