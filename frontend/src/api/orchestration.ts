@@ -186,4 +186,8 @@ export const orchestrationApi = {
   // System health
   getSystemHealth: () =>
     api.get<SystemHealth>("/evaluations/system-health").then(r => r.data),
+
+  // Readiness
+  getReadiness: () =>
+    api.get<Record<string, { ready: boolean; missing: string[] }>>("/eval/readiness").then(r => r.data),
 };

@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Play, BarChart2 } from "lucide-react";
+import { Play, BarChart2, AlertTriangle, CheckCircle } from "lucide-react";
 import { App } from "antd";
-import { evalApi } from "../../api/client";
+import { evalApi, enrichmentApi, questionsApi } from "../../api/client";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
 import dayjs from "dayjs";
@@ -26,6 +26,28 @@ export function EvaluationTab({ tableId }: Props) {
     queryFn: () => evalApi.listRuns(tableId),
   });
 
+  const { data: enrichment } = useQuery({
+    queryKey: ["enrichment", tableId],
+    queryFn: () => enrichmentApi.getLatest(tableId),
+  });
+
+  const { data: questions } = useQuery({
+    queryKey: ["questions", tableId],
+    queryFn: () => questionsApi.list(tableId),
+  });
+
+  // Compute readiness
+  const hasDescription = !!(enrichment?.data?.table_description);
+  const hasEnrichment = !!(enrichment?.data);
+  const hasQuestions = !!(questions && questions.length > 0);
+  const isReady = hasEnrichment && hasDescription && hasQuestions;
+
+  const readinessItems = [
+    { label: "Table enrichment / schema", ok: hasEnrichment },
+    { label: "Table description", ok: hasDescription },
+    { label: "At least 1 golden question", ok: hasQuestions },
+  ];
+
   const triggerMutation = useMutation({
     mutationFn: () => evalApi.triggerRun(tableId),
     onSuccess: (run) => {
@@ -33,8 +55,9 @@ export function EvaluationTab({ tableId }: Props) {
       qc.setQueryData(["eval-runs", tableId], (old: any[]) => [run, ...(old ?? [])]);
       message.success("Evaluation run triggered");
     },
-    onError: () => {
-      message.error("Evaluation failed. Please go change the descriptions in Oasis platform.");
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail;
+      message.error(detail || "Evaluation failed. Please go change the descriptions in Oasis platform.", 8);
     }
   });
 
@@ -48,11 +71,34 @@ export function EvaluationTab({ tableId }: Props) {
         <button
           className="btn btn--primary btn--sm"
           onClick={() => triggerMutation.mutate()}
-          disabled={triggerMutation.isPending}
+          disabled={triggerMutation.isPending || !isReady}
+          title={!isReady ? "Complete all requirements below before running" : undefined}
         >
           <Play size={14} />
           {triggerMutation.isPending ? "Running..." : t("evaluations.runEval")}
         </button>
+      </div>
+
+      {/* Readiness checklist */}
+      <div className={`eval-readiness-banner ${isReady ? "eval-readiness-banner--ready" : "eval-readiness-banner--incomplete"}`}>
+        <div className="eval-readiness-banner__icon">
+          {isReady
+            ? <CheckCircle size={16} />
+            : <AlertTriangle size={16} />
+          }
+        </div>
+        <div className="eval-readiness-banner__content">
+          <div className="eval-readiness-banner__title">
+            {isReady ? "Ready to evaluate" : "Requirements not met — evaluation is disabled"}
+          </div>
+          <div className="eval-readiness-banner__items">
+            {readinessItems.map(item => (
+              <span key={item.label} className={`eval-readiness-item ${item.ok ? "eval-readiness-item--ok" : "eval-readiness-item--missing"}`}>
+                {item.ok ? "✓" : "✗"} {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
 
       {triggerMutation.data && (
@@ -118,3 +164,4 @@ export function EvaluationTab({ tableId }: Props) {
     </div>
   );
 }
+

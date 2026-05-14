@@ -28,6 +28,7 @@ from app.models.models import (
     EvalResult, EvalResultRead,
     EvaluationAlert, AlertSeverity,
     AuditQuery,
+    EnrichmentVersion,
 )
 from app.services.scoring import compute_dataset_score
 from app.services.langfuse_client import langfuse_client
@@ -264,6 +265,37 @@ def promote_table(
     return {"message": "Promotion workflow started", "run_id": run.id}
 
 
+@router.get("/eval/readiness")
+def get_readiness(session: Session = Depends(get_session)):
+    """
+    Return readiness status for every table.
+    Response: { tableId: { ready: bool, missing: [str] } }
+    """
+    tables = session.exec(select(Table)).all()
+    result = {}
+    for table in tables:
+        enrichment = session.exec(
+            select(EnrichmentVersion)
+            .where(EnrichmentVersion.table_id == table.id)
+            .order_by(EnrichmentVersion.version.desc())
+        ).first()
+
+        missing: list[str] = []
+        if not enrichment or not enrichment.data:
+            missing.append("table enrichment / schema description")
+        elif not enrichment.data.get("table_description"):
+            missing.append("table description")
+
+        q_count = len(session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+        ).all())
+        if q_count == 0:
+            missing.append("golden questions")
+
+        result[table.id] = {"ready": len(missing) == 0, "missing": missing}
+    return result
+
+
 @router.post("/tables/{table_id}/eval/run", response_model=EvalRunRead, status_code=202)
 def trigger_eval(
     table_id: str,
@@ -274,13 +306,28 @@ def trigger_eval(
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
+    # Validate enrichment — table must have a description before it can be evaluated
+    enrichment = session.exec(
+        select(EnrichmentVersion)
+        .where(EnrichmentVersion.table_id == table_id)
+        .order_by(EnrichmentVersion.version.desc())
+    ).first()
+    missing: list[str] = []
+    if not enrichment or not enrichment.data:
+        missing.append("table enrichment / schema description")
+    elif not enrichment.data.get("table_description"):
+        missing.append("table description (enrichment exists but has no description)")
+
     questions = session.exec(
         select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
     ).all()
     if not questions:
+        missing.append("golden questions (at least 1 required)")
+
+    if missing:
         raise HTTPException(
             status_code=422,
-            detail="Table has no golden questions. Add at least 1 question before running an evaluation.",
+            detail=f"Cannot run evaluation. Missing required data: {'; '.join(missing)}.",
         )
 
     run = EvalRun(table_id=table_id, status=EvalStatus.running)

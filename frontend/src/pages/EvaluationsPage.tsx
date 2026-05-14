@@ -25,6 +25,12 @@ function RunTriggerPanel() {
     queryFn: () => tablesApi.list(),
   });
 
+  const { data: readiness = {} } = useQuery({
+    queryKey: ["eval-readiness"],
+    queryFn: () => orchestrationApi.getReadiness(),
+    staleTime: 30_000,
+  });
+
   const triggerMut = useMutation({
     mutationFn: () => orchestrationApi.triggerRun(selectedTableIds, triggeredBy),
     onSuccess: () => {
@@ -33,18 +39,24 @@ function RunTriggerPanel() {
       setLaunched(true);
       setTimeout(() => setLaunched(false), 4000);
     },
-    onError: () => {
-      message.error("Evaluation failed. Please go change the descriptions in Oasis platform.");
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail;
+      message.error(detail || "Evaluation failed. Please check table descriptions in Oasis platform.", 10);
     }
   });
 
   const toggleTable = (id: string) => {
+    // Prevent selecting incomplete tables
+    if (!readiness[id]?.ready && readiness[id] !== undefined) return;
     setSelectedTableIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
   };
 
-  const selectAll = () => setSelectedTableIds(tables.map(t => t.id));
+  const selectAll = () => setSelectedTableIds(
+    tables.filter((t: Table) => readiness[t.id]?.ready !== false).map((t: Table) => t.id)
+  );
+
   const clearAll = () => setSelectedTableIds([]);
 
   return (
@@ -68,6 +80,8 @@ function RunTriggerPanel() {
         <div className="run-trigger-panel__grid">
           {tables.map((t: Table) => {
             const selected = selectedTableIds.includes(t.id);
+            const tableReadiness = readiness[t.id];
+            const isIncomplete = tableReadiness !== undefined && !tableReadiness.ready;
             const statusColor: Record<string, string> = {
               production: "#10b981", sandbox: "#f59e0b", verified: "#3b82f6",
               draft: "#64748b", degraded: "#ef4444",
@@ -77,17 +91,28 @@ function RunTriggerPanel() {
               <div
                 key={t.id}
                 onClick={() => toggleTable(t.id)}
-                className={`table-card${selected ? " table-card--selected" : ""}`}
+                className={`table-card${selected ? " table-card--selected" : ""}${isIncomplete ? " table-card--incomplete" : ""}`}
+                title={isIncomplete ? `Missing: ${tableReadiness.missing.join(", ")}` : undefined}
               >
                 <div className="table-card__header">
                   <div className="table-card__status-dot" style={{ background: sc }} />
                   <span className={`table-card__name${selected ? " table-card__name--selected" : ""}`}>
                     {t.name}
                   </span>
+                  {isIncomplete && (
+                    <span className="table-card__incomplete-badge" title={`Missing: ${tableReadiness.missing.join(", ")}`}>
+                      ⚠ Incomplete
+                    </span>
+                  )}
                 </div>
                 <div className="table-card__info">
                   {t.schema_name} · {t.status}
                 </div>
+                {isIncomplete && (
+                  <div className="table-card__missing">
+                    Missing: {tableReadiness.missing.join(", ")}
+                  </div>
+                )}
               </div>
             );
           })}

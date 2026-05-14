@@ -91,3 +91,35 @@
   border: none;
   cursor: pointer;
 }
+
+/* ── Incomplete table cards ── */
+
+.table-card--incomplete {
+  opacity: 0.6;
+  cursor: not-allowed;
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.table-card--incomplete:hover {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.table-card__incomplete-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.table-card__missing {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: #ef4444;
+  opacity: 0.9;
+}

@@ -24,6 +24,7 @@ from app.models.models import (
     EvaluationSchedule, EvaluationScheduleCreate, EvaluationScheduleUpdate, EvaluationScheduleRead,
     EvaluationHistoryMetric, EvaluationHistoryMetricRead,
     EvaluationAlert, EvaluationAlertRead, AlertSeverity,
+    EnrichmentVersion,
 )
 from app.services.scoring import (
     JudgeOutput, ExecutionResult, ExpectedShape,
@@ -199,11 +200,45 @@ def trigger_evaluation_run(
     session: Session = Depends(get_session),
 ):
     """Trigger evaluation for one or more tables."""
-    runs = []
+
+    # ── Validate all tables before creating any run records ─────────────────
+    validation_errors: list[str] = []
     for table_id in table_ids:
         table = session.get(Table, table_id)
         if not table:
             raise HTTPException(status_code=404, detail=f"Table {table_id} not found")
+
+        enrichment = session.exec(
+            select(EnrichmentVersion)
+            .where(EnrichmentVersion.table_id == table_id)
+            .order_by(EnrichmentVersion.version.desc())
+        ).first()
+
+        missing: list[str] = []
+        if not enrichment or not enrichment.data:
+            missing.append("table enrichment / schema description")
+        elif not enrichment.data.get("table_description"):
+            missing.append("table description (enrichment has no description)")
+
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+        ).all()
+        if not questions:
+            missing.append("golden questions (at least 1 required)")
+
+        if missing:
+            validation_errors.append(f"'{table.name}': {', '.join(missing)}")
+
+    if validation_errors:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot run evaluation. The following tables are missing required data — {'; '.join(validation_errors)}",
+        )
+
+    # ── All tables passed — create run records ───────────────────────────────
+    runs = []
+    for table_id in table_ids:
+        table = session.get(Table, table_id)
         run = EvalRun(table_id=table_id, triggered_by=triggered_by)
         session.add(run)
         session.commit()
