@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PlayCircle, Database, ChevronDown, ListChecks, CalendarClock, History, Check } from "lucide-react";
+import { App } from "antd";
 import { tablesApi } from "../api/client";
 import { orchestrationApi } from "../api/orchestration";
 import { RunHistoryTable } from "../components/monitoring/RunHistoryTable";
@@ -16,6 +17,7 @@ function RunTriggerPanel() {
   const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
   const [triggeredBy] = useState("user");
   const [launched, setLaunched] = useState(false);
+  const { message } = App.useApp();
 
   const { data: tables = [], isLoading: tablesLoading } = useQuery({
     queryKey: ["tables-all"],
@@ -30,6 +32,9 @@ function RunTriggerPanel() {
       setLaunched(true);
       setTimeout(() => setLaunched(false), 4000);
     },
+    onError: () => {
+      message.error("Evaluation failed. Please go change the descriptions in Oasis platform.");
+    }
   });
 
   const toggleTable = (id: string) => {

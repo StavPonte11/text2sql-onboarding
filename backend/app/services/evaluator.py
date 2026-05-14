@@ -31,6 +31,9 @@ from app.services.scoring import (
     compute_score,
 )
 from app.models.models import GoldenQuestion, EvalResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Abstract base — matches main app's BaseLangfuseEvaluator ─────────────────
@@ -94,7 +97,7 @@ class BaseLangfuseEvaluator(ABC):
                 evaluators=self.get_evaluators(),
             )
         except Exception as e:
-            print(f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}")
+            logger.error(f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}")
             return None
 
     def run_all_datasets(self, dataset_names: List[str]) -> Dict[str, Optional[List]]:
@@ -129,6 +132,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         run_id: str,
         question_scores: List[tuple],
         failure_counts: Dict[str, int],
+        dimension_totals: Optional[Dict[str, float]] = None,
     ):
         super().__init__(run_name=run_name)
         self.session = session
@@ -137,6 +141,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         # These lists/dicts are mutated by task() so the caller can aggregate results
         self.question_scores = question_scores
         self.failure_counts = failure_counts
+        self.dimension_totals = dimension_totals if dimension_totals is not None else {}
 
     # ── Task ──────────────────────────────────────────────────────────────────
 
@@ -162,8 +167,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         observation_id = langfuse_context.get_current_observation_id()
 
         q_id = item.metadata.get("question_id")
+        logger.info(f"[Evaluator] Task starting for question_id: {q_id}")
         question_obj = self.session.get(GoldenQuestion, q_id)
         if not question_obj:
+            logger.error(f"[Evaluator] Question {q_id} not found in database!")
             return {"trace_id": trace_id, "observation_id": observation_id}
 
         # Link this trace to the Langfuse dataset run
@@ -258,10 +265,16 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         )
         self.session.add(result_db)
 
-        # ── Accumulate for caller ──────────────────────────────────────────
-        self.question_scores.append((breakdown.final_score, str(question_obj.question_type)))
+        # ── Accumulate stats ───────────────────────────────────────────────
+        self.question_scores.append((breakdown.final_score, str(question_obj.question_type).lower()))
         if breakdown.failure_type and breakdown.failure_type in self.failure_counts:
             self.failure_counts[breakdown.failure_type] += 1
+        
+        for dim in ["table_selection_correctness", "sql_semantic_equivalence", "result_correctness"]:
+            val = getattr(judge, dim, 0.0)
+            self.dimension_totals[dim] = self.dimension_totals.get(dim, 0.0) + val
+
+        logger.info(f"[Evaluator] Task completed for question {q_id} with score {breakdown.final_score}")
 
         return {
             "trace_id": trace_id,

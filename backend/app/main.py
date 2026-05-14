@@ -34,6 +34,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 @app.middleware("http")
 async def audit_middleware(request: Request, call_next):
     start_time = time.time()
@@ -62,7 +66,7 @@ async def audit_middleware(request: Request, call_next):
                 session.add(audit)
                 session.commit()
         except Exception as e:
-            print(f"Failed to log audit: {e}")
+            logger.error(f"Failed to log audit: {e}")
 
     return response
 

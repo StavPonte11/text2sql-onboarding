@@ -32,6 +32,9 @@ export function EvaluationTab({ tableId }: Props) {
       qc.setQueryData(["eval-runs", tableId], (old: any[]) => [run, ...(old ?? [])]);
       message.success("Evaluation run triggered");
     },
+    onError: () => {
+      message.error("Evaluation failed. Please go change the descriptions in Oasis platform.");
+    }
   });
 
   if (isLoading) return <SkeletonTable rows={3} cols={4} />;

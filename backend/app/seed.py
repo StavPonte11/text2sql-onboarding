@@ -6,15 +6,18 @@ from app.models.models import (
     TableStatus, DifficultyLevel, EvalStatus
 )
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 def seed():
     with Session(engine) as session:
         # Check if already seeded
         if session.exec(select(Table)).first():
-            print("Database already seeded.")
+            logger.info("Database already seeded.")
             return
 
-        print("Seeding database...")
+        logger.info("Seeding database...")
 
         # 1. Scopes
         scope1 = UserScope(user_id="user-1", name="Finance Tables", is_active=True)
@@ -61,7 +64,7 @@ def seed():
         session.add_all([res1, res2])
 
         session.commit()
-        print("Database seeded successfully.")
+        logger.info("Database seeded successfully.")
 
 if __name__ == "__main__":
     seed()

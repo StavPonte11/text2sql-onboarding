@@ -33,6 +33,9 @@ from app.services.scoring import compute_dataset_score
 from app.services.langfuse_client import langfuse_client
 from app.services.evaluator import TextToSQLEvaluator
 from langfuse.decorators import observe, langfuse_context
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evaluation"])
 
@@ -47,7 +50,7 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     """
     run = session.get(EvalRun, run_id)
     if not run:
-        return 0.0
+        return -1.0
 
     questions = session.exec(
         select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
@@ -55,10 +58,10 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 
     if not questions:
         run.status = EvalStatus.failed
-        run.score = 0.0
+        run.score = -1.0
         session.add(run)
         session.commit()
-        return 0.0
+        return -1.0
 
     langfuse_context.update_current_trace(
         metadata={"table_id": table_id, "run_id": run_id},
@@ -71,6 +74,11 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         "wrong_table": 0, "wrong_join": 0, "wrong_filter": 0,
         "hallucination": 0, "execution_error": 0, "empty_result_bug": 0, "partial_correct": 0,
     }
+    dimension_totals = {
+        "table_selection_correctness": 0.0,
+        "sql_semantic_equivalence": 0.0,
+        "result_correctness": 0.0
+    }
 
     dataset_name = f"text2sql_{table_id[:8]}"
     run_name = f"EvalRun-{run_id}"
@@ -82,9 +90,9 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
             # Ensure dataset exists — create/sync only if missing
             if langfuse_client.dataset_exists(dataset_name):
                 dataset = langfuse_client.get_dataset(dataset_name)
-                print(f"[Langfuse] Dataset '{dataset_name}' exists, skipping re-sync.")
+                logger.info(f"[Langfuse] Dataset '{dataset_name}' exists, skipping re-sync.")
             else:
-                print(f"[Langfuse] Dataset '{dataset_name}' missing, rebuilding...")
+                logger.info(f"[Langfuse] Dataset '{dataset_name}' missing, rebuilding...")
                 questions_payload = [
                     {
                         "question_id": q.id,
@@ -101,10 +109,9 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
                 dataset = langfuse_client.ensure_dataset_synced(dataset_name, questions_payload)
 
             if not dataset:
-                print(f"[Langfuse] Dataset unavailable for {table_id}, scoring via stubs only.")
+                logger.warning(f"[Langfuse] Dataset unavailable for {table_id}, scoring via stubs only.")
             else:
                 # ── Delegate to TextToSQLEvaluator ─────────────────────────
-                # MERGE: swap _call_agent_stub with real MCP client call inside task()
                 evaluator = TextToSQLEvaluator(
                     run_name=run_name,
                     session=session,
@@ -112,18 +119,30 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
                     run_id=run_id,
                     question_scores=question_scores,
                     failure_counts=failure_counts,
+                    dimension_totals=dimension_totals
                 )
                 evaluator.run_single_dataset(dataset_name)
-                # question_scores and failure_counts are now populated by the evaluator
 
         except Exception as e:
-            print(f"[Langfuse] Eval failed for {table_id}: {e}")
+            logger.error(f"[Langfuse] Eval failed for {table_id}: {e}")
 
     agg = compute_dataset_score(question_scores)
-    run.score = agg["dataset_score"]
+    n = len(question_scores)
+    
+    run.score = agg.get("dataset_score", 0.0)
+    run.pass_rate = agg.get("pass_rate", 0.0)
+    run.fail_rate = agg.get("fail_rate", 0.0)
+    run.total_questions = n
+    run.failure_breakdown = failure_counts
+    run.dimension_averages = {k: round(v / n, 3) for k, v in dimension_totals.items()} if n > 0 else {}
     run.status = EvalStatus.completed
+    run.completed_at = datetime.utcnow()
+    
     session.add(run)
     session.commit()
+    
+    logger.info(f"[Evaluation] Finished table {table_id} with score {run.score} "
+                f"({run.total_questions} questions)")
 
     langfuse_context.update_current_trace(output=agg)
     return agg["dataset_score"]
@@ -137,10 +156,10 @@ def execute_production_regression_tests(session: Session, promotion_run_id: Opti
     """
     prod_tables = session.exec(select(Table).where(Table.status == TableStatus.production)).all()
     if not prod_tables:
-        print("[Regression] No production tables to test. Passing.")
+        logger.info("[Regression] No production tables to test. Passing.")
         return True
 
-    print(f"[Regression] Running tests for {len(prod_tables)} production tables...")
+    logger.info(f"[Regression] Running tests for {len(prod_tables)} production tables...")
     all_pass = True
     for table in prod_tables:
         run = EvalRun(
@@ -155,10 +174,12 @@ def execute_production_regression_tests(session: Session, promotion_run_id: Opti
 
         score = execute_single_table_eval(table.id, run.id, session)
         if score < 0.8:
-            print(f"[Regression] Table {table.name} ({table.id}) failed regression with score {score}")
+            logger.warning(f"[Regression] Table {table.name} ({table.id}) "
+                          f"failed regression with score {score} that is less than 80%")
             all_pass = False
         else:
-            print(f"[Regression] Table {table.name} ({table.id}) passed with score {score}")
+            logger.info(f"[Regression] Table {table.name} ({table.id}) "  
+                        f"passed with score {score} that is greater than or equal to 80%")
 
     return all_pass
 
@@ -184,33 +205,33 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
     """
     with Session(engine) as session:
         # Step 1: Evaluate the target table
-        print(f"[Promotion] Step 1: Evaluating target table {table_id}...")
+        logger.info(f"[Promotion] Step 1: Evaluating target table {table_id}...")
         target_score = execute_single_table_eval(table_id, run_id, session)
 
         if target_score < 0.8:
             msg = f"Promotion failed: Target table score {target_score:.0%} is below 80%."
-            print(f"[Promotion] {msg}")
+            logger.error(f"[Promotion] {msg}")
             _create_alert(session, run_id, table_id, "promotion_failed", AlertSeverity.critical, msg)
             return
 
         # Step 2: Run regression tests — pass promotion run_id to tag each regression run
-        print("[Promotion] Step 2: Running production regression tests...")
+        logger.info("[Promotion] Step 2: Running production regression tests...")
         regression_pass = execute_production_regression_tests(session, promotion_run_id=run_id)
 
         if not regression_pass:
             msg = "Promotion failed: Regression detected in existing production tables."
-            print(f"[Promotion] {msg}")
+            logger.error(f"[Promotion] {msg}")
             _create_alert(session, run_id, table_id, "regression_detected", AlertSeverity.critical, msg)
             return
 
         # Step 3: Promote
-        print(f"[Promotion] Step 3: Promoting table {table_id} to production!")
+        logger.info(f"[Promotion] Step 3: Promoting table {table_id} to production!")
         table = session.get(Table, table_id)
         if table:
             table.status = TableStatus.production
             session.add(table)
             session.commit()
-            print(f"[Promotion] Success: Table {table.name} is now in production.")
+            logger.info(f"[Promotion] Success: Table {table.name} is now in production.")
 
 
 @observe(name="eval-run")
@@ -268,7 +289,10 @@ def trigger_eval(
     session.refresh(run)
 
     background_tasks.add_task(_run_evaluation_pipeline, table_id, run.id)
-    return run
+    
+    # Return EvalRunRead with table_name populated
+    read = EvalRunRead.model_validate(run, update={"table_name": table.name})
+    return read
 
 
 @router.get("/tables/{table_id}/eval/runs", response_model=list[EvalRunRead])
@@ -282,8 +306,7 @@ def list_runs(table_id: str, session: Session = Depends(get_session)):
 
     runs = []
     for run, table_name in results:
-        read = EvalRunRead.model_validate(run)
-        read.table_name = table_name
+        read = EvalRunRead.model_validate(run, update={"table_name": table_name})
         runs.append(read)
     return runs
 
@@ -299,18 +322,24 @@ def get_all_eval_runs(session: Session = Depends(get_session)):
 
     runs = []
     for run, table_name in results:
-        read = EvalRunRead.model_validate(run)
-        read.table_name = table_name
+        read = EvalRunRead.model_validate(run, update={"table_name": table_name})
         runs.append(read)
     return runs
 
 
 @router.get("/eval/{run_id}", response_model=EvalRunRead)
 def get_run(run_id: str, session: Session = Depends(get_session)):
-    run = session.get(EvalRun, run_id)
-    if not run:
+    result = session.exec(
+        select(EvalRun, Table.name)
+        .join(Table, EvalRun.table_id == Table.id)
+        .where(EvalRun.id == run_id)
+    ).first()
+    
+    if not result:
         raise HTTPException(status_code=404, detail="Eval run not found")
-    return run
+        
+    run, table_name = result
+    return EvalRunRead.model_validate(run, update={"table_name": table_name})
 
 
 @router.get("/eval/{run_id}/results", response_model=list[EvalResultRead])

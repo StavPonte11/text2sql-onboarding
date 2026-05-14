@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, ExternalLink, RefreshCw, AlertTriangle, Check, X } from "lucide-react";
 import dayjs from "dayjs";
+import { Link } from "react-router-dom";
 import { orchestrationApi, type EvalRunFull } from "../../api/orchestration";
 import { StatusBadge, ScoreBar, Spinner, EmptySlate } from "../common/EvalUI";
 
@@ -204,7 +205,6 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
               <th>Score</th>
               <th>Pass Rate</th>
               {!compact && <th>Questions</th>}
-              {!compact && <th>Duration</th>}
               <th>Status</th>
               <th>Triggered By</th>
               <th>Date</th>
@@ -226,8 +226,15 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                   </td>
                 )}
                 {!tableId && (
-                  <td style={{ fontSize: 12.5, color: "var(--text-secondary)", fontWeight: 600 }}>
-                    {run.table_name || run.table_id.slice(0, 8)}
+                  <td style={{ fontSize: 12.5, fontWeight: 600 }}>
+                    <Link 
+                      to={`/tables/${run.table_id}`} 
+                      onClick={e => e.stopPropagation()}
+                      style={{ color: "var(--text-secondary)", textDecoration: "none" }}
+                      className="hover:underline"
+                    >
+                      {run.table_name || run.table_id.slice(0, 8)}
+                    </Link>
                   </td>
                 )}
                 <td>
@@ -247,11 +254,6 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                   <ScoreBar score={run.pass_rate} height={5} showLabel />
                 </td>
                 {!compact && <td style={{ fontSize: 13 }}>{run.total_questions}</td>}
-                {!compact && (
-                  <td style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-                    {run.duration_seconds ? `${run.duration_seconds}s` : "—"}
-                  </td>
-                )}
                 <td><StatusBadge status={run.status} size="sm" /></td>
                 <td>
                   <span style={{

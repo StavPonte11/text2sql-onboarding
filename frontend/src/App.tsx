@@ -60,7 +60,6 @@ function AppLayout() {
           <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
           <Route path="/tables/:id/:tab" element={<TableDetails />} />
           <Route path="/wizard" element={<OnboardingWizard />} />
-          <Route path="/sandbox" element={<SandboxPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
           {/* Catch-all redirect for unmatched inner routes */}

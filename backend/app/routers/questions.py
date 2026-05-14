@@ -43,8 +43,8 @@ def create_question(
         question_id=q.id,
         question_text=q.question,
         expected_sql=q.expected_sql,
-        question_type=q.question_type.value if hasattr(q.question_type, 'value') else str(q.question_type),
-        difficulty=q.difficulty.value if hasattr(q.difficulty, 'value') else str(q.difficulty),
+        question_type=q.question_type.value,
+        difficulty=q.difficulty.value,
     )
 
     return q

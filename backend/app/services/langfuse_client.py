@@ -10,6 +10,9 @@ from langfuse.decorators import langfuse_context
 from app.config import settings
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Evaluation:
@@ -42,7 +45,7 @@ class Langfuse:
                 )
             except Exception as e:
                 self.enabled = False
-                print(f"[Langfuse] Failed to initialize client: {e}")
+                logger.error(f"[Langfuse] Failed to initialize client: {e}")
 
     def get_dataset(self, name: str):
         if not self.enabled or not self.client:
@@ -71,9 +74,9 @@ class Langfuse:
             # Always create (idempotent — Langfuse ignores if already exists)
             self.client.create_dataset(name=dataset_name)
         except Exception as e:
-            print(f"[Langfuse] create_dataset warning: {e}")
+            logger.warning(f"[Langfuse] create_dataset warning: {e}")
 
-        print(f"[Langfuse] Syncing {len(questions)} questions to dataset '{dataset_name}'")
+        logger.info(f"[Langfuse] Syncing {len(questions)} questions to dataset '{dataset_name}'")
         for q in questions:
             try:
                 self.client.create_dataset_item(
@@ -91,13 +94,13 @@ class Langfuse:
                     },
                 )
             except Exception as e:
-                print(f"[Langfuse] Failed to upsert question {q.get('question_id')}: {e}")
+                logger.error(f"[Langfuse] Failed to upsert question {q.get('question_id')}: {e}")
 
         self.flush()
         try:
             return self.client.get_dataset(dataset_name)
         except Exception as e:
-            print(f"[Langfuse] Could not retrieve dataset after sync: {e}")
+            logger.error(f"[Langfuse] Could not retrieve dataset after sync: {e}")
             return None
 
     def flush(self):
@@ -153,9 +156,9 @@ class Langfuse:
                 observation_id=kwargs.get("observation_id")
             )
             self.client.client.dataset_run_items.create(request=request)
-            print(f"[Langfuse] Linked trace {kwargs.get('trace_id')} to dataset item {kwargs.get('dataset_item_id')}")
+            logger.info(f"[Langfuse] Linked trace {kwargs.get('trace_id')} to dataset item {kwargs.get('dataset_item_id')}")
         except Exception as e:
-            print(f"[Langfuse] Link failed: {e}")
+            logger.error(f"[Langfuse] Link failed: {e}")
 
     def run_experiment(
         self,
@@ -171,7 +174,7 @@ class Langfuse:
         
         try:
             dataset = self.client.get_dataset(dataset_name)
-            print(f"[Langfuse] Running experiment on dataset '{dataset_name}' with {len(dataset.items)} items")
+            logger.info(f"[Langfuse] Running experiment on dataset '{dataset_name}' with {len(dataset.items)} items")
             results = []
             for item in dataset.items:
                 try:
@@ -194,17 +197,17 @@ class Langfuse:
                                         metadata=evaluation.metadata
                                     )
                                 except Exception as e:
-                                    print(f"[Langfuse] Evaluator {eval_func.__name__} failed: {e}")
+                                    logger.error(f"[Langfuse] Evaluator {eval_func.__name__} failed: {e}")
                     
                     results.append(task_result)
                 except Exception as e:
-                    print(f"[Langfuse] Task failed for item {item.id}: {e}")
+                    logger.error(f"[Langfuse] Task failed for item {item.id}: {e}")
                     results.append(None)
             
             self.flush()
             return results
         except Exception as e:
-            print(f"[Langfuse] Experiment failed: {e}")
+            logger.error(f"[Langfuse] Experiment failed: {e}")
             return None
 
 # Singleton instance

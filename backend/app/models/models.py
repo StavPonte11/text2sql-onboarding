@@ -146,7 +146,7 @@ class EvalRun(SQLModel, table=True):
 class EvalRunRead(SQLModel):
     id: str
     table_id: str
-    table_name: Optional[str] = None
+    table_name: str
     dataset_id: Optional[str]
     score: float
     pass_rate: float

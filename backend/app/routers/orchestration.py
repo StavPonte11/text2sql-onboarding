@@ -32,8 +32,9 @@ from app.services.scoring import (
 )
 from app.services.llm_judge import evaluate_with_llm
 from app.services.trino_client import execute_query_sync
-from langfuse import Langfuse
+from app.services.langfuse_client import langfuse_client
 from langfuse.decorators import observe, langfuse_context
+from app.routers.evaluation import execute_single_table_eval
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -51,7 +52,7 @@ def run_text2sql_agent(question: str, table_id: str) -> dict:
     # In reality, this would invoke the LangGraph text2sql workflow
     # For evaluation, we execute the generated SQL against real Trino
     
-    generated_sql = f"SELECT id, name, value FROM {table_id[:8]} LIMIT 100;"
+    generated_sql = f'SELECT id, name, value FROM "{table_id[:8]}" LIMIT 100'
     
     # Execute against Trino
     trino_result = execute_query_sync(generated_sql, table_id)
@@ -110,116 +111,11 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
             if not run:
                 continue
 
-            # Initialize Langfuse client
-            langfuse_client = Langfuse()
-            dataset_name = f"text2sql_{table_id[:8]}"
+            # ── Delegate to shared core logic ───────────────────────────
+            score = execute_single_table_eval(table_id, run_id, session)
             
-            try:
-                dataset = langfuse_client.get_dataset(dataset_name)
-            except Exception as e:
-                run.status = EvalStatus.failed
-                run.completed_at = datetime.utcnow()
-                session.add(run)
-                session.commit()
-                _create_alert(session, run_id, table_id, "failed_run", AlertSeverity.critical,
-                              f"Langfuse Dataset {dataset_name} not found or failed to load. {str(e)}")
-                continue
-
-            if len(dataset.items) == 0:
-                continue
-
-            # Create Langfuse experiment run
-            langfuse_run_name = f"eval_run_{run_id}"
-
-            question_scores: list[tuple[float, str]] = []
-            failure_counts = {
-                "wrong_table": 0, "wrong_join": 0, "wrong_filter": 0,
-                "hallucination": 0, "execution_error": 0, "empty_result_bug": 0,
-            }
-            dim_totals = {"table_selection_correctness": 0.0, "sql_semantic_equivalence": 0.0, "result_correctness": 0.0}
-
-            t_start = time.time()
-
-            for item in dataset.items:
-                # Observe individual question trace
-                trace_name = f"eval_item_{item.id}"
-                with langfuse_context.observe(name=trace_name) as question_trace:
-                    
-                    # Extract inputs from Langfuse dataset item
-                    user_question = item.input.get("question", item.input) if isinstance(item.input, dict) else item.input
-                    expected_sql = item.expected_output.get("expected_sql", "") if isinstance(item.expected_output, dict) else item.expected_output
-                    question_type = item.metadata.get("question_type", "simple") if item.metadata else "simple"
-                    
-                    agent_result = run_text2sql_agent(user_question, table_id)
-                    exec_data = agent_result["execution"]
-
-                    # Link trace to Langfuse dataset run
-                    item.link(question_trace, run_name=langfuse_run_name)
-
-                execution = ExecutionResult(
-                    success=exec_data["success"],
-                    rows=exec_data["rows"],
-                    columns=exec_data["columns"],
-                    row_count=exec_data["row_count"],
-                    execution_time_ms=exec_data["execution_time_ms"],
-                    error_message=exec_data.get("error_message"),
-                )
-                expected_shape = ExpectedShape(row_count_min=0, row_count_max=999_999, expected_columns=["id", "name", "value"])
-
-                judge = evaluate_with_llm(
-                    user_question=user_question,
-                    expected_sql=expected_sql,
-                    generated_sql=agent_result["generated_sql"],
-                    execution=execution,
-                    expected_shape=expected_shape,
-                    schema_block=f"CREATE TABLE {table_id[:8]} (id INT, name VARCHAR, value DOUBLE);"
-                )
-
-                breakdown = compute_score(
-                    execution=execution,
-                    expected_shape=expected_shape,
-                    judge=judge,
-                    tables_used=agent_result["tables_used"],
-                    expected_tables=[],
-                    generated_columns=agent_result["generated_columns"],
-                    schema_columns=["id", "name", "value"],
-                    refiner_iterations=agent_result["refiner_iterations"],
-                    question_type=question_type,
-                )
-                
-                # Log score natively to Langfuse
-                langfuse_client.score(
-                    trace_id=question_trace.id,
-                    name="accuracy",
-                    value=breakdown.final_score,
-                    comment=f"Status: {breakdown.question_status}. Failure: {breakdown.failure_type}"
-                )
-                
-                result = EvalResult(
-                    run_id=run_id,
-                    question_id=str(item.id),
-                    score=breakdown.final_score,
-                    status="pass" if breakdown.question_status == "pass" else "fail",
-                    error_type=breakdown.failure_type,
-                )
-                session.add(result)
-
-                question_scores.append((breakdown.final_score, question_type))
-                if breakdown.failure_type and breakdown.failure_type in failure_counts:
-                    failure_counts[breakdown.failure_type] += 1
-
-                for dim in dim_totals:
-                    val = getattr(judge, dim, 0.0)
-                    dim_totals[dim] += val
-
-            duration = time.time() - t_start
-            agg = compute_dataset_score(question_scores)
-            n = len(dataset.items)
-
-            passes = sum(1 for s, _ in question_scores if s >= PASS_THRESHOLD)
-            fails = n - passes
-
-            dim_avgs = {k: round(v / n, 3) for k, v in dim_totals.items()} if n else {}
+            # Fetch updated run state
+            session.refresh(run)
 
             # Detect regression vs previous run
             prev_runs = session.exec(
@@ -233,51 +129,48 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
             regression_delta = None
 
             if prev_runs and prev_runs.score > 0:
-                delta = prev_runs.score - agg["dataset_score"]
+                delta = prev_runs.score - score
                 if delta > REGRESSION_BLOCK_DELTA:
                     regression_detected = True
                     regression_delta = round(delta, 4)
                     _create_alert(session, run_id, table_id, "regression", AlertSeverity.critical,
-                                  f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {agg['dataset_score']:.2f})",
-                                  {"previous_score": prev_runs.score, "current_score": agg["dataset_score"], "delta": delta})
+                                  f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                  {"previous_score": prev_runs.score, "current_score": score, "delta": delta})
                 elif delta > REGRESSION_WARNING_DELTA:
                     regression_detected = True
                     regression_delta = round(delta, 4)
                     _create_alert(session, run_id, table_id, "regression", AlertSeverity.warning,
                                   f"Score warning: {delta:.1%} drop detected",
-                                  {"previous_score": prev_runs.score, "current_score": agg["dataset_score"], "delta": delta})
+                                  {"previous_score": prev_runs.score, "current_score": score, "delta": delta})
 
             # Low score alert
-            if agg["dataset_score"] < LOW_SCORE_THRESHOLD:
-                _create_alert(session, run_id, table_id, "low_score", AlertSeverity.warning,
-                              f"Score {agg['dataset_score']:.2f} is below threshold {LOW_SCORE_THRESHOLD}",
-                              {"score": agg["dataset_score"], "threshold": LOW_SCORE_THRESHOLD})
+            if score < LOW_SCORE_THRESHOLD:
+                 _create_alert(session, run_id, table_id, "low_score", AlertSeverity.warning,
+                               f"Table performance is low ({score:.1%})")
 
-            # Update run
-            run.score = agg["dataset_score"]
-            run.pass_rate = round(passes / n, 3) if n else 0
-            run.fail_rate = round(fails / n, 3) if n else 0
-            run.total_questions = n
-            run.duration_seconds = round(duration, 2)
-            run.status = EvalStatus.completed
-            run.completed_at = datetime.utcnow()
-            run.failure_breakdown = failure_counts
-            run.dimension_averages = dim_avgs
+            # Finalize run orchestration fields
             run.regression_detected = regression_detected
             run.regression_delta = regression_delta
             session.add(run)
 
             # Persist metrics for analytics
-            for metric_name, metric_value in [
-                ("score", agg["dataset_score"]),
-                ("pass_rate", run.pass_rate),
-                ("fail_rate", run.fail_rate),
-                ("wrong_table", failure_counts["wrong_table"]),
-                ("wrong_join", failure_counts["wrong_join"]),
-                ("wrong_filter", failure_counts["wrong_filter"]),
-                ("execution_error", failure_counts["execution_error"]),
-            ]:
-                session.add(EvaluationHistoryMetric(run_id=run_id, metric_name=metric_name, metric_value=metric_value))
+            metrics_to_save = [
+                ("accuracy", score if score is not None else 0.0),
+            ]
+            if run.dimension_averages:
+                for dim_name, dim_val in run.dimension_averages.items():
+                    metrics_to_save.append((dim_name, dim_val if dim_val is not None else 0.0))
+            if run.failure_breakdown:
+                for fail_type, count in run.failure_breakdown.items():
+                    metrics_to_save.append((fail_type, float(count) if count is not None else 0.0))
+
+            for metric_name, m_val in metrics_to_save:
+                metric = EvaluationHistoryMetric(
+                    run_id=run_id,
+                    metric_name=metric_name,
+                    metric_value=m_val
+                )
+                session.add(metric)
 
             session.commit()
 
@@ -293,6 +186,7 @@ def _create_alert(session: Session, run_id: Optional[str], table_id: Optional[st
         details=details,
     )
     session.add(alert)
+    session.commit()
 
 
 # ── Runs ──────────────────────────────────────────────────────────────────────
@@ -322,7 +216,11 @@ def trigger_evaluation_run(
         [r.id for r in runs],
         triggered_by,
     )
-    return runs
+    read_runs = []
+    for r in runs:
+        t = session.get(Table, r.table_id)
+        read_runs.append(EvalRunRead.model_validate(r, update={"table_name": t.name if t else r.table_id}))
+    return read_runs
 
 
 @router.get("/runs", response_model=list[EvalRunRead])
@@ -333,7 +231,7 @@ def list_runs(
     table_id: Optional[str] = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    query = select(EvalRun, Table.name).join(Table, EvalRun.table_id == Table.id).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
+    query = select(EvalRun, Table.name).join(Table, EvalRun.table_id == Table.id, isouter=True).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
     if status:
         query = query.where(EvalRun.status == status)
     if table_id:
@@ -342,18 +240,24 @@ def list_runs(
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
-        read = EvalRunRead.model_validate(run)
-        read.table_name = table_name
+        read = EvalRunRead.model_validate(run, update={"table_name": table_name})
         runs.append(read)
     return runs
 
 
 @router.get("/runs/{run_id}", response_model=EvalRunRead)
 def get_run(run_id: str, session: Session = Depends(get_session)):
-    run = session.get(EvalRun, run_id)
-    if not run:
+    result = session.exec(
+        select(EvalRun, Table.name)
+        .join(Table, EvalRun.table_id == Table.id)
+        .where(EvalRun.id == run_id)
+    ).first()
+    
+    if not result:
         raise HTTPException(status_code=404, detail="Eval run not found")
-    return run
+        
+    run, table_name = result
+    return EvalRunRead.model_validate(run, update={"table_name": table_name})
 
 
 @router.get("/runs/{run_id}/report")

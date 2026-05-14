@@ -22,7 +22,6 @@ const NAV_GROUPS = [
     label: "Data",
     items: [
       { to: "/tables",         icon: Database,         key: "nav.tables",        label: "Tables" },
-      { to: "/sandbox",        icon: FlaskConical,     key: "nav.sandbox",       label: "Sandbox" },
       { to: "/monitoring",     icon: Activity,         key: "nav.monitoring",    label: "Audit Log" },
       { to: "/permissions",    icon: Shield,           key: "nav.permissions",   label: "Permissions" },
     ],
