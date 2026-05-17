@@ -27,6 +27,12 @@ const NAV_GROUPS = [
       { to: "/permissions",    icon: Shield,           key: "nav.permissions",   label: "Permissions" },
     ],
   },
+  {
+    label: "Administration",
+    items: [
+      { to: "/admin",          icon: Shield,           key: "nav.admin",         label: "Admin Panel" },
+    ],
+  },
 ];
 
 function AlertDot({ count }: { count: number }) {

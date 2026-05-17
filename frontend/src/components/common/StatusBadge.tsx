@@ -3,7 +3,7 @@ import type { TableStatus } from "../../types";
 const LABELS: Record<TableStatus, string> = {
   draft: "Draft",
   sandbox: "Sandbox",
-  verified: "Verified",
+  verified: "Awaiting Approval",
   production: "Production",
   degraded: "Degraded",
 };

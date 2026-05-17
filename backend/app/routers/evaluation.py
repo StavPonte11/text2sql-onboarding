@@ -140,6 +140,18 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     run.completed_at = datetime.utcnow()
     
     session.add(run)
+    
+    # Update table status lifecycle
+    table = session.get(Table, table_id)
+    if table:
+        if table.status == TableStatus.draft:
+            table.status = TableStatus.sandbox
+        elif table.status in [TableStatus.verified, TableStatus.production]:
+            # If a manual run fails PASS_THRESHOLD on a production/verified table, demote it
+            if run.score < 0.85:
+                table.status = TableStatus.degraded
+        session.add(table)
+        
     session.commit()
     
     logger.info(f"[Evaluation] Finished table {table_id} with score {run.score} "
@@ -225,14 +237,14 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
             _create_alert(session, run_id, table_id, "regression_detected", AlertSeverity.critical, msg)
             return
 
-        # Step 3: Promote
-        logger.info(f"[Promotion] Step 3: Promoting table {table_id} to production!")
+        # Step 3: Promote to verified (awaiting admin approval)
+        logger.info(f"[Promotion] Step 3: Promoting table {table_id} to verified!")
         table = session.get(Table, table_id)
         if table:
-            table.status = TableStatus.production
+            table.status = TableStatus.verified
             session.add(table)
             session.commit()
-            logger.info(f"[Promotion] Success: Table {table.name} is now in production.")
+            logger.info(f"[Promotion] Success: Table {table.name} is now verified and awaiting admin approval.")
 
 
 @observe(name="eval-run")

@@ -23,7 +23,7 @@
   /* Status */
   --status-draft: #64748b;
   --status-sandbox: #f59e0b;
-  --status-verified: #3b82f6;
+  --status-verified: #f97316;
   --status-production: #10b981;
   --status-degraded: #ef4444;
 
@@ -204,7 +204,7 @@ html, body, #root {
 
 .badge--draft    { color: var(--status-draft);      background: rgba(100,116,139,0.12); }
 .badge--sandbox  { color: var(--status-sandbox);    background: rgba(245,158,11,0.12);  }
-.badge--verified { color: var(--status-verified);   background: rgba(59,130,246,0.12);  }
+.badge--verified { color: var(--status-verified);   background: rgba(249,115,22,0.12);  }
 .badge--production { color: var(--status-production); background: rgba(16,185,129,0.12); }
 .badge--degraded { color: var(--status-degraded);   background: rgba(239,68,68,0.12);   }
 

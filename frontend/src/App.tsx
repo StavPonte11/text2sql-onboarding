@@ -13,6 +13,9 @@ import { ControlCenterPage } from "./pages/ControlCenterPage";
 import { EvaluationsPage } from "./pages/EvaluationsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { LandingPage } from "./pages/LandingPage";
+import { AdminLoginPage } from "./pages/AdminLoginPage";
+import { AdminPanelPage } from "./pages/AdminPanelPage";
+import { useAdminStore } from "./store/adminStore";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
 import "./styles/globals.css";
@@ -43,6 +46,14 @@ function LanguageToggle() {
   );
 }
 
+function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAdminStore((state) => state.isAuthenticated);
+  if (!isAuthenticated) {
+    return <Navigate to="/admin/login" replace />;
+  }
+  return <>{children}</>;
+}
+
 function AppLayout() {
   return (
     <div className="layout">
@@ -62,6 +73,14 @@ function AppLayout() {
           <Route path="/wizard" element={<OnboardingWizard />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
+          <Route 
+            path="/admin" 
+            element={
+              <ProtectedAdminRoute>
+                <AdminPanelPage />
+              </ProtectedAdminRoute>
+            } 
+          />
           {/* Catch-all redirect for unmatched inner routes */}
           <Route path="*" element={<Navigate to="/control-center" replace />} />
         </Routes>
@@ -78,6 +97,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<LandingPage />} />
+              <Route path="/admin/login" element={<AdminLoginPage />} />
               <Route path="/*" element={<AppLayout />} />
             </Routes>
           </BrowserRouter>

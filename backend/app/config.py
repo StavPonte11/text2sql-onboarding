@@ -25,5 +25,10 @@ class Settings(BaseSettings):
     TRINO_REQUEST_TIMEOUT: float = 30.0
     TRINO_ENABLED: bool = True  # Set False to disable real Trino calls
 
+    # JWT Config
+    JWT_SECRET: str = "dev-secret-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_HOURS: int = 8
+
 
 settings = Settings()
