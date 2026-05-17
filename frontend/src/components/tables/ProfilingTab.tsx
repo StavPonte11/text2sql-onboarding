@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { BarChart2, RefreshCw, Lightbulb, Table2, Link2, AlertTriangle } from "lucide-react";
+import { BarChart2, RefreshCw, Lightbulb, Table2, Link2, AlertTriangle, ChevronRight, ChevronDown, Layers } from "lucide-react";
 import { profilingApi } from "../../api/client";
-import type { ColumnProfile, CrossTableProfile } from "../../types";
+import type { ColumnProfile, CrossTableProfile, RowField } from "../../types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function pct(v?: number) {
@@ -14,8 +14,142 @@ function fmt(v?: number | null) {
   return v.toLocaleString();
 }
 
+const SEMANTIC_COLORS: Record<string, string> = {
+  row: "#818cf8",
+  categorical: "#34d399",
+  continuous: "#60a5fa",
+  time: "#f59e0b",
+  geo: "#fb923c",
+  complex: "#94a3b8",
+};
+
+// ── RowFieldTree ──────────────────────────────────────────────────────────────
+function RowFieldNode({ field, depth = 0 }: { field: RowField; depth?: number }) {
+  const [open, setOpen] = useState(depth === 0);
+  const isRow = field.semantic_type === "row";
+  const isSkipped = field.semantic_type === "complex";
+  const children = field.stats?.children ?? [];
+  const hasChildren = isRow && children.length > 0;
+  const color = SEMANTIC_COLORS[field.semantic_type ?? "continuous"] ?? "var(--text-muted)";
+
+  return (
+    <div style={{ marginLeft: depth > 0 ? 16 : 0 }}>
+      {/* Field header */}
+      <div
+        onClick={() => hasChildren && setOpen((o) => !o)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "5px 8px",
+          borderRadius: 6,
+          cursor: hasChildren ? "pointer" : "default",
+          background: depth === 0 ? "var(--bg-base)" : "transparent",
+          borderLeft: depth > 0 ? `2px solid ${color}22` : "none",
+          marginBottom: 2,
+          userSelect: "none",
+        }}
+      >
+        {hasChildren ? (
+          open
+            ? <ChevronDown size={12} color="var(--text-muted)" />
+            : <ChevronRight size={12} color="var(--text-muted)" />
+        ) : (
+          <span style={{ width: 12 }} />
+        )}
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{field.name}</span>
+        <span style={{
+          fontSize: 10, borderRadius: 3, padding: "1px 5px",
+          background: `${color}22`, color,
+          fontFamily: "monospace",
+        }}>
+          {field.semantic_type ?? "?"}
+        </span>
+        {field.data_type && (
+          <span style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace" }}>
+            {field.data_type.length > 30 ? field.data_type.slice(0, 30) + "…" : field.data_type}
+          </span>
+        )}
+        {/* Inline mini-stats */}
+        {!isRow && !isSkipped && (
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {field.null_rate !== undefined && (
+              <span style={{ fontSize: 10, color: (field.null_rate ?? 0) > 0.2 ? "var(--status-degraded)" : "var(--text-muted)" }}>
+                null {pct(field.null_rate)}
+              </span>
+            )}
+            {field.distinct_count !== undefined && (
+              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                {field.distinct_count.toLocaleString()} distinct
+              </span>
+            )}
+            {field.min_value !== undefined && (
+              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                [{field.min_value} … {field.max_value}]
+              </span>
+            )}
+          </div>
+        )}
+        {isSkipped && (
+          <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)", fontStyle: "italic" }}>skipped</span>
+        )}
+      </div>
+
+      {/* Top values pill row */}
+      {!isRow && !isSkipped && open && field.top_values && field.top_values.length > 0 && (
+        <div style={{ marginLeft: depth > 0 ? 28 : 20, marginBottom: 4, display: "flex", flexWrap: "wrap", gap: 3 }}>
+          {field.top_values.slice(0, 6).map((tv) => (
+            <span key={String(tv.value)} style={{
+              fontSize: 10,
+              background: "var(--accent-dim)",
+              color: "var(--accent-hover)",
+              borderRadius: 3,
+              padding: "1px 5px",
+            }}>
+              {String(tv.value)} ({tv.count.toLocaleString()})
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Nested children */}
+      {hasChildren && open && (
+        <div style={{
+          borderLeft: `1px dashed ${color}44`,
+          marginLeft: 14,
+          paddingLeft: 4,
+          marginBottom: 4,
+        }}>
+          {children.map((child) => (
+            <RowFieldNode key={child.name} field={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RowFieldTree({ children, dataType }: { children: RowField[]; dataType?: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {dataType && (
+        <div style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", marginBottom: 4, opacity: 0.7 }}>
+          {dataType.length > 60 ? dataType.slice(0, 60) + "…" : dataType}
+        </div>
+      )}
+      {children.map((f) => (
+        <RowFieldNode key={f.name} field={f} depth={0} />
+      ))}
+    </div>
+  );
+}
+
 // ── ColumnProfileCard ─────────────────────────────────────────────────────────
 export function ColumnProfileCard({ col }: { col: ColumnProfile }) {
+  const isRow = col.semantic_type === "row";
+  const rowChildren = col.stats_json?.children ?? [];
+  const rowDataType = col.stats_json?.data_type as string | undefined;
+
   const nullColor =
     (col.null_rate ?? 0) > 0.2
       ? "var(--status-degraded)"
@@ -23,11 +157,13 @@ export function ColumnProfileCard({ col }: { col: ColumnProfile }) {
       ? "var(--status-sandbox)"
       : "var(--status-production)";
 
+  const semanticColor = SEMANTIC_COLORS[col.semantic_type ?? "continuous"] ?? "var(--text-muted)";
+
   return (
     <div
       style={{
         background: "var(--bg-card)",
-        border: "1px solid var(--border)",
+        border: `1px solid ${isRow ? `${semanticColor}55` : "var(--border)"}`,
         borderRadius: 10,
         padding: "14px 16px",
         display: "flex",
@@ -35,54 +171,77 @@ export function ColumnProfileCard({ col }: { col: ColumnProfile }) {
         gap: 8,
       }}
     >
+      {/* Header row */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>
-          {col.column_name}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {isRow && <Layers size={13} color={semanticColor} />}
+          <span style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>
+            {col.column_name}
+          </span>
+        </div>
         <div style={{ display: "flex", gap: 4 }}>
+          {col.semantic_type && (
+            <span style={{
+              fontSize: 10, borderRadius: 4, padding: "2px 6px",
+              background: `${semanticColor}22`, color: semanticColor, fontWeight: 600,
+            }}>
+              {col.semantic_type}
+            </span>
+          )}
           {col.is_time && <span className="badge badge--neutral" style={{ fontSize: 10, padding: "2px 6px" }}>Time</span>}
           {col.is_geo && <span className="badge badge--neutral" style={{ fontSize: 10, padding: "2px 6px" }}>Geo</span>}
           {col.data_type && (
             <span style={{ fontSize: 10, color: "var(--text-muted)", background: "var(--bg-base)", borderRadius: 4, padding: "2px 6px", border: "1px solid var(--border-subtle)" }}>
-              {col.data_type}
+              {col.data_type.length > 24 ? col.data_type.slice(0, 24) + "…" : col.data_type}
             </span>
           )}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-        {[
-          { label: "Distinct", value: fmt(col.distinct_count) },
-          { label: "Nulls", value: pct(col.null_rate), color: nullColor },
-          { label: "Avg", value: col.avg_value != null ? col.avg_value.toFixed(2) : "—" },
-          { label: "Min", value: col.min_value ?? "—" },
-          { label: "Max", value: col.max_value ?? "—" },
-          { label: "Null #", value: fmt(col.null_count) },
-        ].map(({ label, value, color }) => (
-          <div key={label} style={{ background: "var(--bg-base)", borderRadius: 6, padding: "6px 8px" }}>
-            <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: color ?? "var(--text)" }}>{value}</div>
-          </div>
-        ))}
-      </div>
-
-      {col.top_values && col.top_values.length > 0 && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>Top Values</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {col.top_values.slice(0, 5).map((tv) => (
-              <span key={tv.value} style={{
-                fontSize: 10,
-                background: "var(--accent-dim)",
-                color: "var(--accent-hover)",
-                borderRadius: 4,
-                padding: "2px 6px",
-              }}>
-                {tv.value} ({tv.count.toLocaleString()})
-              </span>
+      {/* ROW type: render tree */}
+      {isRow ? (
+        rowChildren.length > 0 ? (
+          <RowFieldTree children={rowChildren} dataType={rowDataType} />
+        ) : (
+          <div style={{ fontSize: 11, color: "var(--text-muted)", fontStyle: "italic" }}>No inner fields found</div>
+        )
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            {[
+              { label: "Distinct", value: fmt(col.distinct_count) },
+              { label: "Nulls", value: pct(col.null_rate), color: nullColor },
+              { label: "Avg", value: col.avg_value != null ? col.avg_value.toFixed(2) : "—" },
+              { label: "Min", value: col.min_value ?? "—" },
+              { label: "Max", value: col.max_value ?? "—" },
+              { label: "Null #", value: fmt(col.null_count) },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ background: "var(--bg-base)", borderRadius: 6, padding: "6px 8px" }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: color ?? "var(--text)" }}>{value}</div>
+              </div>
             ))}
           </div>
-        </div>
+
+          {col.top_values && col.top_values.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>Top Values</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {col.top_values.slice(0, 5).map((tv) => (
+                  <span key={tv.value} style={{
+                    fontSize: 10,
+                    background: "var(--accent-dim)",
+                    color: "var(--accent-hover)",
+                    borderRadius: 4,
+                    padding: "2px 6px",
+                  }}>
+                    {tv.value} ({tv.count.toLocaleString()})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
