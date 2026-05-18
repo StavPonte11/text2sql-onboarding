@@ -6,7 +6,6 @@ from datetime import datetime
 from app.db.engine import get_session
 from app.models.models import Table, TableStatus, Admin, EvalRun, EvalStatus, GoldenQuestion
 from app.services.auth import get_current_admin
-from app.services.warehouse import add_table_to_warehouse, remove_table_from_warehouse
 from app.services.langfuse_client import langfuse_client
 import logging
 
@@ -116,8 +115,7 @@ def approve_table(
 
     Actions:
       1. Set table.status = production
-      2. Add the table to the data warehouse (physical PostgreSQL schema)
-      3. Sync its golden questions to the shared 'text2sql_production' Langfuse dataset
+      2. Sync its golden questions to the shared 'text2sql_production' Langfuse dataset
     """
     table = session.get(Table, table_id)
     if not table:
@@ -135,18 +133,8 @@ def approve_table(
     session.add(table)
     session.commit()
 
-    # 2. Add to warehouse (real PostgreSQL DDL)
-    added = add_table_to_warehouse(table)
-    if not added:
-        logger.warning(
-            f"[AdminApproval] Could not add '{table.name}' to warehouse after approval — "
-            f"status already set to production. Manual intervention may be needed."
-        )
-
-    # 3. Sync questions to shared production Langfuse dataset
+    # 2. Sync questions to shared production Langfuse dataset
     _sync_questions_to_production_dataset(table, session)
-
-    # 4. (Removed) We no longer delete the candidate dataset so that historical traces remain accessible.
 
     logger.info(
         f"[AdminApproval] Admin '{current_admin.username}' approved table '{table.name}' → production"
@@ -155,7 +143,6 @@ def approve_table(
         "message": "Table approved for production",
         "table_id": table_id,
         "status": table.status,
-        "warehouse_added": added,
     }
 
 
@@ -168,9 +155,6 @@ def reject_table(
 ):
     """
     Reject a verified table, returning it to sandbox.
-
-    No warehouse action is taken — the table was never permanently added
-    (it was only temporarily inserted during the evaluation and then removed).
     """
     table = session.get(Table, table_id)
     if not table:

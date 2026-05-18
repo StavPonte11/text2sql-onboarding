@@ -4,9 +4,6 @@ evaluation.py — Evaluation pipeline with two-phase promotion workflow.
 Promotion flow:
   Phase A: Measure baseline contains_execution_accuracy on all production tables
            using the single shared 'text2sql_production' Langfuse dataset.
-  Phase B: Add candidate table to warehouse (without its golden questions),
-           build a temp Langfuse dataset with just the candidate's questions,
-           run both datasets, then remove the candidate from the warehouse.
 
 Pass criteria (both must be met):
   1. candidate_score  >= 0.50
@@ -32,7 +29,6 @@ from app.models.models import (
 )
 from app.services.langfuse_client import langfuse_client
 from app.services.evaluator import TextToSQLEvaluator
-from app.services.warehouse import add_table_to_warehouse, remove_table_from_warehouse
 from langfuse.decorators import observe, langfuse_context
 import logging
 
@@ -384,10 +380,8 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
       2. Run evaluation → baseline_score (contains_execution_accuracy).
 
     Phase B — Candidate:
-      3. Add candidate table to warehouse (schema only, no golden questions yet).
-      4. Run eval on temp dataset of candidate's questions → candidate_score.
-      5. Re-run production dataset eval → regression_score.
-      6. Remove candidate from warehouse.
+      1. Run eval on temp dataset of candidate's questions → candidate_score.
+      2. Re-run production dataset eval → regression_score.
 
     Pass criteria:
       candidate_score  >= 0.50
@@ -425,28 +419,17 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
         threshold_min = round(baseline_score - 0.10, 3)
         logger.info(f"[Promotion] Baseline={baseline_score:.3f}, regression must be >= {threshold_min:.3f}")
 
-        # ── Phase B step 1: add candidate table to warehouse ──────────────────
-        logger.info(f"[Promotion] Phase B: adding '{table.name}' to warehouse...")
-        added = add_table_to_warehouse(table)
-        if not added:
-            logger.warning(f"[Promotion] Could not add '{table.name}' to warehouse; continuing anyway.")
-
         candidate_score = 0.0
         regression_score = 0.0
-        try:
-            # ── Phase B step 2: evaluate candidate's golden questions ──────────
-            candidate_score = _run_candidate_eval(table, questions, run_name_prefix, session, promotion_run_id=run_id)
 
-            # ── Phase B step 3: regression on production dataset ───────────────
-            if candidate_score >= 0.50:
-                regression_score = _run_regression_eval(run_name_prefix, session, promotion_run_id=run_id)
-            else:
-                regression_score = baseline_score # Skip regression, candidate failed
+        # ── Phase B step 1: evaluate candidate's golden questions ──────────
+        candidate_score = _run_candidate_eval(table, questions, run_name_prefix, session, promotion_run_id=run_id)
 
-        finally:
-            # ── Phase B step 4: always remove candidate from warehouse ─────────
-            logger.info(f"[Promotion] Removing '{table.name}' from warehouse (eval complete).")
-            remove_table_from_warehouse(table)
+        # ── Phase B step 2: regression on production dataset ───────────────
+        if candidate_score >= 0.50:
+            regression_score = _run_regression_eval(run_name_prefix, session, promotion_run_id=run_id)
+        else:
+            regression_score = baseline_score # Skip regression, candidate failed
 
         # ── Evaluate pass criteria ─────────────────────────────────────────────
         candidate_ok  = candidate_score  >= 0.50
@@ -597,8 +580,9 @@ def list_runs(table_id: str, session: Session = Depends(get_session)):
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(
-            (EvalRun.table_id == table_id) | 
-            (EvalRun.promotion_run_id.in_(promotion_run_ids))
+            ((EvalRun.table_id == table_id) | 
+            (EvalRun.promotion_run_id.in_(promotion_run_ids)))
+            & (EvalRun.triggered_by != "promotion")
         )
         .order_by(desc(EvalRun.created_at))
     ).all()
@@ -622,6 +606,7 @@ def get_all_eval_runs(session: Session = Depends(get_session)):
     results = session.exec(
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id)
+        .where(EvalRun.triggered_by != "promotion")
         .order_by(desc(EvalRun.created_at))
         .limit(100)
     ).all()
@@ -633,7 +618,10 @@ def get_batch_runs(promotion_run_id: str, session: Session = Depends(get_session
     results = session.exec(
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id, isouter=True)
-        .where((EvalRun.id == promotion_run_id) | (EvalRun.promotion_run_id == promotion_run_id))
+        .where(
+            ((EvalRun.id == promotion_run_id) | (EvalRun.promotion_run_id == promotion_run_id))
+            & (EvalRun.triggered_by != "promotion")
+        )
         .order_by(desc(EvalRun.created_at))
     ).all()
     return [EvalRunRead.model_validate(run, update={"table_name": name or "Unknown"}) for run, name in results]
@@ -664,6 +652,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+
     total  = len(results)
     passes = sum(1 for r in results if r.status == "pass")
 

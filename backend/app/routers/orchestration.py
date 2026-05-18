@@ -304,6 +304,12 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
     results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+    
+    # fetch questions text for each question
+    q_ids = [r.question_id for r in results]
+    questions = session.exec(select(GoldenQuestion).where(GoldenQuestion.id.in_(q_ids))).all()
+    question_map = {q.id: q.question for q in questions}
+    
     return {
         "run_id": run_id,
         "table_id": run.table_id,
@@ -324,6 +330,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "per_question": [
             {
                 "question_id": r.question_id,
+                "question": question_map.get(r.question_id),
                 "score": r.score,
                 "status": r.status,
                 "failure_type": r.error_type,

@@ -7,7 +7,7 @@ from app.models.models import (
     Table, TableCreate, TableRead,
     TableStatus, UserScope
 )
-from app.services.warehouse import remove_table_from_warehouse
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,6 @@ def update_table_status(
 ):
     """
     Update a table's status.
-
-    If transitioning FROM production → sandbox:
-      The table is removed from the data warehouse so the Text2SQL agent
-      can no longer query it.
     """
     table = session.get(Table, table_id)
     if not table:
@@ -83,15 +79,13 @@ def update_table_status(
     session.commit()
     session.refresh(table)
 
-    from app.services.warehouse import add_table_to_warehouse, remove_table_from_warehouse
     from app.services.langfuse_client import langfuse_client
     from app.routers.evaluation import _build_questions_payload, PRODUCTION_DATASET_NAME
     from app.models.models import GoldenQuestion
 
     # Handle transitions
     if status == TableStatus.production and previous_status != TableStatus.production:
-        logger.info(f"[Tables] Table '{table.name}' approved for production. Adding to warehouse and dataset.")
-        add_table_to_warehouse(table)
+        logger.info(f"[Tables] Table '{table.name}' approved for production. Adding to dataset.")
         
         # Upsert golden questions to production dataset
         qs = session.exec(select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)).all()
@@ -100,9 +94,7 @@ def update_table_status(
             langfuse_client.ensure_dataset_synced(PRODUCTION_DATASET_NAME, payload)
             
     elif status in [TableStatus.sandbox, TableStatus.degraded] and previous_status == TableStatus.production:
-        logger.info(f"[Tables] Table '{table.name}' demoted from production -> {status.value}. Removing from warehouse and dataset.")
-        remove_table_from_warehouse(table)
-        
+        logger.info(f"[Tables] Table '{table.name}' demoted from production -> {status.value}. Removing from dataset.")
         # Remove questions from production dataset
         langfuse_client.remove_table_questions_from_dataset(PRODUCTION_DATASET_NAME, table.id)
 

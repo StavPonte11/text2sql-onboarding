@@ -6,7 +6,7 @@ from app.models.models import (
     EnrichmentVersion, EnrichmentCreate, EnrichmentRead,
     Table, TableStatus
 )
-from app.services.warehouse import remove_table_from_warehouse
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def create_enrichment(
 
     If the table is currently in 'production' and the new enrichment
     changes the table_description or schema fields, the table is
-    automatically moved to 'degraded' and removed from the data warehouse.
+    automatically moved to 'degraded'.
 
     This forces a full re-evaluation cycle before the table can be
     promoted to production again.
@@ -57,18 +57,13 @@ def create_enrichment(
         if changed_keys:
             logger.warning(
                 f"[Enrichment] Production table '{table.name}' enrichment changed "
-                f"({', '.join(changed_keys)}) → degraded. Removing from warehouse."
+                f"({', '.join(changed_keys)}) → degraded."
             )
             table.status = TableStatus.degraded
             table.updated_at = datetime.utcnow()
             session.add(table)
 
-            removed = remove_table_from_warehouse(table)
-            if not removed:
-                logger.warning(
-                    f"[Enrichment] Could not remove '{table.name}' from warehouse "
-                    f"after degradation. Manual cleanup may be required."
-                )
+
 
     ev = EnrichmentVersion(
         table_id=table_id,
