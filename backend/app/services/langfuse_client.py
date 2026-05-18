@@ -266,11 +266,28 @@ class LangfuseDatasetService:
         self.logger.info(
             f"[LangfuseDatasetService] Syncing {len(questions)} questions to '{dataset_name}'"
         )
+        
+        # Fetch existing to avoid duplicates since upsert by ID is not supported natively
+        import requests
+        existing_qids = set()
+        if self._tracer.public_key:
+            res = requests.get(
+                f"{self._tracer.host}/api/public/dataset-items?datasetName={dataset_name}",
+                auth=(self._tracer.public_key, self._tracer.private_key)
+            )
+            if res.status_code == 200:
+                data = res.json().get("data", [])
+                for item in data:
+                    qid = item.get("metadata", {}).get("question_id")
+                    if qid:
+                        existing_qids.add(qid)
+
         for q in questions:
+            if q["question_id"] in existing_qids:
+                continue
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
-                    id=q["question_id"],        # upsert key — prevents duplicates
                     input={
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],
@@ -298,6 +315,37 @@ class LangfuseDatasetService:
                 f"[LangfuseDatasetService] Could not retrieve dataset after sync: {exc}"
             )
             return None
+
+    def clear_dataset(self, dataset_name: str) -> None:
+        """
+        Deletes all items in a dataset.
+        """
+        import requests
+        if not self.enabled:
+            return
+
+        try:
+            pub = self._tracer.public_key
+            sec = self._tracer.private_key
+            host = self._tracer.host
+
+            res = requests.get(
+                f"{host}/api/public/dataset-items?datasetName={dataset_name}",
+                auth=(pub, sec)
+            )
+            if res.status_code != 200:
+                self.logger.warning(f"[LangfuseDatasetService] Failed to fetch items for clear: {res.status_code} {res.text}")
+                return
+
+            data = res.json().get("data", [])
+            for item in data:
+                requests.delete(
+                    f"{host}/api/public/dataset-items/{item['id']}",
+                    auth=(pub, sec)
+                )
+            self.logger.info(f"[LangfuseDatasetService] Cleared {len(data)} items from dataset '{dataset_name}'.")
+        except Exception as exc:
+            self.logger.error(f"[LangfuseDatasetService] Error clearing dataset '{dataset_name}': {exc}")
 
     def remove_table_questions_from_dataset(self, dataset_name: str, table_id: str) -> None:
         """
@@ -375,12 +423,29 @@ class LangfuseDatasetService:
         self.logger.info(
             f"[LangfuseDatasetService] Appending {len(questions)} questions to '{dataset_name}'"
         )
+        
+        # Fetch existing to avoid duplicates
+        import requests
+        existing_qids = set()
+        if self._tracer.public_key:
+            res = requests.get(
+                f"{self._tracer.host}/api/public/dataset-items?datasetName={dataset_name}",
+                auth=(self._tracer.public_key, self._tracer.private_key)
+            )
+            if res.status_code == 200:
+                data = res.json().get("data", [])
+                for item in data:
+                    qid = item.get("metadata", {}).get("question_id")
+                    if qid:
+                        existing_qids.add(qid)
+
         all_ok = True
         for q in questions:
+            if q["question_id"] in existing_qids:
+                continue
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
-                    id=q["question_id"],        # upsert key
                     input={
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],

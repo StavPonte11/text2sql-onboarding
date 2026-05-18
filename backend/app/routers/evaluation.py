@@ -273,41 +273,49 @@ def _run_candidate_eval(
 
     dataset_name = "text2sql_candidate"
 
-    if langfuse_client.enabled:
-        try:
-            langfuse_client.ensure_dataset_synced(
-                dataset_name, _build_questions_payload(questions, table)
-            )
-            
-            evaluator = TextToSQLEvaluator(
-                run_name=f"{run_name_prefix}-Candidate",
-                session=session,
-                table_id=table.id,
-                run_id=run.id,
-                question_scores=question_scores,
-            )
-            evaluator.run_single_dataset(dataset_name)
-        except Exception as e:
-            logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
+    score = 0.0
+    try:
+        if langfuse_client.enabled:
+            try:
+                langfuse_client.ensure_dataset_synced(
+                    dataset_name, _build_questions_payload(questions, table)
+                )
+                
+                evaluator = TextToSQLEvaluator(
+                    run_name=f"{run_name_prefix}-Candidate",
+                    session=session,
+                    table_id=table.id,
+                    run_id=run.id,
+                    question_scores=question_scores,
+                )
+                evaluator.run_single_dataset(dataset_name)
+            except Exception as e:
+                logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
 
-    if not question_scores:
-        import random
-        question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in questions]
+        if not question_scores:
+            import random
+            question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in questions]
 
-    score = round(sum(question_scores) / len(question_scores), 3)
-    pass_count = sum(1 for s in question_scores if s >= 0.50)
-    pass_rate = round(pass_count / len(question_scores), 3) if question_scores else 1.0
+        score = round(sum(question_scores) / len(question_scores), 3)
+        pass_count = sum(1 for s in question_scores if s >= 0.50)
+        pass_rate = round(pass_count / len(question_scores), 3) if question_scores else 1.0
 
-    run.score = score
-    run.pass_rate = pass_rate
-    run.fail_rate = round(1.0 - pass_rate, 3)
-    run.total_questions = len(question_scores)
-    run.status = EvalStatus.completed
-    run.completed_at = datetime.utcnow()
-    session.add(run)
-    session.commit()
+        run.score = score
+        run.pass_rate = pass_rate
+        run.fail_rate = round(1.0 - pass_rate, 3)
+        run.total_questions = len(question_scores)
+        run.status = EvalStatus.completed
+        run.completed_at = datetime.utcnow()
+        session.add(run)
+        session.commit()
 
-    logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' score = {score:.3f}")
+        logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' score = {score:.3f}")
+    finally:
+        # User requested: remove the items after the evaluation so they don't accumulate
+        if langfuse_client.enabled:
+            langfuse_client.clear_dataset(dataset_name)
+            logger.info(f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after evaluation.")
+
     return score
 
 
