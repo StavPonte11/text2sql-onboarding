@@ -86,11 +86,11 @@ function SideBySide({
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{label}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 18, fontWeight: 800, color: val1 >= 0.9 ? "#10b981" : val1 >= 0.8 ? "#f59e0b" : "#ef4444" }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: val1 >= 0.5 ? "#10b981" : "#ef4444" }}>
             {format(val1)}
           </span>
           <ArrowRight size={14} style={{ color: "var(--text-muted)" }} />
-          <span style={{ fontSize: 18, fontWeight: 800, color: val2 >= 0.9 ? "#10b981" : val2 >= 0.8 ? "#f59e0b" : "#ef4444" }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: val2 >= 0.5 ? "#10b981" : "#ef4444" }}>
             {format(val2)}
           </span>
         </div>
@@ -213,7 +213,7 @@ export function ComparisonView() {
               <div key={prefix} className="card">
                 <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{label}</div>
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4, fontFamily: "monospace" }}>{run.id.slice(0, 16)}…</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: run.score >= 0.9 ? "#10b981" : run.score >= 0.8 ? "#f59e0b" : "#ef4444" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: run.score >= 0.5 ? "#10b981" : "#ef4444" }}>
                   {Math.round(run.score * 100)}%
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>

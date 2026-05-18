@@ -9,7 +9,7 @@ import { ErrorState } from "../components/common/ErrorState";
 
 function ScoreRing({ score }: { score: number }) {
   const pct = Math.round(score * 100);
-  const cls = pct >= 70 ? "score-ring--high" : pct >= 40 ? "score-ring--mid" : "score-ring--low";
+  const cls = pct >= 50 ? "score-ring--high" : "score-ring--low";
   return <div className={`score-ring ${cls}`}>{pct}%</div>;
 }
 

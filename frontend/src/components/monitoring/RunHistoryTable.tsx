@@ -34,8 +34,8 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
             {/* Summary */}
             <div className="card summary-grid">
               {[
-                { label: "Score", value: `${Math.round(report.overall_score * 100)}%`, color: report.overall_score >= 0.9 ? "#10b981" : report.overall_score >= 0.8 ? "#f59e0b" : "#ef4444" },
-                { label: "Pass Rate", value: `${Math.round(report.pass_rate * 100)}%`, color: "#6366f1" },
+                { label: "Score", value: `${Math.round(report.overall_score * 100)}%`, color: report.overall_score >= 0.5 ? "#10b981" : "#ef4444" },
+                { label: "Pass Rate", value: `${Math.round(report.pass_rate * 100)}%`, color: report.pass_rate >= 0.5 ? "#10b981" : "#ef4444" },
                 { label: "Questions", value: report.total_questions, color: "var(--text-primary)" },
                 { label: "Duration", value: report.duration_seconds ? `${report.duration_seconds}s` : "—", color: "var(--text-secondary)" },
               ].map(({ label, value, color }) => (
@@ -85,7 +85,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   <div key={dim} className="dimension-item">
                     <div className="dimension-item__header">
                       <span className="dimension-item__label">{dim.replace(/_/g, " ")}</span>
-                      <span className="dimension-item__score" style={{ color: val >= 0.9 ? "#10b981" : val >= 0.7 ? "#f59e0b" : "#ef4444" }}>
+                      <span className="dimension-item__score" style={{ color: val >= 0.5 ? "#10b981" : "#ef4444" }}>
                         {Math.round(val * 100)}%
                       </span>
                     </div>
@@ -108,7 +108,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       <div className="question-item__id" title={q.question}>
                         {q.question.slice(0, 16)}…
                       </div>
-                      <div className="question-item__score" style={{ color: q.score >= 0.85 ? "#10b981" : q.score >= 0.6 ? "#f59e0b" : "#ef4444" }}>
+                      <div className="question-item__score" style={{ color: q.score >= 0.5 ? "#10b981" : "#ef4444" }}>
                         {Math.round(q.score * 100)}%
                       </div>
                       {q.failure_type && (
@@ -216,7 +216,7 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                 )}
                 <td>
                   <div className="score-cell-content">
-                    <span className="score-text" style={{ color: run.score >= 0.9 ? "#10b981" : run.score >= 0.8 ? "#f59e0b" : "#ef4444" }}>
+                    <span className="score-text" style={{ color: run.score >= 0.5 ? "#10b981" : "#ef4444" }}>
                       {Math.round(run.score * 100)}%
                     </span>
                     {run.regression_detected && (

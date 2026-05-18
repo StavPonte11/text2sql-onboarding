@@ -131,14 +131,14 @@ export function AdminPanelPage() {
                     <td><StatusBadge status={table.status} /></td>
                     <td>
                       {table.latest_run ? (
-                        <span style={{ color: table.latest_run.score >= 0.8 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
+                        <span style={{ color: table.latest_run.score >= 0.5 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
                           {(table.latest_run.score * 100).toFixed(0)}%
                         </span>
                       ) : '-'}
                     </td>
                     <td>
                       {table.latest_run ? (
-                        <span style={{ color: table.latest_run.pass_rate >= 0.8 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
+                        <span style={{ color: table.latest_run.pass_rate >= 0.5 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
                           {(table.latest_run.pass_rate * 100).toFixed(0)}%
                         </span>
                       ) : '-'}

@@ -50,7 +50,7 @@ interface ScoreBarProps {
 
 export function ScoreBar({ score, height = 6, showLabel = false }: ScoreBarProps) {
   const pct = Math.round(score * 100);
-  const color = score >= 0.90 ? "#10b981" : score >= 0.80 ? "#f59e0b" : "#ef4444";
+  const color = score >= 0.5 ? "#10b981" : "#ef4444";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <div style={{ flex: 1, height, background: "rgba(255,255,255,0.06)", borderRadius: height / 2, overflow: "hidden" }}>

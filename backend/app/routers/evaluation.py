@@ -107,21 +107,40 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     # Score locally — stub returns random values ≥ 0.35 per question.
     # MERGE: replace with real MCP/Trino calls via TextToSQLEvaluator.
     import random
-    question_scores: list[float] = [
+    question_scores_contains: list[float] = [
+        round(random.uniform(0.35, 1.0), 3) for _ in questions
+    ]
+    question_scores_exact: list[float] = [
+        round(random.uniform(0.35, 1.0), 3) for _ in questions
+    ]
+    question_scores_ranking: list[float] = [
         round(random.uniform(0.35, 1.0), 3) for _ in questions
     ]
     logger.info(f"[Eval] Scored {len(questions)} questions for table {table_id} (local stubs)")
 
-    avg_score = round(sum(question_scores) / len(question_scores), 3)
-    pass_count = sum(1 for s in question_scores if s >= 0.50)
-    pass_rate = round(pass_count / len(question_scores), 3)
+    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3)
+    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
+    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3)
 
-    run.score = avg_score
-    run.pass_rate = pass_rate
+    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3)
+    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
+    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3)
+
+    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
+    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3)
+
+    run.score = avg_score_contains
+    run.pass_rate = pass_rate_contains
     run.fail_rate = round(1.0 - pass_rate, 3)
     run.total_questions = len(questions)
     run.status = EvalStatus.completed
     run.completed_at = datetime.utcnow()
+    run.dimension_averages = {
+        "contains_execution_accuracy": avg_score_contains,
+        "exact_execution_accuracy": avg_score_exact,
+        "ranking_accuracy": avg_score_ranking
+    }
     session.add(run)
 
     # Lifecycle: draft → sandbox on first evaluation only
@@ -133,11 +152,14 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     session.commit()
 
     logger.info(
-        f"[Eval] Table {table_id}: contains_exec_accuracy={avg_score} "
-        f"({len(questions)} questions, pass_rate={pass_rate})"
+        f"[Eval] Table {table_id}: contains_exec_accuracy={avg_score_contains} "
+        f"exact_exec_accuracy={avg_score_exact} ranking_accuracy={avg_score_ranking} "
+        f"({len(questions)} questions, pass_rates=[{pass_rate_contains}, {pass_rate_exact}, {pass_rate_ranking}])"
     )
-    langfuse_context.update_current_trace(output={"score": avg_score, "pass_rate": pass_rate})
-    return avg_score
+    langfuse_context.update_current_trace(
+        output={"score": avg_score_contains, "pass_rate": pass_rate_contains}
+    )
+    return avg_score_contains
 
 
 # ─── Phase A: measure baseline score on production dataset ────────────────────
@@ -221,22 +243,42 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
         )
         question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in range(max(1, total_q))]
 
-    score = round(sum(question_scores) / len(question_scores), 3) if question_scores else 1.0
-    pass_count = sum(1 for s in question_scores if s >= 0.50)
-    pass_rate = round(pass_count / len(question_scores), 3) if question_scores else 1.0
+    # Generate stubs for exact and ranking based on the same length
+    import random
+    question_scores_contains = question_scores
+    question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+    question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
 
-    run.score = score
-    run.pass_rate = pass_rate
-    run.fail_rate = round(1.0 - pass_rate, 3)
-    run.total_questions = len(question_scores)
+    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 1.0
+    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
+    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+
+    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 1.0
+    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
+    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+
+    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
+    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+
+    run.score = avg_score_contains
+    run.pass_rate = pass_rate_contains
+    run.fail_rate = round(1.0 - pass_rate_contains, 3)
+    run.total_questions = len(question_scores_contains)
     run.status = EvalStatus.completed
     run.completed_at = datetime.utcnow()
+    run.dimension_averages = {
+        "contains_execution_accuracy": avg_score_contains,
+        "exact_execution_accuracy": avg_score_exact,
+        "ranking_accuracy": avg_score_ranking
+    }
     session.add(run)
     session.commit()
 
-    logger.info(f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {score:.3f} "
-                f"({len(question_scores)} questions)")
-    return score
+    logger.info(f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {avg_score_contains:.3f} "
+                f"exact_exec_accuracy = {avg_score_exact:.3f} ranking_accuracy = {avg_score_ranking:.3f} "
+                f"({len(question_scores_contains)} questions)")
+    return avg_score_contains
 
 
 
@@ -292,27 +334,47 @@ def _run_candidate_eval(
             import random
             question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in questions]
 
-        score = round(sum(question_scores) / len(question_scores), 3)
-        pass_count = sum(1 for s in question_scores if s >= 0.50)
-        pass_rate = round(pass_count / len(question_scores), 3) if question_scores else 1.0
+        # Generate stubs for exact and ranking based on the same length
+        import random
+        question_scores_contains = question_scores
+        question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+        question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
 
-        run.score = score
-        run.pass_rate = pass_rate
-        run.fail_rate = round(1.0 - pass_rate, 3)
-        run.total_questions = len(question_scores)
+        avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
+        pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
+        pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+
+        avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 0.0
+        pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
+        pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+
+        avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 0.0
+        pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
+        pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+
+        run.score = avg_score_contains
+        run.pass_rate = pass_rate_contains
+        run.fail_rate = round(1.0 - pass_rate_contains, 3)
+        run.total_questions = len(question_scores_contains)
         run.status = EvalStatus.completed
         run.completed_at = datetime.utcnow()
+        run.dimension_averages = {
+            "contains_execution_accuracy": avg_score_contains,
+            "exact_execution_accuracy": avg_score_exact,
+            "ranking_accuracy": avg_score_ranking
+        }
         session.add(run)
         session.commit()
 
-        logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' score = {score:.3f}")
+        logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
+                    f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}")
     finally:
         # User requested: remove the items after the evaluation so they don't accumulate
         if langfuse_client.enabled:
             langfuse_client.clear_dataset(dataset_name)
             logger.info(f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after evaluation.")
 
-    return score
+    return avg_score_contains
 
 
 def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_id: str) -> float:
@@ -351,21 +413,41 @@ def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_i
         # Slight variance from baseline to simulate real regression testing
         question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in range(5)]
 
-    score = round(sum(question_scores) / len(question_scores), 3)
-    pass_count = sum(1 for s in question_scores if s >= 0.50)
-    pass_rate = round(pass_count / len(question_scores), 3) if question_scores else 1.0
+    # Generate stubs for exact and ranking based on the same length
+    import random
+    question_scores_contains = question_scores
+    question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+    question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
 
-    run.score = score
-    run.pass_rate = pass_rate
-    run.fail_rate = round(1.0 - pass_rate, 3)
-    run.total_questions = len(question_scores)
+    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
+    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
+    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+
+    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 0.0
+    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
+    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+
+    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 0.0
+    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
+    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+
+    run.score = avg_score_contains
+    run.pass_rate = pass_rate_contains
+    run.fail_rate = round(1.0 - pass_rate_contains, 3)
+    run.total_questions = len(question_scores_contains)
     run.status = EvalStatus.completed
     run.completed_at = datetime.utcnow()
+    run.dimension_averages = {
+        "contains_execution_accuracy": avg_score_contains,
+        "exact_execution_accuracy": avg_score_exact,
+        "ranking_accuracy": avg_score_ranking
+    }
     session.add(run)
     session.commit()
 
-    logger.info(f"[Promotion/Phase-B] Regression score (with candidate) = {score:.3f}")
-    return score
+    logger.info(f"[Promotion/Phase-B] Regression contains_score (with candidate) = {avg_score_contains:.3f} "
+                f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}")
+    return avg_score_contains
 
 
 # ─── Main promotion workflow ───────────────────────────────────────────────────
@@ -433,7 +515,7 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
 
         # ── Evaluate pass criteria ─────────────────────────────────────────────
         candidate_ok  = candidate_score  >= 0.50
-        regression_ok = regression_score >= threshold_min
+        regression_ok = regression_score >= threshold_min and regression_score >= 0.50
 
         run.score     = candidate_score
         run.pass_rate = candidate_score
@@ -482,24 +564,24 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.post("/tables/{table_id}/promote", status_code=202)
-def promote_table(
-    table_id: str,
-    background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session),
-):
-    """Trigger the two-phase production promotion workflow."""
-    table = session.get(Table, table_id)
-    if not table:
-        raise HTTPException(status_code=404, detail="Table not found")
+# @router.post("/tables/{table_id}/promote", status_code=202)
+# def promote_table(
+#     table_id: str,
+#     background_tasks: BackgroundTasks,
+#     session: Session = Depends(get_session),
+# ):
+#     """Trigger the two-phase production promotion workflow."""
+#     table = session.get(Table, table_id)
+#     if not table:
+#         raise HTTPException(status_code=404, detail="Table not found")
 
-    run = EvalRun(table_id=table_id, status=EvalStatus.running, triggered_by="promotion")
-    session.add(run)
-    session.commit()
-    session.refresh(run)
+#     run = EvalRun(table_id=table_id, status=EvalStatus.running, triggered_by="promotion")
+#     session.add(run)
+#     session.commit()
+#     session.refresh(run)
 
-    background_tasks.add_task(promote_table_to_production_workflow, table_id, run.id)
-    return {"message": "Promotion workflow started", "run_id": run.id}
+#     background_tasks.add_task(promote_table_to_production_workflow, table_id, run.id)
+#     return {"message": "Promotion workflow started", "run_id": run.id}
 
 
 @router.get("/eval/readiness")

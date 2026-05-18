@@ -52,7 +52,7 @@ function TrendTab() {
         <MetricCard
           label="Avg Score"
           value={avgScore !== null ? `${Math.round(avgScore * 100)}%` : "—"}
-          color={avgScore !== null ? (avgScore >= 0.9 ? "#10b981" : avgScore >= 0.8 ? "#f59e0b" : "#ef4444") : "var(--text-muted)"}
+          color={avgScore !== null ? (avgScore >= 0.5 ? "#10b981" : "#ef4444") : "var(--text-muted)"}
         />
         <MetricCard label="Total Runs" value={totalRuns} color="var(--accent-hover)" />
         <MetricCard
@@ -224,7 +224,7 @@ function TablesTab() {
                     <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
                       <span style={{
                         fontSize: 15, fontWeight: 800,
-                        color: t.latest_score >= 0.9 ? "#10b981" : t.latest_score >= 0.8 ? "#f59e0b" : "#ef4444",
+                        color: t.latest_score >= 0.5 ? "#10b981" : "#ef4444",
                       }}>
                         {Math.round(t.latest_score * 100)}%
                       </span>
@@ -238,7 +238,7 @@ function TablesTab() {
                   {t.pass_rate !== null ? (
                     <span style={{
                       fontSize: 13, fontWeight: 700,
-                      color: t.pass_rate >= 0.9 ? "#10b981" : t.pass_rate >= 0.8 ? "#f59e0b" : "#ef4444",
+                      color: t.pass_rate >= 0.5 ? "#10b981" : "#ef4444",
                     }}>
                       {Math.round(t.pass_rate * 100)}%
                     </span>

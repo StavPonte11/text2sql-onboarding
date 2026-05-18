@@ -219,7 +219,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         workflow can read it after all questions are evaluated.
         """
         # ── STUB ───────────────────────────────────────────────────────────────
-        value = round(random.uniform(0.35, 1.0), 3)
+        value = random.randint(0, 1)
         # ── REAL (uncomment on merge) ───────────────────────────────────────────
         # generated_sql = result.get("response")
         # if not generated_sql:

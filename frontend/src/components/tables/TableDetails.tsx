@@ -79,7 +79,7 @@ export function TableDetails() {
   const activePromotion = latestPromotion?.status === "running" ? latestPromotion : undefined;
 
   // Precise filter: only regression runs that were created by THIS promotion run
-  const currentBatchRegressions = batchRuns?.filter(r => r.triggered_by === "regression") || [];
+  const currentBatchRegressions = batchRuns?.filter(r => r.triggered_by === "promotion-regression") || [];
 
   const activeRegressions = currentBatchRegressions.filter(r => r.status === "running");
   
@@ -312,7 +312,7 @@ export function TableDetails() {
                     <tr key={run.id}>
                       <td style={{ fontWeight: 600, fontSize: 13 }}>{run.table_name || run.table_id.slice(0,8)}</td>
                       <td>
-                        <div style={{ fontWeight: 700, color: run.score >= 0.8 ? "var(--status-production)" : "var(--status-degraded)" }}>
+                        <div style={{ fontWeight: 700, color: run.score >= 0.5 ? "var(--status-production)" : "var(--status-degraded)" }}>
                           {Math.round(run.score * 100)}%
                         </div>
                       </td>
