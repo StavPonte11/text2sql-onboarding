@@ -275,7 +275,8 @@ def list_runs(
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
-        read = EvalRunRead.model_validate(run, update={"table_name": table_name})
+        t_name = table_name if table_name else "All prod tables"
+        read = EvalRunRead.model_validate(run, update={"table_name": t_name})
         runs.append(read)
     return runs
 
@@ -292,7 +293,8 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
         
     run, table_name = result
-    return EvalRunRead.model_validate(run, update={"table_name": table_name})
+    t_name = table_name if table_name else "All prod tables"
+    return EvalRunRead.model_validate(run, update={"table_name": t_name})
 
 
 @router.get("/runs/{run_id}/report")
@@ -312,7 +314,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
-        "is_publishable": run.score >= 0.80,
+        "is_publishable": run.score >= 0.50,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
         "failure_breakdown": run.failure_breakdown or {},

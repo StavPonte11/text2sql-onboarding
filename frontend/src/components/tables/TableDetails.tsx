@@ -13,7 +13,7 @@ import { AuditTab } from "./AuditTab";
 import { PublishModal } from "./PublishModal";
 import { ProfilingTab } from "./ProfilingTab";
 import { HealthDashboard } from "./HealthDashboard";
-import { AlertCircle, ArrowLeft, Rocket, ShieldCheck, FlaskConical, CornerUpLeft } from "lucide-react";
+import { ArrowLeft, Rocket, ShieldCheck, FlaskConical, CornerUpLeft } from "lucide-react";
 import { App } from "antd";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import dayjs from "dayjs";

@@ -75,7 +75,9 @@ function RecentRunRow({ run }: {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <code style={{ fontSize: 12, color: "var(--text-secondary)" }}>{run.table_id.slice(0, 10)}…</code>
+          <code style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            {run.table_id ? `${run.table_id.slice(0, 10)}…` : "All prod tables"}
+          </code>
           {run.regression_detected && (
             <span title="Regression"><AlertTriangle size={11} style={{ color: "#ef4444" }} /></span>
           )}

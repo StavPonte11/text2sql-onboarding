@@ -250,9 +250,11 @@ class LangfuseDatasetService:
 
     def ensure_dataset_synced(self, dataset_name: str, questions: list) -> object:
         """
-        Ensure the Langfuse dataset exists and contains all given questions.
-        Creates/recreates the dataset if missing, then upserts every item.
-        Returns the dataset object (ready for run_experiment).
+        Build a Langfuse dataset containing all given questions.
+        Creates the dataset if it does not exist.
+        Uses the question_id as the item ID so re-syncing the same question
+        is an upsert (no duplicates).
+        Returns the dataset object.
         """
         if not self.enabled:
             return None
@@ -268,6 +270,7 @@ class LangfuseDatasetService:
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
+                    id=q["question_id"],        # upsert key — prevents duplicates
                     input={
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],
@@ -278,6 +281,7 @@ class LangfuseDatasetService:
                         "difficulty": str(q.get("difficulty", "")).lower().strip(),
                         "question_id": q["question_id"],
                         "question_type": str(q.get("question_type", "")).lower().strip(),
+                        "table_id": q.get("table_id", ""),
                     },
                 )
             except Exception as exc:
@@ -295,33 +299,60 @@ class LangfuseDatasetService:
             )
             return None
 
-    def sync_question_to_dataset(self, **kwargs) -> bool:
+    def append_questions_to_dataset(self, dataset_name: str, questions: list) -> bool:
+        """
+        Append new questions to an existing dataset without rebuilding it.
+        Uses question_id as the item ID so this is safe to call multiple times
+        (idempotent — already-present questions will be upserted in place).
+
+        Args:
+            dataset_name: Target Langfuse dataset name.
+            questions:    List of question dicts (same shape as ensure_dataset_synced).
+
+        Returns:
+            True if all items were written successfully, False if any failed.
+        """
         if not self.enabled:
+            self.logger.info(f"[LangfuseDatasetService] Langfuse disabled — skipping append to '{dataset_name}'")
             return False
+
+        # Ensure the dataset exists (no-op if it already does)
         try:
-            dataset_name = f"text2sql_{kwargs['table_id'][:8]}"
+            self._tracer.client.create_dataset(name=dataset_name)
+        except Exception as exc:
+            self.logger.warning(f"[LangfuseDatasetService] create_dataset warning (append): {exc}")
+
+        self.logger.info(
+            f"[LangfuseDatasetService] Appending {len(questions)} questions to '{dataset_name}'"
+        )
+        all_ok = True
+        for q in questions:
             try:
-                self._tracer.client.create_dataset(name=dataset_name)
-            except Exception:
-                pass
-            self._tracer.client.create_dataset_item(
-                dataset_name=dataset_name,
-                input={
-                    "query": kwargs["question_text"],
-                    "databases": [kwargs.get("schema_name", kwargs["table_id"])],
-                },
-                expected_output={"response": kwargs["expected_sql"]},
-                metadata={
-                    "split": kwargs.get("split", ""),
-                    "difficulty": str(kwargs.get("difficulty", "")).lower().strip(),
-                    "question_id": kwargs["question_id"],
-                    "question_type": str(kwargs["question_type"]).lower().strip(),
-                },
-            )
-            self.flush()
-            return True
-        except Exception:
-            return False
+                self._tracer.client.create_dataset_item(
+                    dataset_name=dataset_name,
+                    id=q["question_id"],        # upsert key
+                    input={
+                        "query": q["question_text"],
+                        "databases": [q.get("schema_name", q["table_id"])],
+                    },
+                    expected_output={"response": q["expected_sql"]},
+                    metadata={
+                        "split": q.get("split", ""),
+                        "difficulty": str(q.get("difficulty", "")).lower().strip(),
+                        "question_id": q["question_id"],
+                        "question_type": str(q.get("question_type", "")).lower().strip(),
+                        "table_id": q.get("table_id", ""),
+                    },
+                )
+            except Exception as exc:
+                self.logger.error(
+                    f"[LangfuseDatasetService] Failed to append question "
+                    f"{q.get('question_id')} to '{dataset_name}': {exc}"
+                )
+                all_ok = False
+
+        self.flush()
+        return all_ok
 
     def link_trace_to_dataset_run(self, **kwargs) -> None:
         if not self.enabled:

@@ -127,7 +127,7 @@ export function EvaluationTab({ tableId }: Props) {
             <thead>
               <tr>
                 <th>Run ID</th>
-                <th>{t("evaluations.score")}</th>
+                <th>Contains Execution Accuracy</th>
                 <th>{t("evaluations.status")}</th>
                 <th>Type</th>
                 <th>Created</th>

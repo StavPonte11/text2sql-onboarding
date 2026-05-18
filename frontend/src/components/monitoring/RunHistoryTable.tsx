@@ -49,7 +49,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
             {/* Publishable status */}
             <div className={`publishable-status ${report.is_publishable ? "publishable-status--ready" : "publishable-status--not-ready"}`}>
               <span>{report.is_publishable ? <Check size={14} /> : <X size={14} />}</span>
-              {report.is_publishable ? "Ready to publish (score ≥ 80%)" : "Not publishable — score below 80%"}
+              {report.is_publishable ? "Ready to publish (score ≥ 50%)" : "Not publishable — score below 50%"}
             </div>
 
             {/* Regression */}
@@ -201,13 +201,17 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                 )}
                 {!tableId && (
                   <td className="table-link-cell">
-                    <Link 
-                      to={`/tables/${run.table_id}`} 
-                      onClick={e => e.stopPropagation()}
-                      className="table-link hover:underline"
-                    >
-                      {run.table_name || run.table_id.slice(0, 8)}
-                    </Link>
+                    {run.table_id ? (
+                      <Link 
+                        to={`/tables/${run.table_id}`} 
+                        onClick={e => e.stopPropagation()}
+                        className="table-link hover:underline"
+                      >
+                        {run.table_name || run.table_id.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      <span className="table-link">{run.table_name}</span>
+                    )}
                   </td>
                 )}
                 <td>

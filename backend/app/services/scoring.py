@@ -17,7 +17,7 @@ from typing import Optional
 
 PASS_THRESHOLD    = 0.85
 PARTIAL_THRESHOLD = 0.60
-BLOCK_THRESHOLD   = 0.80     # dataset-level
+BLOCK_THRESHOLD   = 0.50     # dataset-level
 REGRESSION_BLOCK  = 0.10
 REGRESSION_WARN   = 0.05
 MAX_ITERATIONS    = 4

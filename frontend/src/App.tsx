@@ -8,7 +8,6 @@ import { TableDetails } from "./components/tables/TableDetails";
 import { OnboardingWizard } from "./components/wizard/OnboardingWizard";
 import { MonitoringPage } from "./components/monitoring/MonitoringPage";
 import { ScopesPage } from "./pages/ScopesPage";
-import { SandboxPage } from "./pages/SandboxPage";
 import { ControlCenterPage } from "./pages/ControlCenterPage";
 import { EvaluationsPage } from "./pages/EvaluationsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";

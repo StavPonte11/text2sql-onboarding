@@ -30,6 +30,14 @@ export function PublishModal({ tableId, onClose, onTrackProgress }: Props) {
     queryFn: () => questionsApi.list(tableId),
   });
 
+  const { data: runs } = useQuery({
+    queryKey: ["eval-runs", tableId],
+    queryFn: () => evalApi.listRuns(tableId),
+  });
+
+  const latestRun = runs?.[0];
+  const hasPassingEval = (latestRun?.score ?? 0) >= 0.50;
+
   const checks = [
     {
       label: "Enrichment exists",
@@ -40,12 +48,16 @@ export function PublishModal({ tableId, onClose, onTrackProgress }: Props) {
       pass: (questions?.length ?? 0) >= 1,
     },
     {
+      label: "Contains Execution Accuracy ≥ 50%",
+      pass: hasPassingEval,
+    },
+    {
       label: "Table description ≥ 20 chars",
       pass: (enrichment?.data?.table_description?.length ?? 0) >= 20,
     },
     {
       label: "All columns have descriptions",
-      pass: enrichment?.data?.columns?.every((c) => c.description?.length >= 20) ?? false,
+      pass: enrichment?.data?.columns?.every((c: any) => c.description?.length >= 20) ?? false,
     },
   ];
 

@@ -124,7 +124,7 @@ class EvalRun(SQLModel, table=True):
     __tablename__ = "eval_runs"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
+    table_id: Optional[str] = Field(default=None, foreign_key="tables.id", index=True)
     dataset_id: Optional[str] = Field(default=None, index=True)
     score: float = Field(default=0.0)
     pass_rate: float = Field(default=0.0)
@@ -145,7 +145,7 @@ class EvalRun(SQLModel, table=True):
 
 class EvalRunRead(SQLModel):
     id: str
-    table_id: str
+    table_id: Optional[str]
     table_name: str
     dataset_id: Optional[str]
     score: float

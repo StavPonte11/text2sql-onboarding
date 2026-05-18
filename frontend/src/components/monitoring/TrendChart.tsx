@@ -61,7 +61,7 @@ export function TrendChart({ data, height = 220 }: TrendChartProps) {
           labelFormatter={l => `Date: ${l}`}
         />
         <ReferenceLine y={90} stroke="#10b981" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: "90%", fill: "#10b981", fontSize: 10, position: "right" }} />
-        <ReferenceLine y={80} stroke="#f59e0b" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: "80%", fill: "#f59e0b", fontSize: 10, position: "right" }} />
+        <ReferenceLine y={50} stroke="#f59e0b" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: "50%", fill: "#f59e0b", fontSize: 10, position: "right" }} />
         <Area type="monotone" dataKey="score_pct" stroke="#6366f1" fill="url(#scoreGrad)" strokeWidth={2.5} dot={false} name="score_pct" />
         <Area type="monotone" dataKey="pass_pct" stroke="#10b981" fill="url(#passGrad)" strokeWidth={2} dot={false} name="pass_pct" />
         <Legend formatter={n => n === "score_pct" ? "Avg Score" : "Pass Rate"} wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
