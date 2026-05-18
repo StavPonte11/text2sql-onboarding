@@ -11,6 +11,8 @@ from app.routers import tables, enrichment, questions, evaluation, publish, scop
 from app.routers import orchestration, admin_auth, admin_approval
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.auth import get_password_hash
+from app.services.warehouse import add_table_to_warehouse
+from app.models.models import Table, TableStatus
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +26,19 @@ def seed_admin():
             session.commit()
             logger.info("Default admin 'admin' created.")
 
+def init_production_warehouse():
+    with Session(engine) as session:
+        prod_tables = session.exec(select(Table).where(Table.status == TableStatus.production)).all()
+        for table in prod_tables:
+            add_table_to_warehouse(table)
+            logger.info(f"Startup: Verified production table '{table.name}' in warehouse.")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         create_db_and_tables()
         seed_admin()
+        init_production_warehouse()
         start_scheduler()
     except Exception as e:
         logger.error(f"Startup error: {e}", exc_info=True)

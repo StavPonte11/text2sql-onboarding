@@ -299,6 +299,56 @@ class LangfuseDatasetService:
             )
             return None
 
+    def remove_table_questions_from_dataset(self, dataset_name: str, table_id: str) -> None:
+        """
+        Removes all dataset items belonging to a specific table from a dataset.
+        Since Langfuse SDK does not expose delete natively, this uses requests.
+        """
+        import requests
+        if not self.enabled:
+            return
+
+        try:
+            # 1. Fetch all items in the dataset
+            pub = self._tracer.public_key
+            sec = self._tracer.private_key
+            host = self._tracer.host
+
+            res = requests.get(
+                f"{host}/api/public/dataset-items?datasetName={dataset_name}",
+                auth=(pub, sec)
+            )
+            if res.status_code != 200:
+                self.logger.warning(f"[LangfuseDatasetService] Failed to fetch items: {res.status_code} {res.text}")
+                return
+
+            data = res.json().get("data", [])
+            
+            # 2. Filter items belonging to the table
+            items_to_delete = [
+                item for item in data 
+                if item.get("metadata", {}).get("table_id") == table_id
+            ]
+
+            if not items_to_delete:
+                self.logger.info(f"[LangfuseDatasetService] No items found for table {table_id} in {dataset_name}.")
+                return
+
+            # 3. Delete them
+            for item in items_to_delete:
+                del_res = requests.delete(
+                    f"{host}/api/public/dataset-items/{item['id']}",
+                    auth=(pub, sec)
+                )
+                if del_res.status_code != 200:
+                    self.logger.error(f"[LangfuseDatasetService] Failed to delete item {item['id']}: {del_res.text}")
+                else:
+                    self.logger.debug(f"[LangfuseDatasetService] Deleted dataset item {item['id']} for table {table_id}.")
+            
+            self.logger.info(f"[LangfuseDatasetService] Removed {len(items_to_delete)} questions for table {table_id} from {dataset_name}.")
+        except Exception as exc:
+            self.logger.error(f"[LangfuseDatasetService] Error removing questions: {exc}")
+
     def append_questions_to_dataset(self, dataset_name: str, questions: list) -> bool:
         """
         Append new questions to an existing dataset without rebuilding it.

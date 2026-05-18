@@ -134,7 +134,9 @@ export function EvaluationTab({ tableId }: Props) {
               </tr>
             </thead>
             <tbody>
-              {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])].map((run) => (
+              {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])]
+                .filter(run => run.triggered_by !== "promotion")
+                .map((run) => (
                 <tr key={run.id}>
                   <td><code className="run-id-code">{run.id.slice(0,8)}…</code></td>
                   <td><ScoreRing score={run.score} /></td>
