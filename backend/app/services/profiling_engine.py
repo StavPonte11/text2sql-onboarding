@@ -59,6 +59,9 @@ class ColumnStats:
     max_value: Optional[str] = None
     avg_value: Optional[float] = None
     median_value: Optional[float] = None
+    q25_value: Optional[float] = None
+    q75_value: Optional[float] = None
+    stddev_value: Optional[float] = None
     sample_values: List[Any] = field(default_factory=list)
     stats_json: Dict = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
@@ -121,7 +124,19 @@ def build_numeric_stats_query(fqn: str, col: str) -> str:
         f'  MIN("{col}") AS min_val, '
         f'  MAX("{col}") AS max_val, '
         f'  AVG(CAST("{col}" AS DOUBLE)) AS avg_val, '
-        f'  APPROX_PERCENTILE(CAST("{col}" AS DOUBLE), 0.5) AS median_val '
+        f'  APPROX_PERCENTILE(CAST("{col}" AS DOUBLE), ARRAY[0.25, 0.5, 0.75]) AS quants, '
+        f'  STDDEV_POP(CAST("{col}" AS DOUBLE)) AS std_val '
+        f'FROM {fqn} WHERE "{col}" IS NOT NULL'
+    )
+
+def build_time_stats_query(fqn: str, col: str) -> str:
+    # Safely extract unix epoch stats for temporal fields
+    return (
+        f'SELECT '
+        f'  MIN("{col}") AS min_val, '
+        f'  MAX("{col}") AS max_val, '
+        f'  APPROX_PERCENTILE(to_unixtime(CAST("{col}" AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]) AS quants, '
+        f'  STDDEV_POP(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS std_val '
         f'FROM {fqn} WHERE "{col}" IS NOT NULL'
     )
 
@@ -396,7 +411,7 @@ def _analyze_column(
         else:
             stats.errors.append(f"top_values: {r.error_message}")
 
-    # 4. Numeric stats (only for non-categorical numeric columns)
+    # 4. Numeric stats
     if dtype_lower in NUMERIC_TYPES and not stats.is_categorical:
         r = execute_with_timeout(build_numeric_stats_query(fqn, col_name), table_id)
         if r.success and r.rows:
@@ -404,9 +419,30 @@ def _analyze_column(
             stats.min_value = str(row[0]) if row[0] is not None else None
             stats.max_value = str(row[1]) if row[1] is not None else None
             stats.avg_value = _safe_float(row[2])
-            stats.median_value = _safe_float(row[3])
+            quants = row[3]
+            if isinstance(quants, list) and len(quants) >= 3:
+                stats.q25_value = _safe_float(quants[0])
+                stats.median_value = _safe_float(quants[1])
+                stats.q75_value = _safe_float(quants[2])
+            stats.stddev_value = _safe_float(row[4])
         else:
             stats.errors.append(f"numeric_stats: {r.error_message}")
+
+    # 4b. Temporal stats
+    elif stats.is_time and not stats.is_categorical:
+        r = execute_with_timeout(build_time_stats_query(fqn, col_name), table_id)
+        if r.success and r.rows:
+            row = r.rows[0]
+            stats.min_value = str(row[0]) if row[0] is not None else None
+            stats.max_value = str(row[1]) if row[1] is not None else None
+            quants = row[2]
+            if isinstance(quants, list) and len(quants) >= 3:
+                stats.q25_value = _safe_float(quants[0])
+                stats.median_value = _safe_float(quants[1])
+                stats.q75_value = _safe_float(quants[2])
+            stats.stddev_value = _safe_float(row[3])
+        else:
+            stats.errors.append(f"time_stats: {r.error_message}")
 
     # 5. Semantic type
     stats.semantic_type = _detect_semantic_type(
@@ -429,6 +465,9 @@ def _analyze_column(
             "max": stats.max_value,
             "avg": stats.avg_value,
             "median": stats.median_value,
+            "q25": stats.q25_value,
+            "q75": stats.q75_value,
+            "stddev": stats.stddev_value,
             "distinct_count": stats.distinct_count,
             "null_rate": stats.null_rate,
             "sample_values": [v["value"] for v in top_values[:10]],
