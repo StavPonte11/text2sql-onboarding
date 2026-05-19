@@ -73,15 +73,13 @@ def publish_table(
         raise HTTPException(status_code=422, detail={"blocking_errors": blocking_errors, "warnings": warnings})
 
     # ── Trigger Promotion Workflow (Async) ────────────────────────────────────
-    run = EvalRun(table_id=table_id, status=EvalStatus.running, triggered_by="promotion")
-    session.add(run)
-    session.commit()
-    session.refresh(run)
+    import uuid
+    run_id = str(uuid.uuid4())
 
-    background_tasks.add_task(promote_table_to_production_workflow, table_id, run.id)
+    background_tasks.add_task(promote_table_to_production_workflow, table_id, run_id)
 
     return {
         "status": "publishing",
         "message": "Production promotion workflow started with regression tests.",
-        "run_id": run.id,
+        "run_id": run_id,
     }

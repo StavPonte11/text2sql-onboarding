@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitCompare, ArrowRight, TrendingUp, TrendingDown, Minus, AlertTriangle } from "lucide-react";
+import { GitCompare, ArrowRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import dayjs from "dayjs";
 import { orchestrationApi, type CompareResult } from "../../api/orchestration";
-import { StatusBadge, Spinner } from "../common/EvalUI";
+import { Spinner } from "../common/EvalUI";
 import { CompareBarChart } from "./TrendChart";
 
 // ── Run selector ───────────────────────────────────────────────────────────────

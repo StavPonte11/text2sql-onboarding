@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, RefreshCw, AlertTriangle, Check, X } from "lucide-react";
+import { ChevronRight, ExternalLink, RefreshCw, AlertTriangle, Check, X, ArrowRight } from "lucide-react";
 import dayjs from "dayjs";
 import { Link } from "react-router-dom";
 import { orchestrationApi, type EvalRunFull } from "../../api/orchestration";
@@ -13,6 +13,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
     queryKey: ["run-report", runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
     enabled: !!runId,
+  });
+
+  const isRegressionRun = report?.triggered_by === "promotion-regression";
+
+  const { data: regressionDiff } = useQuery({
+    queryKey: ["regression-diff", runId],
+    queryFn: () => orchestrationApi.getRegressionDiff(runId),
+    enabled: isRegressionRun,
   });
 
   return (
@@ -119,6 +127,81 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Regression diff — only for promotion-regression runs */}
+            {isRegressionRun && (
+              <div className="card" style={{ border: "1px solid rgba(239,68,68,0.25)" }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 14,
+                }}>
+                  <AlertTriangle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+                  <span style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>
+                    Regressed Questions
+                  </span>
+                  {regressionDiff && (
+                    <span style={{
+                      marginLeft: "auto", fontSize: 11, fontWeight: 700, padding: "2px 8px",
+                      borderRadius: 20, background: regressionDiff.total_regressions > 0 ? "rgba(239,68,68,0.12)" : "rgba(16,185,129,0.12)",
+                      color: regressionDiff.total_regressions > 0 ? "#ef4444" : "#10b981",
+                    }}>
+                      {regressionDiff.total_regressions} regression{regressionDiff.total_regressions !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10 }}>
+                  Questions that passed the production baseline but failed after adding the candidate table.
+                </div>
+
+                {!regressionDiff ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: 12 }}><Spinner size={18} /></div>
+                ) : regressionDiff.total_regressions === 0 ? (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                    background: "rgba(16,185,129,0.06)", borderRadius: 8,
+                    fontSize: 12.5, color: "#10b981", fontWeight: 600,
+                  }}>
+                    <Check size={14} />
+                    No regressions detected — all baseline questions still pass
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {regressionDiff.regressions.map((item) => (
+                      <div key={item.question_id} style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", borderRadius: 8,
+                        background: "rgba(239,68,68,0.05)",
+                        border: "1px solid rgba(239,68,68,0.15)",
+                      }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: 12.5, color: "var(--text-primary)", fontWeight: 500,
+                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                          }} title={item.question}>
+                            {item.question}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#10b981" }}>
+                            {Math.round(item.baseline_score * 100)}%
+                          </span>
+                          <ArrowRight size={11} style={{ color: "var(--text-muted)" }} />
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#ef4444" }}>
+                            {Math.round(item.regression_score * 100)}%
+                          </span>
+                          <span style={{
+                            fontSize: 11, fontWeight: 800, padding: "1px 6px",
+                            borderRadius: 6, background: "rgba(239,68,68,0.15)", color: "#ef4444",
+                          }}>
+                            −{Math.round(item.score_drop * 100)}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

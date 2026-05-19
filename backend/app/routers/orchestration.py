@@ -320,6 +320,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
+        "promotion_run_id": run.promotion_run_id,
         "is_publishable": run.score > 0.00,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
