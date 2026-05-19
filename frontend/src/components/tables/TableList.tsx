@@ -31,7 +31,7 @@ export function TableList() {
   const [statusFilter, setStatusFilter] = useState<TableStatus | "">("");
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState<TableCreate>({
-    name: "", schema_name: "public", owner_id: "user-1",
+    oasis_source_id: "",
   });
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -47,7 +47,7 @@ export function TableList() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tables"] });
       setShowCreate(false);
-      setCreateForm({ name: "", schema_name: "public", owner_id: "user-1" });
+      setCreateForm({ oasis_source_id: "" });
       message.success("Table created successfully");
     },
   });
@@ -152,29 +152,12 @@ export function TableList() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2 className="modal__title">Create New Table</h2>
             <div className="form-group">
-              <label className="form-label">Table Name</label>
+              <label className="form-label">Oasis Source ID</label>
               <input
                 className="form-input"
-                placeholder="e.g. orders"
-                value={createForm.name}
-                onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Schema</label>
-              <input
-                className="form-input"
-                placeholder="e.g. public"
-                value={createForm.schema_name}
-                onChange={(e) => setCreateForm((f) => ({ ...f, schema_name: e.target.value }))}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Owner ID</label>
-              <input
-                className="form-input"
-                value={createForm.owner_id}
-                onChange={(e) => setCreateForm((f) => ({ ...f, owner_id: e.target.value }))}
+                placeholder="e.g. some-uuid-or-fqn"
+                value={createForm.oasis_source_id}
+                onChange={(e) => setCreateForm({ oasis_source_id: e.target.value })}
               />
             </div>
             <div className="modal__actions">
@@ -183,7 +166,7 @@ export function TableList() {
               </button>
               <button
                 className="btn btn--primary"
-                disabled={!createForm.name || createMutation.isPending}
+                disabled={!createForm.oasis_source_id || createMutation.isPending}
                 onClick={() => createMutation.mutate(createForm)}
               >
                 {createMutation.isPending ? "Creating..." : "Create Table"}

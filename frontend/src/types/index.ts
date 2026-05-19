@@ -12,15 +12,14 @@ export interface Table {
   name: string;
   schema_name: string;
   status: TableStatus;
-  owner_id: string;
+  owner_id?: string;
+  oasis_source_id?: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface TableCreate {
-  name: string;
-  schema_name: string;
-  owner_id: string;
+  oasis_source_id: string;
 }
 
 export interface ColumnDef {

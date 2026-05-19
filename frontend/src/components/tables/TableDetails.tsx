@@ -92,7 +92,7 @@ export function TableDetails() {
 
   const tabs: Array<{ key: TabKey; label: string }> = [
     { key: "overview",     label: t("tabs.overview") },
-    { key: "enrichment",   label: t("tabs.enrichment") },
+    { key: "enrichment",   label: "Schema" },
     { key: "questions",    label: t("tabs.questions") },
     { key: "evaluations",  label: t("tabs.evaluations") },
     { key: "profiling",    label: "Profiling" },

@@ -512,6 +512,14 @@ html, body, #root {
 .mb-4 { margin-bottom: 16px; }
 .w-full { width: 100%; }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
 .lang-toggle {
   display: flex;
   align-items: center;

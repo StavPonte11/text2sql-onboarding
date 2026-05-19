@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:5173"]
 
     APP_ENV: str = "development"
+    OPENMETADATA_URL: str = "http://localhost:8585"
 
     # Trino connection
     TRINO_HOST: str = "localhost"

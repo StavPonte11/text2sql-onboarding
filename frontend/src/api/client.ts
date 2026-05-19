@@ -31,6 +31,8 @@ export const tablesApi = {
     api.post<Table>("/tables", payload).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<Table>(`/tables/${id}/status`, null, { params: { status } }).then((r) => r.data),
+  syncSchema: (id: string) =>
+    api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
 };
 
 // ── Enrichment ────────────────────────────────────────────────────────────────
