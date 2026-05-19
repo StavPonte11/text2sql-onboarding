@@ -140,15 +140,62 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     if not table:   
         raise HTTPException(status_code=404, detail="Table not found")
 
-    profile = session.exec(
+    completed = session.exec(
+        select(TableProfile)
+        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .order_by(TableProfile.created_at.desc())
+    ).first()
+
+    latest = session.exec(
         select(TableProfile)
         .where(TableProfile.table_id == table_id)
         .order_by(TableProfile.created_at.desc())
     ).first()
 
-    if not profile:
+    if not completed and not latest:
         raise HTTPException(status_code=404, detail="No profile found. Run POST /profile/run first.")
-    return profile
+        
+    # If a new profile is running, return the old data but indicate it's running
+    if completed and latest and latest.status == ProfilingStatus.running:
+        completed.status = ProfilingStatus.running
+        return completed
+
+    return latest if latest else completed
+
+
+# ── POST /tables/all/profile/run ──────────────────────────────────────────────
+@router.post("/tables/all/profile/run", status_code=202)
+def run_all_profiles(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    session: Session = Depends(get_session)
+):
+    """
+    Triggers profiling for all registered tables. 
+    Ideal for Airflow DAGs to keep profiles up-to-date.
+    """
+    tables = session.exec(select(Table)).all()
+    count = 0
+    for table in tables:
+        # If not force, check for running profile
+        if not force:
+            stale = session.exec(
+                select(TableProfile)
+                .where(TableProfile.table_id == str(table.id), TableProfile.status == ProfilingStatus.running)
+            ).first()
+            if stale:
+                continue
+        
+        profile = TableProfile(table_id=str(table.id), status=ProfilingStatus.running, version=1)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+
+        background_tasks.add_task(_run_profile_job, str(table.id), profile.id)
+        count += 1
+        
+    logger.info(f"[Profiling] Queued profiling job for {count} out of {len(tables)} tables.")
+    return {"message": f"Queued profiling for {count} tables.", "total_tables": len(tables), "queued": count}
 
 
 # ── POST /tables/{id}/profile/run ─────────────────────────────────────────────

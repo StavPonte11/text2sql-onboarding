@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart2, RefreshCw, Lightbulb, Link2, AlertTriangle, ChevronRight, Layers, Maximize2, LayoutGrid, AlignLeft } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
@@ -454,17 +454,23 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
   const runMutation = useMutation({
     mutationFn: () => profilingApi.run(tableId),
     onSuccess: () => {
-      const poll = setInterval(async () => {
-        await qc.invalidateQueries({ queryKey: ["profile", tableId] });
-        await qc.invalidateQueries({ queryKey: ["profile-columns", tableId] });
-        const fresh = qc.getQueryData<{ status: string }>(["profile", tableId]);
-        if (fresh?.status === "completed" || fresh?.status === "failed") clearInterval(poll);
-      }, 2000);
+      qc.invalidateQueries({ queryKey: ["profile", tableId] });
     },
   });
 
   const profile = profileQ.data;
   const isRunning = profile?.status === "running" || runMutation.isPending;
+
+  useEffect(() => {
+    let poll: NodeJS.Timeout;
+    if (profile?.status === "running") {
+      poll = setInterval(async () => {
+        await qc.invalidateQueries({ queryKey: ["profile", tableId] });
+        await qc.invalidateQueries({ queryKey: ["profile-columns", tableId] });
+      }, 2000);
+    }
+    return () => clearInterval(poll);
+  }, [profile?.status, tableId, qc]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: "100%", margin: "0 auto" }}>
@@ -488,7 +494,11 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
           disabled={isRunning}
           style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 8 }}
         >
-          <RefreshCw size={16} className={isRunning ? "spin" : ""} />
+          {isRunning ? (
+            <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+          ) : (
+            <RefreshCw size={16} />
+          )}
           {isRunning ? "Running…" : profile ? "Re-profile" : "Run Profiling"}
         </button>
       </div>
@@ -501,7 +511,7 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
         </div>
       )}
 
-      {isRunning && (
+      {isRunning && profile?.row_count === undefined && (
         <div style={{ padding: 64, textAlign: "center", background: "var(--bg-card)", borderRadius: 12, border: "1px solid var(--border)" }}>
           <div className="spinner" style={{ margin: "0 auto 16px", width: 32, height: 32 }} />
           <div style={{ fontSize: 15, color: "var(--text)" }}>Profiling in progress...</div>
@@ -509,14 +519,14 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
         </div>
       )}
 
-      {profile?.status === "failed" && (
+      {profile?.status === "failed" && profile?.row_count === undefined && (
         <div style={{ padding: 16, background: "var(--bg-card)", border: "1px solid var(--status-degraded)", borderRadius: 8, display: "flex", gap: 12, color: "var(--status-degraded)", alignItems: "center" }}>
           <AlertTriangle size={20} />
           <span style={{ fontSize: 14, fontWeight: 500 }}>Profiling job failed. Check Trino connection and try again.</span>
         </div>
       )}
 
-      {profile?.status === "completed" && (
+      {profile?.row_count !== undefined && (
         <>
           {/* Dual-View Switcher Navigation + Extra Tabs */}
           <div style={{ display: "flex", gap: 32, borderBottom: "1px solid var(--border)", marginBottom: 8 }}>
