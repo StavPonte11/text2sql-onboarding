@@ -592,26 +592,6 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
-# @router.post("/tables/{table_id}/promote", status_code=202)
-# def promote_table(
-#     table_id: str,
-#     background_tasks: BackgroundTasks,
-#     session: Session = Depends(get_session),
-# ):
-#     """Trigger the two-phase production promotion workflow."""
-#     table = session.get(Table, table_id)
-#     if not table:
-#         raise HTTPException(status_code=404, detail="Table not found")
-
-#     run = EvalRun(table_id=table_id, status=EvalStatus.running, triggered_by="promotion")
-#     session.add(run)
-#     session.commit()
-#     session.refresh(run)
-
-#     background_tasks.add_task(promote_table_to_production_workflow, table_id, run.id)
-#     return {"message": "Promotion workflow started", "run_id": run.id}
-
-
 @router.get("/eval/readiness")
 def get_readiness(session: Session = Depends(get_session)):
     tables = session.exec(select(Table)).all()
