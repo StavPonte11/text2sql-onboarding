@@ -72,7 +72,7 @@ function NestedFieldExplorer({ rootChildren, rootDataType }: { rootChildren: Row
           <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 13 }}>No fields found at this level.</div>
         )}
         {currentLevelFields.map((f, i) => {
-          const isNestedRow = f.semantic_type === "row" || (f.stats?.children && f.stats.children.length > 0);
+          const isNestedRow = f.semantic_type === "row" || f.semantic_type === "complex" || (f.stats?.children && f.stats.children.length > 0);
           
           return (
             <div key={i} style={{ display: "flex", background: "var(--bg-card)", padding: 16, borderRadius: 8, border: "1px solid var(--border)", gap: 24 }}>
@@ -172,18 +172,23 @@ function NestedFieldExplorer({ rootChildren, rootDataType }: { rootChildren: Row
 
 // ── MiniMetric (Table Headers) ────────────────────────────────────────────────
 function MiniMetric({ col }: { col: ColumnProfile }) {
-  const isRow = col.semantic_type === "row";
-  if (isRow) return <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic", marginTop: 8 }}>Nested STRUCT/ROW object</div>;
+  const isRow = col.semantic_type === "row" || col.semantic_type === "complex" || col.data_type?.toLowerCase().includes("row") || col.data_type?.toLowerCase().includes("array") || col.data_type?.toLowerCase().includes("map") || col.data_type?.toLowerCase().includes("json") || (col.stats_json?.children && col.stats_json.children.length > 0);
+  if (isRow) return <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic", marginTop: 8 }}>Nested STRUCT/ROW/JSON object</div>;
 
   if (col.semantic_type === "time" || col.is_time) {
     const timeData = [
-      { val: 10 }, { val: 20 }, { val: 15 }, { val: 30 }, { val: 25 }, { val: 40 }, { val: 35 }
+      { val: new Date(fmtDate(col.min_value) || 0).getTime() },
+      { val: new Date(fmtDate(col.stats_json?.q25) || 0).getTime() },
+      { val: new Date(fmtDate(col.stats_json?.median) || 0).getTime() },
+      { val: new Date(fmtDate(col.stats_json?.q75) || 0).getTime() },
+      { val: new Date(fmtDate(col.max_value) || 0).getTime() },
     ];
     return (
       <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
         <div style={{ height: 24, width: '100%' }}>
           <ResponsiveContainer>
             <AreaChart data={timeData}>
+              <YAxis domain={['dataMin', 'dataMax']} hide />
               <Area type="monotone" dataKey="val" stroke="var(--accent-hover)" fill="var(--accent-hover)" fillOpacity={0.2} strokeWidth={2} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
@@ -207,12 +212,21 @@ function MiniMetric({ col }: { col: ColumnProfile }) {
   }
 
   if (col.semantic_type === 'continuous' || ['integer', 'double', 'bigint', 'real'].includes(col.data_type?.toLowerCase() || '')) {
-    // Sparkline abstraction
+    const contData = [
+      { val: Number(col.min_value) || 0 },
+      { val: Number(col.stats_json?.q25) || 0 },
+      { val: Number(col.stats_json?.median) || Number(col.median_value) || 0 },
+      { val: Number(col.stats_json?.q75) || 0 },
+      { val: Number(col.max_value) || 0 },
+    ];
     return (
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 32, marginTop: 12 }}>
-        {[0.3, 0.6, 0.9, 0.5, 0.4, 0.7, 0.8].map((h, i) => (
-          <div key={i} style={{ flex: 1, height: `${h * 100}%`, background: "var(--accent)", borderRadius: "2px 2px 0 0", opacity: 0.6 }} />
-        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, height: 32, marginTop: 12 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={contData}>
+            <YAxis domain={['dataMin', 'dataMax']} hide />
+            <Area type="monotone" dataKey="val" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.4} strokeWidth={2} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
     );
   }
@@ -242,7 +256,7 @@ function MiniMetric({ col }: { col: ColumnProfile }) {
 
 // ── ColumnReportRow (Column View) ─────────────────────────────────────────────
 function ColumnReportRow({ col }: { col: ColumnProfile }) {
-  const isRow = col.semantic_type === "row";
+  const isRow = col.semantic_type === "row" || col.semantic_type === "complex" || col.data_type?.toLowerCase().includes("row") || col.data_type?.toLowerCase().includes("array") || col.data_type?.toLowerCase().includes("map") || col.data_type?.toLowerCase().includes("json") || (col.stats_json?.children && col.stats_json.children.length > 0);
   const rowChildren = col.stats_json?.children ?? [];
   const rowDataType = col.stats_json?.data_type as string | undefined;
 
@@ -276,32 +290,44 @@ function ColumnReportRow({ col }: { col: ColumnProfile }) {
             {col.semantic_type === 'continuous' ? (
                <div style={{ height: 120 }}>
                  <ResponsiveContainer width="100%" height="100%">
-                   <BarChart data={[
-                     { name: '10%', count: 12 }, { name: '20%', count: 25 }, { name: '30%', count: 45 },
-                     { name: '40%', count: 80 }, { name: '50%', count: 100 }, { name: '60%', count: 70 },
-                     { name: '70%', count: 40 }, { name: '80%', count: 20 }, { name: '90%', count: 10 }, { name: '100%', count: 5 },
-                   ]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                     <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
-                     <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
-                     <Tooltip cursor={{ fill: 'var(--bg-base)' }} contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)" }} itemStyle={{ color: "var(--text)" }} />
-                     <Bar dataKey="count" fill="var(--accent-hover)" radius={[4, 4, 0, 0]} />
-                   </BarChart>
+                   {col.top_values && col.top_values.length > 0 ? (
+                     <BarChart data={col.top_values.slice(0, 10).map(tv => ({ name: String(tv.value), count: tv.count }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                       <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                       <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                       <Tooltip cursor={{ fill: 'var(--bg-base)' }} contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)" }} itemStyle={{ color: "var(--text)" }} />
+                       <Bar dataKey="count" fill="var(--accent-hover)" radius={[4, 4, 0, 0]} />
+                     </BarChart>
+                   ) : (
+                     <AreaChart data={[
+                       { name: 'Min', val: Number(col.min_value) || 0 },
+                       { name: '25%', val: Number(col.stats_json?.q25) || 0 },
+                       { name: 'Median', val: Number(col.stats_json?.median) || Number(col.median_value) || 0 },
+                       { name: '75%', val: Number(col.stats_json?.q75) || 0 },
+                       { name: 'Max', val: Number(col.max_value) || 0 },
+                     ]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                       <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                       <YAxis domain={['dataMin', 'dataMax']} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                       <Tooltip cursor={{ fill: 'var(--bg-base)' }} contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)" }} itemStyle={{ color: "var(--text)" }} labelStyle={{ color: "var(--text-muted)", marginBottom: 4 }} />
+                       <Area type="monotone" dataKey="val" stroke="var(--accent-hover)" fill="var(--accent-hover)" fillOpacity={0.2} strokeWidth={2} />
+                     </AreaChart>
+                   )}
                  </ResponsiveContainer>
+                 {!(col.top_values && col.top_values.length > 0) && <div style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>Percentile Distribution (CDF)</div>}
                </div>
             ) : col.semantic_type === 'time' || col.is_time ? (
                <div style={{ height: 120 }}>
                  <ResponsiveContainer width="100%" height="100%">
                    <AreaChart data={[
-                     { date: fmtDate(col.min_value) || 'Start', count: 10 },
-                     { date: fmtDate(col.stats_json?.q25) || 'Q1', count: 35 },
-                     { date: fmtDate(col.stats_json?.median) || 'Mid', count: 55 },
-                     { date: fmtDate(col.stats_json?.q75) || 'Q3', count: 40 },
-                     { date: fmtDate(col.max_value) || 'End', count: 15 },
+                     { name: 'Min', val: new Date(fmtDate(col.min_value) || 0).getTime(), label: fmtDate(col.min_value) },
+                     { name: '25%', val: new Date(fmtDate(col.stats_json?.q25) || 0).getTime(), label: fmtDate(col.stats_json?.q25) },
+                     { name: 'Median', val: new Date(fmtDate(col.stats_json?.median) || 0).getTime(), label: fmtDate(col.stats_json?.median) },
+                     { name: '75%', val: new Date(fmtDate(col.stats_json?.q75) || 0).getTime(), label: fmtDate(col.stats_json?.q75) },
+                     { name: 'Max', val: new Date(fmtDate(col.max_value) || 0).getTime(), label: fmtDate(col.max_value) },
                    ]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                     <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
-                     <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
-                     <Tooltip contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)" }} itemStyle={{ color: "var(--text)" }} />
-                     <Area type="monotone" dataKey="count" stroke="var(--accent-hover)" fill="var(--accent-hover)" fillOpacity={0.2} strokeWidth={2} />
+                     <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                     <YAxis domain={['dataMin', 'dataMax']} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} tickFormatter={() => ''} width={10} />
+                     <Tooltip formatter={(value: any, name: any, props: any) => [props.payload.label, "Date"]} contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)" }} itemStyle={{ color: "var(--text)" }} labelStyle={{ color: "var(--text-muted)", marginBottom: 4 }} />
+                     <Area type="monotone" dataKey="val" stroke="var(--accent-hover)" fill="var(--accent-hover)" fillOpacity={0.2} strokeWidth={2} />
                    </AreaChart>
                  </ResponsiveContainer>
                </div>
@@ -636,27 +662,40 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
                                 maxWidth: 320,
                                 verticalAlign: "top"
                               }}>
-                                {val === null || val === undefined ? (
-                                  <span style={{ color: "var(--text-muted)" }}>null</span>
-                                ) : typeof val === 'object' ? (
-                                  expandedRowKeys.has(`${i}-${col.column_name}`) ? (
-                                    <div style={{ position: "relative" }}>
-                                      <button onClick={() => { const s = new Set(expandedRowKeys); s.delete(`${i}-${col.column_name}`); setExpandedRowKeys(s); }} style={{ position: "absolute", top: -8, right: -8, background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", padding: 2, display: "flex", alignItems: "center" }}>✕</button>
-                                      <div style={{ maxHeight: 200, overflow: "auto", background: "var(--bg-base)", padding: 8, borderRadius: 6, border: "1px solid var(--border)" }}>
-                                        <pre style={{ fontSize: 11, margin: 0, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>{JSON.stringify(val, null, 2)}</pre>
+                                {(() => {
+                                  let parsedVal = val;
+                                  if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                                    try { parsedVal = JSON.parse(val); } catch(e) {}
+                                  } else if (typeof val === 'string' && val.includes('=') && val.startsWith('{')) {
+                                    // Hack for Trino ROW string format: {kind=active, count=5}
+                                    try { 
+                                      const pairs = val.slice(1, -1).split(', ');
+                                      parsedVal = Object.fromEntries(pairs.map(p => p.split('=')));
+                                    } catch(e) {}
+                                  }
+                                  
+                                  if (parsedVal === null || parsedVal === undefined) {
+                                    return <span style={{ color: "var(--text-muted)" }}>null</span>;
+                                  }
+                                  if (typeof parsedVal === 'object') {
+                                    return expandedRowKeys.has(`${i}-${col.column_name}`) ? (
+                                      <div style={{ position: "relative" }}>
+                                        <button onClick={() => { const s = new Set(expandedRowKeys); s.delete(`${i}-${col.column_name}`); setExpandedRowKeys(s); }} style={{ position: "absolute", top: -8, right: -8, background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", padding: 2, display: "flex", alignItems: "center" }}>✕</button>
+                                        <div style={{ maxHeight: 200, overflow: "auto", background: "var(--bg-base)", padding: 8, borderRadius: 6, border: "1px solid var(--border)" }}>
+                                          <pre style={{ fontSize: 11, margin: 0, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>{JSON.stringify(parsedVal, null, 2)}</pre>
+                                        </div>
                                       </div>
-                                    </div>
-                                  ) : (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                      <span style={{ fontSize: 11, background: "var(--bg-base)", padding: "2px 6px", borderRadius: 4, color: "var(--text-muted)", border: "1px solid var(--border)" }}>[Nested Object]</span>
-                                      <button onClick={() => { const s = new Set(expandedRowKeys); s.add(`${i}-${col.column_name}`); setExpandedRowKeys(s); }} style={{ background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 4, borderRadius: 4, color: "var(--accent-hover)" }} title="Expand Object">
-                                        <Maximize2 size={14} />
-                                      </button>
-                                    </div>
-                                  )
-                                ) : (
-                                  String(val)
-                                )}
+                                    ) : (
+                                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <span style={{ fontSize: 11, background: "var(--bg-base)", padding: "2px 6px", borderRadius: 4, color: "var(--text-muted)", border: "1px solid var(--border)" }}>[Nested Object]</span>
+                                        <button onClick={() => { const s = new Set(expandedRowKeys); s.add(`${i}-${col.column_name}`); setExpandedRowKeys(s); }} style={{ background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 4, borderRadius: 4, color: "var(--accent-hover)" }} title="Expand Object">
+                                          <Maximize2 size={14} />
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+                                  return String(parsedVal);
+                                })()}
                               </td>
                             );
                           })}
