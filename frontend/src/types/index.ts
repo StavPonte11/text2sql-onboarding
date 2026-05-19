@@ -25,6 +25,8 @@ export interface TableCreate {
 export interface ColumnDef {
   name: string;
   description: string;
+  dataType?: string;
+  children?: ColumnDef[];
   is_geo?: boolean;
   is_time?: boolean;
 }
@@ -148,12 +150,40 @@ export interface TableProfile {
   updated_at: string;
 }
 
+export interface RowFieldStats {
+  type?: string;
+  null_count?: number;
+  null_rate?: number;
+  distinct_count?: number;
+  top_values?: { value: string; count: number }[];
+  min?: string;
+  max?: string;
+  children?: RowField[];
+  note?: string;
+}
+
+export interface RowField {
+  name: string;
+  data_type: string;
+  semantic_type?: string;
+  is_time?: boolean;
+  is_geo?: boolean;
+  null_count?: number;
+  null_rate?: number;
+  distinct_count?: number;
+  top_values?: { value: string; count: number }[];
+  min_value?: string;
+  max_value?: string;
+  stats?: RowFieldStats;
+}
+
 export interface ColumnProfile {
   id: string;
   table_id: string;
   profile_id: string;
   column_name: string;
   data_type?: string;
+  semantic_type?: string;
   null_count?: number;
   null_rate?: number;
   distinct_count?: number;
@@ -163,6 +193,11 @@ export interface ColumnProfile {
   top_values?: { value: string; count: number }[];
   is_geo: boolean;
   is_time: boolean;
+  stats_json?: {
+    type?: string;
+    children?: RowField[];
+    [key: string]: unknown;
+  };
   created_at: string;
 }
 

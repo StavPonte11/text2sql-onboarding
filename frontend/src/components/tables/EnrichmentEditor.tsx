@@ -1,11 +1,83 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { MapPin, Clock, AlignLeft, Table2, RefreshCw } from "lucide-react";
+import { MapPin, Clock, AlignLeft, Table2, RefreshCw, ChevronRight, ChevronDown } from "lucide-react";
 import { enrichmentApi, tablesApi } from "../../api/client";
 import type { EnrichmentData } from "../../types";
 import { SkeletonCard } from "../common/Skeleton";
 import { App } from "antd";
+import type { ColumnDef } from "../../types";
+
+const ColumnRow = ({ col, depth = 0 }: { col: ColumnDef, depth?: number }) => {
+  const [expanded, setExpanded] = useState(false);
+  const hasChildren = col.children && col.children.length > 0;
+
+  return (
+    <>
+      <tr>
+        <td style={{ paddingLeft: depth * 20 + 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            {hasChildren ? (
+              <button 
+                onClick={() => setExpanded(!expanded)} 
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", color: "var(--text-muted)" }}
+              >
+                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+            ) : (
+              <span style={{ width: 14, display: "inline-block" }}></span>
+            )}
+            <span style={{
+              fontFamily: "monospace",
+              fontSize: 13,
+              fontWeight: 600,
+              background: "var(--bg-subtle, rgba(0,0,0,0.05))",
+              padding: "2px 7px",
+              borderRadius: 4,
+              color: "var(--text)",
+            }}>
+              {col.name || "—"}
+            </span>
+            {col.dataType && (
+              <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 5 }}>
+                {col.dataType}
+              </span>
+            )}
+          </div>
+        </td>
+        <td style={{ fontSize: 13, color: col.description ? "var(--text)" : "var(--text-muted)", fontStyle: col.description ? "normal" : "italic" }}>
+          {col.description || "No description"}
+        </td>
+        <td>
+          <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
+            {col.is_geo && (
+              <span className="badge badge--neutral" style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 11, padding: "2px 8px",
+              }}>
+                <MapPin size={10} /> Geo
+              </span>
+            )}
+            {col.is_time && (
+              <span className="badge badge--neutral" style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 11, padding: "2px 8px",
+              }}>
+                <Clock size={10} /> Time
+              </span>
+            )}
+            {!col.is_geo && !col.is_time && (
+              <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
+            )}
+          </div>
+        </td>
+      </tr>
+      {expanded && hasChildren && col.children!.map((child, idx) => (
+        <ColumnRow key={`${child.name}-${idx}`} col={child} depth={depth + 1} />
+      ))}
+    </>
+  );
+};
 
 interface Props { tableId: string }
 
@@ -125,47 +197,7 @@ export function EnrichmentEditor({ tableId }: Props) {
               </thead>
               <tbody>
                 {schema.columns.map((col, i) => (
-                  <tr key={i}>
-                    <td>
-                      <span style={{
-                        fontFamily: "monospace",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        background: "var(--bg-subtle, rgba(0,0,0,0.05))",
-                        padding: "2px 7px",
-                        borderRadius: 4,
-                        color: "var(--text)",
-                      }}>
-                        {col.name || "—"}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: 13, color: col.description ? "var(--text)" : "var(--text-muted)", fontStyle: col.description ? "normal" : "italic" }}>
-                      {col.description || "No description"}
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
-                        {col.is_geo && (
-                          <span className="badge badge--neutral" style={{
-                            display: "flex", alignItems: "center", gap: 4,
-                            fontSize: 11, padding: "2px 8px",
-                          }}>
-                            <MapPin size={10} /> Geo
-                          </span>
-                        )}
-                        {col.is_time && (
-                          <span className="badge badge--neutral" style={{
-                            display: "flex", alignItems: "center", gap: 4,
-                            fontSize: 11, padding: "2px 8px",
-                          }}>
-                            <Clock size={10} /> Time
-                          </span>
-                        )}
-                        {!col.is_geo && !col.is_time && (
-                          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                  <ColumnRow key={i} col={col} />
                 ))}
               </tbody>
             </table>
