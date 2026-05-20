@@ -130,17 +130,17 @@ def build_numeric_stats_query(fqn: str, col: str) -> str:
         f'FROM {fqn} WHERE "{col}" IS NOT NULL'
     )
 
-def build_numeric_histogram_query(fqn: str, col: str, min_val: float, max_val: float, buckets: int = 8) -> str:
+def build_generic_histogram_query(fqn: str, field_path: str, cast_expr: str, min_val: float, max_val: float, buckets: int = 8) -> str:
     if min_val == max_val:
         return f'SELECT 1 AS bucket, COUNT(*) AS cnt FROM {fqn} GROUP BY 1 ORDER BY 1'
     return f"""
 WITH raw_buckets AS (
     SELECT 
         CASE 
-            WHEN "{col}" IS NULL THEN null
-            WHEN CAST("{col}" AS DOUBLE) >= {max_val} THEN {buckets}
-            WHEN CAST("{col}" AS DOUBLE) <= {min_val} THEN 1
-            ELSE width_bucket(CAST("{col}" AS DOUBLE), {min_val}, {max_val}, {buckets})
+            WHEN {field_path} IS NULL THEN null
+            WHEN {cast_expr} >= {max_val} THEN {buckets}
+            WHEN {cast_expr} <= {min_val} THEN 1
+            ELSE width_bucket({cast_expr}, {min_val}, {max_val}, {buckets})
         END as bucket
     FROM {fqn}
 )
@@ -159,7 +159,9 @@ def build_time_stats_query(fqn: str, col: str) -> str:
         f'  MIN("{col}") AS min_val, '
         f'  MAX("{col}") AS max_val, '
         f'  APPROX_PERCENTILE(to_unixtime(CAST("{col}" AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]) AS quants, '
-        f'  STDDEV_POP(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS std_val '
+        f'  STDDEV_POP(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS std_val, '
+        f'  MIN(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS min_unix, '
+        f'  MAX(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS max_unix '
         f'FROM {fqn} WHERE "{col}" IS NOT NULL'
     )
 
@@ -366,13 +368,38 @@ def _analyze_row_column(
                     child_stats["stddev"] = _safe_float(row[4])
                     child["min_value"] = str(child_stats["min"])
                     child["max_value"] = str(child_stats["max"])
+                    
+                    min_f = _safe_float(child_stats["min"])
+                    max_f = _safe_float(child_stats["max"])
+                    if min_f is not None and max_f is not None:
+                        cast_expr = f'CAST({field_path} AS DOUBLE)'
+                        hist_r = execute_with_timeout(build_generic_histogram_query(fqn, field_path, cast_expr, min_f, max_f, 8), table_id)
+                        if hist_r.success and hist_r.rows:
+                            hist_data = []
+                            step = (max_f - min_f) / 8 if max_f > min_f else 0
+                            bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
+                            if max_f > min_f:
+                                for i in range(1, 9):
+                                    cnt = bucket_counts.get(i, 0)
+                                    lo = min_f + (i - 1) * step
+                                    hi = min_f + i * step
+                                    hist_data.append({"lo": lo, "hi": hi, "count": cnt, "label": f"{lo:g}"})
+                            else:
+                                hist_data.append({"lo": min_f, "hi": max_f, "count": bucket_counts.get(1, 0), "label": f"{min_f:g}"})
+                            null_cnt = bucket_counts.get('null', 0)
+                            if null_cnt > 0:
+                                hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
+                            child_stats["histogram"] = hist_data
+                            child["histogram"] = hist_data
 
             # Full time stats (min/max/percentiles as unix epoch)
             elif is_time:
                 time_q = (
                     f'SELECT MIN({field_path}), MAX({field_path}), '
                     f'APPROX_PERCENTILE(to_unixtime(CAST({field_path} AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]), '
-                    f'STDDEV_POP(to_unixtime(CAST({field_path} AS TIMESTAMP))) '
+                    f'STDDEV_POP(to_unixtime(CAST({field_path} AS TIMESTAMP))), '
+                    f'MIN(to_unixtime(CAST({field_path} AS TIMESTAMP))), '
+                    f'MAX(to_unixtime(CAST({field_path} AS TIMESTAMP))) '
                     f'FROM {fqn} WHERE {field_path} IS NOT NULL'
                 )
                 r = execute_with_timeout(time_q, table_id)
@@ -388,6 +415,30 @@ def _analyze_row_column(
                     child_stats["stddev"] = _safe_float(row[3])
                     child["min_value"] = str(child_stats["min"])
                     child["max_value"] = str(child_stats["max"])
+                    min_unix = _safe_float(row[4])
+                    max_unix = _safe_float(row[5])
+                    
+                    if min_unix is not None and max_unix is not None:
+                        from datetime import datetime
+                        cast_expr = f'to_unixtime(CAST({field_path} AS TIMESTAMP))'
+                        hist_r = execute_with_timeout(build_generic_histogram_query(fqn, field_path, cast_expr, min_unix, max_unix, 8), table_id)
+                        if hist_r.success and hist_r.rows:
+                            hist_data = []
+                            step = (max_unix - min_unix) / 8 if max_unix > min_unix else 0
+                            bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
+                            if max_unix > min_unix:
+                                for i in range(1, 9):
+                                    cnt = bucket_counts.get(i, 0)
+                                    lo = min_unix + (i - 1) * step
+                                    hi = min_unix + i * step
+                                    hist_data.append({"lo": datetime.fromtimestamp(lo).isoformat(), "hi": datetime.fromtimestamp(hi).isoformat(), "count": cnt, "label": datetime.fromtimestamp(lo).strftime('%Y-%m-%d')})
+                            else:
+                                hist_data.append({"lo": datetime.fromtimestamp(min_unix).isoformat(), "hi": datetime.fromtimestamp(max_unix).isoformat(), "count": bucket_counts.get(1, 0), "label": datetime.fromtimestamp(min_unix).strftime('%Y-%m-%d')})
+                            null_cnt = bucket_counts.get('null', 0)
+                            if null_cnt > 0:
+                                hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
+                            child_stats["histogram"] = hist_data
+                            child["histogram"] = hist_data
 
             if is_time:
                 child["semantic_type"] = "time"
@@ -489,7 +540,8 @@ def _analyze_column(
             if stats.min_value is not None and stats.max_value is not None:
                 min_f = float(stats.min_value)
                 max_f = float(stats.max_value)
-                hist_r = execute_with_timeout(build_numeric_histogram_query(fqn, col_name, min_f, max_f, 8), table_id)
+                cast_expr = f'CAST("{col_name}" AS DOUBLE)'
+                hist_r = execute_with_timeout(build_generic_histogram_query(fqn, f'"{col_name}"', cast_expr, min_f, max_f, 8), table_id)
                 if hist_r.success and hist_r.rows:
                     hist_data = []
                     step = (max_f - min_f) / 8 if max_f > min_f else 0
@@ -527,6 +579,35 @@ def _analyze_column(
                 stats.median_value = _safe_float(quants[1])
                 stats.q75_value = _safe_float(quants[2])
             stats.stddev_value = _safe_float(row[3])
+            min_unix = _safe_float(row[4])
+            max_unix = _safe_float(row[5])
+            
+            # Build actual histogram for time
+            if min_unix is not None and max_unix is not None:
+                from datetime import datetime
+                cast_expr = f'to_unixtime(CAST("{col_name}" AS TIMESTAMP))'
+                hist_r = execute_with_timeout(build_generic_histogram_query(fqn, f'"{col_name}"', cast_expr, min_unix, max_unix, 8), table_id)
+                if hist_r.success and hist_r.rows:
+                    hist_data = []
+                    step = (max_unix - min_unix) / 8 if max_unix > min_unix else 0
+                    bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
+                    
+                    if max_unix > min_unix:
+                        for i in range(1, 9):
+                            cnt = bucket_counts.get(i, 0)
+                            lo = min_unix + (i - 1) * step
+                            hi = min_unix + i * step
+                            hist_data.append({"lo": datetime.fromtimestamp(lo).isoformat(), "hi": datetime.fromtimestamp(hi).isoformat(), "count": cnt, "label": datetime.fromtimestamp(lo).strftime('%Y-%m-%d')})
+                    else:
+                        hist_data.append({"lo": datetime.fromtimestamp(min_unix).isoformat(), "hi": datetime.fromtimestamp(max_unix).isoformat(), "count": bucket_counts.get(1, 0), "label": datetime.fromtimestamp(min_unix).strftime('%Y-%m-%d')})
+                        
+                    null_cnt = bucket_counts.get('null', 0)
+                    if null_cnt > 0:
+                        hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
+                        
+                    stats.histogram = hist_data
+                else:
+                    stats.errors.append(f"time_histogram: {hist_r.error_message}")
         else:
             stats.errors.append(f"time_stats: {r.error_message}")
 

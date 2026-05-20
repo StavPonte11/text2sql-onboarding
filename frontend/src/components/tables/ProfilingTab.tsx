@@ -336,6 +336,37 @@ function MiniMetric({ col, totalRows }: { col: ColumnProfile, totalRows?: number
     );
   }
 
+  // Time: mini histogram bins
+  if (col.semantic_type === 'time' || col.is_time) {
+    const bins = col.stats_json?.histogram 
+      ? col.stats_json.histogram.map(b => ({
+          label: b.label,
+          range: b.lo !== null && b.hi !== null ? `${b.label} – ${fmtDate(b.hi)}` : b.label,
+          count: b.count
+        }))
+      : col.top_values && col.top_values.length > 0
+        ? buildDateBins(col.top_values, totalRows, col.null_count, 6)
+        : [
+          { label: fmtDate(col.min_value), range: '', count: 1 },
+          { label: '', range: '', count: 1 },
+          { label: '', range: '', count: 1 },
+          { label: '', range: '', count: 1 },
+          { label: fmtDate(col.max_value), range: '', count: 1 },
+        ].filter(b => b.label && b.label !== '—');
+        
+    return (
+      <div style={{ height: 40, marginTop: 8 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={bins} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 8, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} interval={bins.length > 4 ? 'preserveStartEnd' : 0} />
+            <Tooltip cursor={{ fill: 'var(--bg-base)' }} content={({ active, payload }) => active && payload?.length ? <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', fontSize: 11 }}><div style={{ color: 'var(--text-muted)' }}>{payload[0].payload.range || payload[0].payload.label}</div><div style={{ fontWeight: 600 }}>{fmt(payload[0].payload.count)}</div></div> : null} />
+            <Bar dataKey="count" fill="var(--accent-hover)" radius={[2, 2, 0, 0]} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
   // Categorical: top 3 + Other mini bars
   if (col.top_values && col.top_values.length > 0) {
     const binnedCount = col.top_values.reduce((s, tv) => s + tv.count, 0);
@@ -450,23 +481,29 @@ function ColumnReportRow({ col, isNested = false, totalRows }: { col: ColumnProf
                 }
 
                 if (isTime) {
-                  const hasDatums = col.top_values && col.top_values.length > 0;
-                  const bins = hasDatums
-                    ? buildDateBins(col.top_values!, totalRows, col.null_count)
-                    : (() => {
-                      const vMin = fmtDate(col.min_value);
-                      const v25 = fmtDate(col.stats_json?.q25);
-                      const v50 = fmtDate(col.stats_json?.median);
-                      const v75 = fmtDate(col.stats_json?.q75);
-                      const vMax = fmtDate(col.max_value);
-                      const pts = [
-                        { label: vMin, range: `${vMin} – ${v25}`, count: 1 },
-                        { label: v25, range: `${v25} – ${v50}`, count: 1 },
-                        { label: v50, range: `${v50} – ${v75}`, count: 1 },
-                        { label: v75, range: `${v75} – ${vMax}`, count: 1 },
-                      ];
-                      return pts.filter(p => p.label && p.label !== '—');
-                    })();
+                  const hasDatums = (col.stats_json?.histogram && col.stats_json.histogram.length > 0) || (col.top_values && col.top_values.length > 0);
+                  const bins = col.stats_json?.histogram
+                    ? col.stats_json.histogram.map(b => ({
+                        label: b.label,
+                        range: b.lo !== null && b.hi !== null ? `${b.label} – ${fmtDate(b.hi)}` : b.label,
+                        count: b.count
+                      }))
+                    : (col.top_values && col.top_values.length > 0
+                      ? buildDateBins(col.top_values!, totalRows, col.null_count)
+                      : (() => {
+                        const vMin = fmtDate(col.min_value);
+                        const v25 = fmtDate(col.stats_json?.q25);
+                        const v50 = fmtDate(col.stats_json?.median);
+                        const v75 = fmtDate(col.stats_json?.q75);
+                        const vMax = fmtDate(col.max_value);
+                        const pts = [
+                          { label: vMin, range: `${vMin} – ${v25}`, count: 1 },
+                          { label: v25, range: `${v25} – ${v50}`, count: 1 },
+                          { label: v50, range: `${v50} – ${v75}`, count: 1 },
+                          { label: v75, range: `${v75} – ${vMax}`, count: 1 },
+                        ];
+                        return pts.filter(p => p.label && p.label !== '—');
+                      })());
                   return (
                     <div style={{ height: 160 }}>
                       <ResponsiveContainer width="100%" height="100%">
