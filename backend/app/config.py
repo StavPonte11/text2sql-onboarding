@@ -1,4 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List
+
 
 
 class Settings(BaseSettings):
@@ -8,7 +10,8 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    CORS_ORIGINS: List[str] = ["http://localhost:5173"]
+
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"
 
@@ -22,6 +25,11 @@ class Settings(BaseSettings):
     TRINO_HTTP_SCHEME: str = "http"
     TRINO_REQUEST_TIMEOUT: float = 30.0
     TRINO_ENABLED: bool = True  # Set False to disable real Trino calls
+
+    # JWT Config
+    JWT_SECRET: str = "dev-secret-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_HOURS: int = 8
 
 
 settings = Settings()

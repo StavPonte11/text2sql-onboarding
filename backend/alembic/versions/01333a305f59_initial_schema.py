@@ -75,7 +75,7 @@ def upgrade() -> None:
     sa.Column('explanation_text', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('warnings_json', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_audit_queries_table_id'), 'audit_queries', ['table_id'], unique=False)
@@ -87,8 +87,8 @@ def upgrade() -> None:
     sa.Column('match_strength', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('common_columns', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['source_table_id'], ['tables.id'], ),
-    sa.ForeignKeyConstraint(['target_table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['source_table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
+    sa.ForeignKeyConstraint(['target_table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_cross_table_profiles_source_table_id'), 'cross_table_profiles', ['source_table_id'], unique=False)
@@ -98,13 +98,13 @@ def upgrade() -> None:
     sa.Column('version', sa.Integer(), nullable=False),
     sa.Column('data', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_enrichment_versions_table_id'), 'enrichment_versions', ['table_id'], unique=False)
     op.create_table('eval_runs',
     sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('table_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('table_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('dataset_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('score', sa.Float(), nullable=False),
     sa.Column('pass_rate', sa.Float(), nullable=False),
@@ -119,8 +119,9 @@ def upgrade() -> None:
     sa.Column('dimension_averages', sa.JSON(), nullable=True),
     sa.Column('regression_detected', sa.Boolean(), nullable=False),
     sa.Column('regression_delta', sa.Float(), nullable=True),
+    sa.Column('promotion_run_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_eval_runs_dataset_id'), 'eval_runs', ['dataset_id'], unique=False)
@@ -135,7 +136,7 @@ def upgrade() -> None:
     sa.Column('details', sa.JSON(), nullable=True),
     sa.Column('acknowledged', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_evaluation_alerts_run_id'), 'evaluation_alerts', ['run_id'], unique=False)
@@ -149,7 +150,7 @@ def upgrade() -> None:
     sa.Column('question_type', sa.Enum('simple', 'complex', 'join', 'geo', 'aggregate', 'time_series', name='questiontype'), nullable=False),
     sa.Column('coverage_tags', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_golden_questions_table_id'), 'golden_questions', ['table_id'], unique=False)
@@ -167,7 +168,7 @@ def upgrade() -> None:
     sa.Column('failure_empty_result', sa.Integer(), nullable=False),
     sa.Column('failure_execution_error', sa.Integer(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_table_health_table_id'), 'table_health', ['table_id'], unique=True)
@@ -188,7 +189,7 @@ def upgrade() -> None:
     sa.Column('cached_until', sa.DateTime(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_table_profiles_table_id'), 'table_profiles', ['table_id'], unique=False)
@@ -212,8 +213,8 @@ def upgrade() -> None:
     sa.Column('semantic_type', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('stats_json', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['profile_id'], ['table_profiles.id'], ),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['profile_id'], ['table_profiles.id'], ondelete='CASCADE', onupdate='CASCADE'),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_column_profiles_profile_id'), 'column_profiles', ['profile_id'], unique=False)
@@ -225,8 +226,8 @@ def upgrade() -> None:
     sa.Column('score', sa.Float(), nullable=False),
     sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('error_type', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.ForeignKeyConstraint(['question_id'], ['golden_questions.id'], ),
-    sa.ForeignKeyConstraint(['run_id'], ['eval_runs.id'], ),
+    sa.ForeignKeyConstraint(['question_id'], ['golden_questions.id'], ondelete='CASCADE', onupdate='CASCADE'),
+    sa.ForeignKeyConstraint(['run_id'], ['eval_runs.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_eval_results_run_id'), 'eval_results', ['run_id'], unique=False)
@@ -236,7 +237,7 @@ def upgrade() -> None:
     sa.Column('metric_name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('metric_value', sa.Float(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['run_id'], ['eval_runs.id'], ),
+    sa.ForeignKeyConstraint(['run_id'], ['eval_runs.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_evaluation_history_metrics_run_id'), 'evaluation_history_metrics', ['run_id'], unique=False)
@@ -249,8 +250,8 @@ def upgrade() -> None:
     sa.Column('comment', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('suggested_correction', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['query_id'], ['audit_queries.id'], ),
-    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ),
+    sa.ForeignKeyConstraint(['query_id'], ['audit_queries.id'], ondelete='CASCADE', onupdate='CASCADE'),
+    sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_query_feedback_query_id'), 'query_feedback', ['query_id'], unique=False)

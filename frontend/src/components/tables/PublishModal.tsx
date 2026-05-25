@@ -9,9 +9,10 @@ import type { PublishError } from "../../types";
 interface Props {
   tableId: string;
   onClose: () => void;
+  onTrackProgress?: () => void;
 }
 
-export function PublishModal({ tableId, onClose }: Props) {
+export function PublishModal({ tableId, onClose, onTrackProgress }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { message } = App.useApp();
@@ -29,6 +30,14 @@ export function PublishModal({ tableId, onClose }: Props) {
     queryFn: () => questionsApi.list(tableId),
   });
 
+  const { data: runs } = useQuery({
+    queryKey: ["eval-runs", tableId],
+    queryFn: () => evalApi.listRuns(tableId),
+  });
+
+  const latestRun = runs?.[0];
+  const hasPassingEval = (latestRun?.score ?? 0) >= 0.50;
+
   const checks = [
     {
       label: "Enrichment exists",
@@ -39,12 +48,16 @@ export function PublishModal({ tableId, onClose }: Props) {
       pass: (questions?.length ?? 0) >= 1,
     },
     {
+      label: "Contains Execution Accuracy ≥ 50%",
+      pass: hasPassingEval,
+    },
+    {
       label: "Table description ≥ 20 chars",
       pass: (enrichment?.data?.table_description?.length ?? 0) >= 20,
     },
     {
       label: "All columns have descriptions",
-      pass: enrichment?.data?.columns?.every((c) => c.description?.length >= 20) ?? false,
+      pass: enrichment?.data?.columns?.every((c: any) => c.description?.length >= 10) ?? false,
     },
   ];
 
@@ -79,9 +92,15 @@ export function PublishModal({ tableId, onClose }: Props) {
         {published ? (
           <div style={{ textAlign: "center", padding: "24px 0" }}>
             <CheckCircle2 size={48} color="var(--status-production)" style={{ marginBottom: 12 }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--status-production)" }}>
-              {t("publish.success")}
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--status-production)", marginBottom: 8 }}>
+              Promotion Started
             </div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+              The production promotion workflow has been initiated. This includes re-evaluation and regression testing of all production tables.
+            </div>
+            <button className="btn btn--primary btn--sm" onClick={onTrackProgress || onClose}>
+              Track Progress
+            </button>
           </div>
         ) : (
           <>

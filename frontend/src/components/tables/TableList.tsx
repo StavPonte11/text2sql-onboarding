@@ -10,6 +10,7 @@ import { StatusBadge } from "../common/StatusBadge";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
 import dayjs from "dayjs";
+import "./TableList.css";
 
 const STATUS_OPTIONS: Array<{ value: TableStatus | ""; label: string }> = [
   { value: "", label: "All Statuses" },
@@ -69,20 +70,18 @@ export function TableList() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 220 }}>
-          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+      <div className="table-list__filters">
+        <div className="table-list__search-container">
+          <Search size={14} className="table-list__search-icon" />
           <input
-            className="form-input"
+            className="form-input table-list__search-input"
             placeholder={t("tables.searchPlaceholder")}
-            style={{ paddingLeft: 32 }}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <select
-          className="form-select"
-          style={{ width: 160 }}
+          className="form-select table-list__status-select"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as TableStatus | "")}
         >
@@ -106,7 +105,7 @@ export function TableList() {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card table-list__card">
           <table className="data-table">
             <thead>
               <tr>
@@ -122,14 +121,14 @@ export function TableList() {
               {data.map((table) => (
                 <tr key={table.id}>
                   <td>
-                    <span style={{ fontWeight: 600, color: "var(--accent-hover)" }}>
+                    <span className="table-name-cell">
                       {table.name}
                     </span>
                   </td>
-                  <td><code style={{ fontSize: 12, color: "var(--text-muted)" }}>{table.schema_name}</code></td>
+                  <td><code className="table-schema-code">{table.schema_name}</code></td>
                   <td><StatusBadge status={table.status} /></td>
-                  <td style={{ color: "var(--text-secondary)" }}>{table.owner_id}</td>
-                  <td style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
+                  <td className="table-owner-cell">{table.owner_id}</td>
+                  <td className="table-updated-cell">
                     {dayjs(table.updated_at).format("MMM D, YYYY HH:mm")}
                   </td>
                   <td>

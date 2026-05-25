@@ -17,6 +17,7 @@ api.interceptors.request.use((config) => {
 export interface EvalRunFull {
   id: string;
   table_id: string;
+  table_name?: string;
   dataset_id: string | null;
   score: number;
   pass_rate: number;
@@ -31,6 +32,7 @@ export interface EvalRunFull {
   dimension_averages: Record<string, number> | null;
   regression_detected: boolean;
   regression_delta: number | null;
+  promotion_run_id: string | null;
   created_at: string;
 }
 
@@ -116,6 +118,21 @@ export interface CompareResult {
   verdict: "regression" | "improvement" | "stable";
 }
 
+export interface RegressionDiffItem {
+  question_id: string;
+  question: string;
+  baseline_score: number;
+  regression_score: number;
+  score_drop: number;
+}
+
+export interface RegressionDiff {
+  baseline_run_id: string | null;
+  regression_run_id: string;
+  total_regressions: number;
+  regressions: RegressionDiffItem[];
+}
+
 export interface SystemHealth {
   global_score: number | null;
   global_pass_rate: number | null;
@@ -148,6 +165,9 @@ export const orchestrationApi = {
 
   getRunReport: (run_id: string) =>
     api.get(`/evaluations/runs/${run_id}/report`).then(r => r.data),
+
+  getRegressionDiff: (run_id: string) =>
+    api.get<RegressionDiff>(`/eval/${run_id}/regression-diff`).then(r => r.data),
 
   // Schedules
   listSchedules: () =>
@@ -184,4 +204,8 @@ export const orchestrationApi = {
   // System health
   getSystemHealth: () =>
     api.get<SystemHealth>("/evaluations/system-health").then(r => r.data),
+
+  // Readiness
+  getReadiness: () =>
+    api.get<Record<string, { ready: boolean; missing: string[] }>>("/eval/readiness").then(r => r.data),
 };

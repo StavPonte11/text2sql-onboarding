@@ -8,11 +8,13 @@ import { TableDetails } from "./components/tables/TableDetails";
 import { OnboardingWizard } from "./components/wizard/OnboardingWizard";
 import { MonitoringPage } from "./components/monitoring/MonitoringPage";
 import { ScopesPage } from "./pages/ScopesPage";
-import { SandboxPage } from "./pages/SandboxPage";
 import { ControlCenterPage } from "./pages/ControlCenterPage";
 import { EvaluationsPage } from "./pages/EvaluationsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { LandingPage } from "./pages/LandingPage";
+import { AdminLoginPage } from "./pages/AdminLoginPage";
+import { AdminPanelPage } from "./pages/AdminPanelPage";
+import { useAdminStore } from "./store/adminStore";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
 import "./styles/globals.css";
@@ -43,13 +45,21 @@ function LanguageToggle() {
   );
 }
 
+function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAdminStore((state) => state.isAuthenticated);
+  if (!isAuthenticated) {
+    return <Navigate to="/admin/login" replace />;
+  }
+  return <>{children}</>;
+}
+
 function AppLayout() {
   return (
     <div className="layout">
       <Sidebar />
       <div className="layout__content">
         <ScopeBanner />
-        <div style={{ position: "absolute", top: 12, right: 16, zIndex: 100 }}>
+        <div className="layout__lang-toggle">
           <LanguageToggle />
         </div>
         <Routes>
@@ -57,11 +67,19 @@ function AppLayout() {
           <Route path="/evaluations" element={<EvaluationsPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/tables" element={<TableList />} />
-          <Route path="/tables/:id" element={<TableDetails />} />
+          <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
+          <Route path="/tables/:id/:tab" element={<TableDetails />} />
           <Route path="/wizard" element={<OnboardingWizard />} />
-          <Route path="/sandbox" element={<SandboxPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
+          <Route 
+            path="/admin" 
+            element={
+              <ProtectedAdminRoute>
+                <AdminPanelPage />
+              </ProtectedAdminRoute>
+            } 
+          />
           {/* Catch-all redirect for unmatched inner routes */}
           <Route path="*" element={<Navigate to="/control-center" replace />} />
         </Routes>
@@ -78,6 +96,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<LandingPage />} />
+              <Route path="/admin/login" element={<AdminLoginPage />} />
               <Route path="/*" element={<AppLayout />} />
             </Routes>
           </BrowserRouter>

@@ -55,12 +55,17 @@ def _run_profile_job(table_id: str, profile_id: str):
         # Extract variables before session closes
         schema_name = table.schema_name
         table_name = table.name
+        
+        # Get catalog from OpenMetadata JSON if available, else fallback
+        om_data = table.openmetadata_json or {}
+        database_info = om_data.get("database", {})
+        catalog = database_info.get("name", settings.TRINO_CATALOG)
 
     # Run engine OUTSIDE the session to avoid long-held DB connections
     try:
         result = run_table_profiling(
             table_id=table_id,
-            catalog=settings.TRINO_CATALOG,
+            catalog=catalog,
             schema=schema_name,
             table=table_name,
             version=version,
@@ -132,18 +137,65 @@ def _run_profile_job(table_id: str, profile_id: str):
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)
 def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
-    if not table:
+    if not table:   
         raise HTTPException(status_code=404, detail="Table not found")
 
-    profile = session.exec(
+    completed = session.exec(
+        select(TableProfile)
+        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .order_by(TableProfile.created_at.desc())
+    ).first()
+
+    latest = session.exec(
         select(TableProfile)
         .where(TableProfile.table_id == table_id)
         .order_by(TableProfile.created_at.desc())
     ).first()
 
-    if not profile:
+    if not completed and not latest:
         raise HTTPException(status_code=404, detail="No profile found. Run POST /profile/run first.")
-    return profile
+        
+    # If a new profile is running, return the old data but indicate it's running
+    if completed and latest and latest.status == ProfilingStatus.running:
+        completed.status = ProfilingStatus.running
+        return completed
+
+    return latest if latest else completed
+
+
+# ── POST /tables/all/profile/run ──────────────────────────────────────────────
+@router.post("/tables/all/profile/run", status_code=202)
+def run_all_profiles(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    session: Session = Depends(get_session)
+):
+    """
+    Triggers profiling for all registered tables. 
+    Ideal for Airflow DAGs to keep profiles up-to-date.
+    """
+    tables = session.exec(select(Table)).all()
+    count = 0
+    for table in tables:
+        # If not force, check for running profile
+        if not force:
+            stale = session.exec(
+                select(TableProfile)
+                .where(TableProfile.table_id == str(table.id), TableProfile.status == ProfilingStatus.running)
+            ).first()
+            if stale:
+                continue
+        
+        profile = TableProfile(table_id=str(table.id), status=ProfilingStatus.running, version=1)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+
+        background_tasks.add_task(_run_profile_job, str(table.id), profile.id)
+        count += 1
+        
+    logger.info(f"[Profiling] Queued profiling job for {count} out of {len(tables)} tables.")
+    return {"message": f"Queued profiling for {count} tables.", "total_tables": len(tables), "queued": count}
 
 
 # ── POST /tables/{id}/profile/run ─────────────────────────────────────────────
@@ -163,6 +215,19 @@ def run_table_profile(
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
+    # Reset any stale 'running' profiles (e.g. from a server restart)
+    stale = session.exec(
+        select(TableProfile)
+        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.running)
+    ).all()
+    for s in stale:
+        s.status = ProfilingStatus.failed
+        s.updated_at = datetime.utcnow()
+        session.add(s)
+    if stale:
+        session.commit()
+        logger.info(f"[Profiling] Reset {len(stale)} stale running profile(s) for {table_id}")
+
     # Serve from cache unless force re-run requested
     if not force:
         existing = session.exec(
@@ -170,9 +235,9 @@ def run_table_profile(
             .where(TableProfile.table_id == table_id)
             .order_by(TableProfile.created_at.desc())
         ).first()
-        if existing and existing.cached_until and existing.cached_until > datetime.utcnow():
-            logger.info(f"[Profiling] Serving cached profile for {table_id}")
-            return existing
+        # if existing and existing.cached_until and existing.cached_until > datetime.utcnow():
+        #     logger.info(f"[Profiling] Serving cached profile for {table_id}")
+        #     return existing
 
     profile = TableProfile(table_id=table_id, status=ProfilingStatus.running, version=1)
     session.add(profile)
@@ -281,14 +346,29 @@ def debug_run_profile(table_id: str, session: Session = Depends(get_session)):
     import traceback
 
     table = session.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    # Use dynamic catalog from OpenMetadata JSON, same as the real profiler
+    om_data = table.openmetadata_json or {}
+    database_info = om_data.get("database", {})
+    catalog = database_info.get("name", settings.TRINO_CATALOG)
+
+    logger.info(f"[Debug] Profiling {catalog}.{table.schema_name}.{table.name}")
     try:
         result = run_table_profiling(
             table_id=table_id,
-            catalog=settings.TRINO_CATALOG,
+            catalog=catalog,
             schema=table.schema_name,
             table=table.name,
             version=1,
         )
-        return {"success": True}
+        return {
+            "success": result.success,
+            "row_count": result.row_count,
+            "column_count": result.column_count,
+            "errors": result.errors,
+            "columns": [{"name": c.column_name, "type": c.data_type, "errors": c.errors} for c in result.column_stats],
+        }
     except Exception as exc:
         return {"success": False, "error": str(exc), "traceback": traceback.format_exc()}

@@ -5,7 +5,7 @@ import type { TableHealth } from "../../types";
 
 function ScoreGauge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
-  const color = pct >= 75 ? "var(--status-production)" : pct >= 45 ? "var(--status-sandbox)" : "var(--status-degraded)";
+  const color = pct >= 50 ? "var(--status-production)" : "var(--status-degraded)";
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <div style={{

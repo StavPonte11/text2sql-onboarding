@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
+
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, JSON, text
+from sqlalchemy import Column, JSON, text, ForeignKey
 
 
 class TableStatus(str, Enum):
@@ -48,21 +49,23 @@ class EnrichmentVersion(SQLModel, table=True):
     __tablename__ = "enrichment_versions"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     version: int = Field(default=1)
     data: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class EnrichmentCreate(SQLModel):
-    data: dict
+    data: Dict
+
 
 
 class EnrichmentRead(SQLModel):
     id: str
     table_id: str
     version: int
-    data: Optional[dict]
+    data: Optional[Dict]
+
     created_at: datetime
 
 
@@ -85,7 +88,7 @@ class GoldenQuestion(SQLModel, table=True):
     __tablename__ = "golden_questions"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     question: str
     expected_sql: str
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.simple)
@@ -123,7 +126,7 @@ class EvalRun(SQLModel, table=True):
     __tablename__ = "eval_runs"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     dataset_id: Optional[str] = Field(default=None, index=True)
     score: float = Field(default=0.0)
     pass_rate: float = Field(default=0.0)
@@ -138,12 +141,14 @@ class EvalRun(SQLModel, table=True):
     dimension_averages: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     regression_detected: bool = Field(default=False)
     regression_delta: Optional[float] = None
+    promotion_run_id: Optional[str] = Field(default=None, index=True)  # set on regression runs
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class EvalRunRead(SQLModel):
     id: str
-    table_id: str
+    table_id: Optional[str]
+    table_name: str
     dataset_id: Optional[str]
     score: float
     pass_rate: float
@@ -158,6 +163,7 @@ class EvalRunRead(SQLModel):
     dimension_averages: Optional[dict]
     regression_detected: bool
     regression_delta: Optional[float]
+    promotion_run_id: Optional[str] = None
     created_at: datetime
 
 
@@ -214,7 +220,7 @@ class EvaluationHistoryMetric(SQLModel, table=True):
     __tablename__ = "evaluation_history_metrics"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    run_id: str = Field(foreign_key="eval_runs.id", index=True)
+    run_id: str = Field(sa_column_args=[ForeignKey("eval_runs.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     metric_name: str  # e.g. "score", "pass_rate", "wrong_table_count"
     metric_value: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -243,7 +249,7 @@ class EvaluationAlert(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     run_id: Optional[str] = Field(default=None, index=True)
-    table_id: Optional[str] = Field(default=None, foreign_key="tables.id", index=True)
+    table_id: Optional[str] = Field(default=None, sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     alert_type: str  # "regression", "failed_run", "low_score"
     severity: AlertSeverity = Field(default=AlertSeverity.warning)
     message: str
@@ -273,8 +279,8 @@ class EvalResult(SQLModel, table=True):
     __tablename__ = "eval_results"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    run_id: str = Field(foreign_key="eval_runs.id", index=True)
-    question_id: str = Field(foreign_key="golden_questions.id")
+    run_id: str = Field(sa_column_args=[ForeignKey("eval_runs.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
+    question_id: str = Field(sa_column_args=[ForeignKey("golden_questions.id", ondelete="CASCADE", onupdate="CASCADE")])
     score: float = Field(default=0.0)
     status: str  # "pass" | "fail"
     error_type: Optional[str] = None
@@ -314,15 +320,17 @@ class AuditQuery(SQLModel, table=True):
     __tablename__ = "audit_queries"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: Optional[str] = Field(default=None, foreign_key="tables.id", index=True)
+    table_id: Optional[str] = Field(default=None, sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     user_id: str
     session_id: Optional[str] = None
     raw_question: str
     normalized_question: Optional[str] = None
-    tables_accessed: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
+    tables_accessed: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+
     final_sql: Optional[str] = None
     result_row_count: Optional[int] = None
-    result_columns: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
+    result_columns: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+
     execution_time_ms: Optional[int] = None
     refiner_iterations: Optional[int] = Field(default=0)
     status: str = Field(default="success")  # success/error/timeout
@@ -342,10 +350,12 @@ class AuditQueryRead(SQLModel):
     session_id: Optional[str]
     raw_question: str
     normalized_question: Optional[str]
-    tables_accessed: Optional[list[str]]
+    tables_accessed: Optional[List[str]]
+
     final_sql: Optional[str]
     result_row_count: Optional[int]
-    result_columns: Optional[list[str]]
+    result_columns: Optional[List[str]]
+
     execution_time_ms: Optional[int]
     refiner_iterations: Optional[int]
     status: str
@@ -372,7 +382,7 @@ class TableProfile(SQLModel, table=True):
     __tablename__ = "table_profiles"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     version: int = Field(default=1)              # monotonically increasing per table
     status: ProfilingStatus = Field(default=ProfilingStatus.pending)
     row_count: Optional[int] = None
@@ -412,8 +422,8 @@ class ColumnProfile(SQLModel, table=True):
     __tablename__ = "column_profiles"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", index=True)
-    profile_id: str = Field(foreign_key="table_profiles.id", index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
+    profile_id: str = Field(sa_column_args=[ForeignKey("table_profiles.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     column_name: str
     data_type: Optional[str] = None
     null_count: Optional[int] = None
@@ -458,8 +468,8 @@ class CrossTableProfile(SQLModel, table=True):
     __tablename__ = "cross_table_profiles"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    source_table_id: str = Field(foreign_key="tables.id", index=True)
-    target_table_id: str = Field(foreign_key="tables.id")
+    source_table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
+    target_table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")])
     join_suggestion: Optional[str] = None       # e.g. "source.user_id = target.id"
     match_strength: str = Field(default="weak") # "strong" | "weak"
     common_columns: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
@@ -490,8 +500,8 @@ class QueryFeedback(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str
-    query_id: str = Field(foreign_key="audit_queries.id", index=True)
-    table_id: Optional[str] = Field(default=None, foreign_key="tables.id", index=True)
+    query_id: str = Field(sa_column_args=[ForeignKey("audit_queries.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
+    table_id: Optional[str] = Field(default=None, sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
     rating: FeedbackRating
     comment: Optional[str] = None
     suggested_correction: Optional[str] = None
@@ -532,7 +542,7 @@ class TableHealth(SQLModel, table=True):
     __tablename__ = "table_health"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(foreign_key="tables.id", unique=True, index=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], unique=True, index=True)
     health_score: float = Field(default=0.0)        # 0.0–1.0
     health_status: HealthStatus = Field(default=HealthStatus.warning)
     eval_success_rate: Optional[float] = None
@@ -561,3 +571,27 @@ class TableHealthRead(SQLModel):
     failure_empty_result: int
     failure_execution_error: int
     updated_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADMIN MODELS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Admin(SQLModel, table=True):
+    __tablename__ = "admins"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    username: str = Field(unique=True, index=True)
+    hashed_password: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AdminCreate(SQLModel):
+    username: str
+    password: str
+
+
+class AdminRead(SQLModel):
+    id: str
+    username: str
+    created_at: datetime

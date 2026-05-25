@@ -29,6 +29,8 @@ export const tablesApi = {
   get: (id: string) => api.get<Table>(`/tables/${id}`).then((r) => r.data),
   create: (payload: TableCreate) =>
     api.post<Table>("/tables", payload).then((r) => r.data),
+  updateStatus: (id: string, status: string) =>
+    api.patch<Table>(`/tables/${id}/status`, null, { params: { status } }).then((r) => r.data),
   syncSchema: (id: string) =>
     api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
 };
@@ -47,6 +49,13 @@ export const questionsApi = {
     api.get<GoldenQuestion[]>(`/tables/${tableId}/questions`).then((r) => r.data),
   create: (tableId: string, payload: GoldenQuestionCreate) =>
     api.post<GoldenQuestion>(`/tables/${tableId}/questions`, payload).then((r) => r.data),
+  uploadQuestions: (tableId: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.post(`/tables/${tableId}/questions/upload`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then((r) => r.data);
+  },
   delete: (tableId: string, questionId: string) =>
     api.delete(`/tables/${tableId}/questions/${questionId}`),
 };
@@ -59,6 +68,8 @@ export const evalApi = {
     api.get<EvalRun[]>("/eval/runs/all").then((r) => r.data),
   listRuns: (tableId: string) =>
     api.get<EvalRun[]>(`/tables/${tableId}/eval/runs`).then((r) => r.data),
+  listBatchRuns: (promotionRunId: string) =>
+    api.get<EvalRun[]>(`/eval/batch/${promotionRunId}`).then((r) => r.data),
   getRun: (runId: string) => api.get<EvalRun>(`/eval/${runId}`).then((r) => r.data),
   getResults: (runId: string) =>
     api.get<EvalResult[]>(`/eval/${runId}/results`).then((r) => r.data),

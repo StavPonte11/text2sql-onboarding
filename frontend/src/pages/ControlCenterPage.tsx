@@ -66,16 +66,18 @@ function RecentRunRow({ run }: {
     }}>
       <div style={{
         width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-        background: run.score >= 0.9 ? "rgba(16,185,129,0.15)" : run.score >= 0.8 ? "rgba(245,158,11,0.15)" : "rgba(239,68,68,0.15)",
+        background: run.score >= 0.5 ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: 13, fontWeight: 800,
-        color: run.score >= 0.9 ? "#10b981" : run.score >= 0.8 ? "#f59e0b" : "#ef4444",
+        color: run.score >= 0.5 ? "#10b981" : "#ef4444",
       }}>
         {Math.round(run.score * 100)}%
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <code style={{ fontSize: 12, color: "var(--text-secondary)" }}>{run.table_id.slice(0, 10)}…</code>
+          <code style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            {run.table_id ? `${run.table_id.slice(0, 10)}…` : "All prod tables"}
+          </code>
           {run.regression_detected && (
             <span title="Regression"><AlertTriangle size={11} style={{ color: "#ef4444" }} /></span>
           )}
@@ -158,14 +160,14 @@ export function ControlCenterPage() {
         <MetricCard
           label="Global Score"
           value={globalScore !== null ? `${Math.round(globalScore * 100)}%` : "—"}
-          color={globalScore !== null ? (globalScore >= 0.9 ? "#10b981" : globalScore >= 0.8 ? "#f59e0b" : "#ef4444") : "var(--text-muted)"}
+          color={globalScore !== null ? (globalScore >= 0.5 ? "#10b981" : "#ef4444") : "var(--text-muted)"}
           icon={<TrendingUp size={16} />}
           sub="Avg across all completed runs"
         />
         <MetricCard
           label="Pass Rate"
           value={globalPassRate !== null ? `${Math.round(globalPassRate * 100)}%` : "—"}
-          color="#6366f1"
+          color={globalPassRate !== null ? (globalPassRate >= 0.5 ? "#10b981" : "#ef4444") : "var(--text-muted)"}
           icon={<CheckCircle size={16} />}
           sub="Questions passing across all runs"
         />

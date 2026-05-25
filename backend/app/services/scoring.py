@@ -17,7 +17,7 @@ from typing import Optional
 
 PASS_THRESHOLD    = 0.85
 PARTIAL_THRESHOLD = 0.60
-BLOCK_THRESHOLD   = 0.80     # dataset-level
+BLOCK_THRESHOLD   = 0.50     # dataset-level
 REGRESSION_BLOCK  = 0.10
 REGRESSION_WARN   = 0.05
 MAX_ITERATIONS    = 4
@@ -225,6 +225,9 @@ def classify_failure(
 
 # ─── Main Scoring Function ─────────────────────────────────────────────────────
 
+from langfuse.decorators import observe
+
+@observe()
 def compute_score(
     execution: ExecutionResult,
     expected_shape: ExpectedShape,
@@ -258,7 +261,8 @@ def compute_score(
         0.45 * result_correctness +
         0.20 * judge.table_selection_correctness +
         0.15 * judge.sql_semantic_equivalence +
-        0.10 * result_shape
+        0.10 * result_shape +
+        0.10 * judge.result_correctness          # was missing — weights now sum to 1.0
     )
 
     bd.result_correctness           = round(result_correctness, 3)
@@ -301,6 +305,7 @@ def compute_score(
 
 # ─── Dataset Aggregation ───────────────────────────────────────────────────────
 
+@observe()
 def compute_dataset_score(question_scores: list[tuple[float, str]]) -> dict:
     """
     Args:

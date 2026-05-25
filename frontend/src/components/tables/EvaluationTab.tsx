@@ -1,17 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Play, BarChart2 } from "lucide-react";
+import { Play, BarChart2, AlertTriangle, CheckCircle } from "lucide-react";
 import { App } from "antd";
-import { evalApi } from "../../api/client";
+import { evalApi, enrichmentApi, questionsApi } from "../../api/client";
 import { SkeletonTable } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
 import dayjs from "dayjs";
+import "./EvaluationTab.css";
 
 interface Props { tableId: string }
 
 function ScoreRing({ score }: { score: number }) {
   const pct = Math.round(score * 100);
-  const cls = pct >= 70 ? "score-ring--high" : pct >= 40 ? "score-ring--mid" : "score-ring--low";
+  const cls = pct >= 50 ? "score-ring--high" : "score-ring--low";
   return <div className={`score-ring ${cls}`}>{pct}%</div>;
 }
 
@@ -25,6 +26,28 @@ export function EvaluationTab({ tableId }: Props) {
     queryFn: () => evalApi.listRuns(tableId),
   });
 
+  const { data: enrichment } = useQuery({
+    queryKey: ["enrichment", tableId],
+    queryFn: () => enrichmentApi.getLatest(tableId),
+  });
+
+  const { data: questions } = useQuery({
+    queryKey: ["questions", tableId],
+    queryFn: () => questionsApi.list(tableId),
+  });
+
+  // Compute readiness
+  const hasDescription = !!(enrichment?.data?.table_description);
+  const hasEnrichment = !!(enrichment?.data);
+  const hasQuestions = !!(questions && questions.length > 0);
+  const isReady = hasEnrichment && hasDescription && hasQuestions;
+
+  const readinessItems = [
+    { label: "Table enrichment / schema", ok: hasEnrichment },
+    { label: "Table description", ok: hasDescription },
+    { label: "At least 1 golden question", ok: hasQuestions },
+  ];
+
   const triggerMutation = useMutation({
     mutationFn: () => evalApi.triggerRun(tableId),
     onSuccess: (run) => {
@@ -32,6 +55,10 @@ export function EvaluationTab({ tableId }: Props) {
       qc.setQueryData(["eval-runs", tableId], (old: any[]) => [run, ...(old ?? [])]);
       message.success("Evaluation run triggered");
     },
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail;
+      message.error(detail || "Evaluation failed. Please go change the descriptions in Oasis platform.", 8);
+    }
   });
 
   if (isLoading) return <SkeletonTable rows={3} cols={4} />;
@@ -39,25 +66,48 @@ export function EvaluationTab({ tableId }: Props) {
 
   return (
     <div>
-      <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 17, fontWeight: 700 }}>{t("evaluations.title")}</h2>
+      <div className="evaluation-tab__header">
+        <h2 className="evaluation-tab__title">{t("evaluations.title")}</h2>
         <button
           className="btn btn--primary btn--sm"
           onClick={() => triggerMutation.mutate()}
-          disabled={triggerMutation.isPending}
+          disabled={triggerMutation.isPending || !isReady}
+          title={!isReady ? "Complete all requirements below before running" : undefined}
         >
           <Play size={14} />
           {triggerMutation.isPending ? "Running..." : t("evaluations.runEval")}
         </button>
       </div>
 
+      {/* Readiness checklist */}
+      <div className={`eval-readiness-banner ${isReady ? "eval-readiness-banner--ready" : "eval-readiness-banner--incomplete"}`}>
+        <div className="eval-readiness-banner__icon">
+          {isReady
+            ? <CheckCircle size={16} />
+            : <AlertTriangle size={16} />
+          }
+        </div>
+        <div className="eval-readiness-banner__content">
+          <div className="eval-readiness-banner__title">
+            {isReady ? "Ready to evaluate" : "Requirements not met — evaluation is disabled"}
+          </div>
+          <div className="eval-readiness-banner__items">
+            {readinessItems.map(item => (
+              <span key={item.label} className={`eval-readiness-item ${item.ok ? "eval-readiness-item--ok" : "eval-readiness-item--missing"}`}>
+                {item.ok ? "✓" : "✗"} {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {triggerMutation.data && (
-        <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 20 }}>
+        <div className="card latest-run-card">
           <ScoreRing score={triggerMutation.data.score} />
           <div>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>Latest Run</div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
-              ID: {triggerMutation.data.id} · Status: {triggerMutation.data.status}
+            <div className="latest-run-card__title">Latest Run: {triggerMutation.data.table_name || tableId.slice(0,8)}</div>
+            <div className="latest-run-card__info">
+              Run ID: {triggerMutation.data.id.slice(0,8)}… · Status: {triggerMutation.data.status}
             </div>
           </div>
         </div>
@@ -72,33 +122,40 @@ export function EvaluationTab({ tableId }: Props) {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card evaluations-table-card">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Run ID</th>
-                <th>{t("evaluations.score")}</th>
+                <th>Contains Execution Accuracy</th>
                 <th>{t("evaluations.status")}</th>
+                <th>Type</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
-              {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])].map((run) => (
+              {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])]
+                .filter(run => run.triggered_by !== "promotion")
+                .map((run) => (
                 <tr key={run.id}>
-                  <td><code style={{ fontSize: 11, color: "var(--text-muted)" }}>{run.id}</code></td>
+                  <td><code className="run-id-code">{run.id.slice(0,8)}…</code></td>
                   <td><ScoreRing score={run.score} /></td>
                   <td>
-                    <span style={{
+                    <span className="run-status-badge" style={{
                       color: run.status === "completed" ? "var(--status-production)"
                         : run.status === "failed" ? "var(--status-degraded)"
-                        : "var(--status-sandbox)",
-                      fontWeight: 600, fontSize: 12,
+                        : "var(--status-sandbox)"
                     }}>
                       {run.status}
                     </span>
                   </td>
-                  <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    {dayjs(run.created_at).format("MMM D, YYYY HH:mm")}
+                  <td>
+                    <span className="run-type-label">
+                      {run.triggered_by}
+                    </span>
+                  </td>
+                  <td className="run-date-label">
+                    {dayjs(run.created_at).format("MMM D, HH:mm")}
                   </td>
                 </tr>
               ))}
@@ -109,3 +166,4 @@ export function EvaluationTab({ tableId }: Props) {
     </div>
   );
 }
+

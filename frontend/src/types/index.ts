@@ -25,6 +25,8 @@ export interface TableCreate {
 export interface ColumnDef {
   name: string;
   description: string;
+  dataType?: string;
+  children?: ColumnDef[];
   is_geo?: boolean;
   is_time?: boolean;
 }
@@ -64,8 +66,21 @@ export interface GoldenQuestionCreate {
 export interface EvalRun {
   id: string;
   table_id: string;
+  table_name?: string;
   score: number;
+  pass_rate: number;
+  fail_rate: number;
+  total_questions: number;
+  duration_seconds?: number;
+  triggered_by: string;
   status: EvalStatus;
+  started_at: string;
+  completed_at?: string;
+  failure_breakdown?: Record<string, number>;
+  dimension_averages?: Record<string, number>;
+  regression_detected: boolean;
+  regression_delta?: number;
+  promotion_run_id?: string;
   created_at: string;
 }
 
@@ -135,12 +150,46 @@ export interface TableProfile {
   updated_at: string;
 }
 
+export interface RowFieldStats {
+  type?: string;
+  null_count?: number;
+  null_rate?: number;
+  distinct_count?: number;
+  top_values?: { value: string; count: number }[];
+  min?: string;
+  max?: string;
+  avg?: number;
+  q25?: number;
+  median?: number;
+  q75?: number;
+  stddev?: number;
+  histogram?: { lo: number | null; hi: number | null; count: number; label: string }[];
+  children?: RowField[];
+  note?: string;
+}
+
+export interface RowField {
+  name: string;
+  data_type: string;
+  semantic_type?: string;
+  is_time?: boolean;
+  is_geo?: boolean;
+  null_count?: number;
+  null_rate?: number;
+  distinct_count?: number;
+  top_values?: { value: string; count: number }[];
+  min_value?: string;
+  max_value?: string;
+  stats?: RowFieldStats;
+}
+
 export interface ColumnProfile {
   id: string;
   table_id: string;
   profile_id: string;
   column_name: string;
   data_type?: string;
+  semantic_type?: string;
   null_count?: number;
   null_rate?: number;
   distinct_count?: number;
@@ -150,6 +199,12 @@ export interface ColumnProfile {
   top_values?: { value: string; count: number }[];
   is_geo: boolean;
   is_time: boolean;
+  stats_json?: {
+    type?: string;
+    children?: RowField[];
+    histogram?: { lo: number | null; hi: number | null; count: number; label: string }[];
+    [key: string]: unknown;
+  };
   created_at: string;
 }
 

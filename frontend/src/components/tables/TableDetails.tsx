@@ -2,8 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Rocket } from "lucide-react";
-import { tablesApi, enrichmentApi } from "../../api/client";
+import { tablesApi, enrichmentApi, evalApi } from "../../api/client";
 import { StatusBadge } from "../common/StatusBadge";
 import { SkeletonCard } from "../common/Skeleton";
 import { ErrorState } from "../common/ErrorState";
@@ -14,6 +13,9 @@ import { AuditTab } from "./AuditTab";
 import { PublishModal } from "./PublishModal";
 import { ProfilingTab } from "./ProfilingTab";
 import { HealthDashboard } from "./HealthDashboard";
+import { ArrowLeft, Rocket, ShieldCheck, FlaskConical, CornerUpLeft } from "lucide-react";
+import { App } from "antd";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
@@ -22,11 +24,16 @@ dayjs.extend(relativeTime);
 type TabKey = "overview" | "enrichment" | "questions" | "evaluations" | "audit" | "profiling" | "health";
 
 export function TableDetails() {
-  const { id } = useParams<{ id: string }>();
+  const { id, tab } = useParams<{ id: string; tab: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const activeTab = (tab as TabKey) || "overview";
   const [showPublish, setShowPublish] = useState(false);
+  const [showRegressionModal, setShowRegressionModal] = useState(false);
+
+  const setActiveTab = (newTab: TabKey) => {
+    navigate(`/tables/${id}/${newTab}`);
+  };
 
   const { data: table, isLoading, isError, refetch } = useQuery({
     queryKey: ["table", id],
@@ -39,6 +46,49 @@ export function TableDetails() {
     queryFn: () => enrichmentApi.getLatest(id!),
     enabled: !!id,
   });
+
+  const { data: runs } = useQuery({
+    queryKey: ["eval-runs", id],
+    queryFn: () => evalApi.listRuns(id!),
+    enabled: !!id,
+    refetchInterval: (query) => 
+      (query.state.data as any[])?.some((r: any) => r.status === "running") ? 500 : 30000,
+  });
+
+  const latestPromotion = runs?.find(r => r.triggered_by === "promotion");
+
+  const { data: batchRuns } = useQuery({
+    queryKey: ["eval-batch", latestPromotion?.id],
+    queryFn: () => evalApi.listBatchRuns(latestPromotion!.id),
+    enabled: !!latestPromotion?.id,
+    refetchInterval: (query) => 
+      (query.state.data as any[])?.some((r: any) => r.status === "running") ? 500 : 30000,
+  });
+
+  const qc = useQueryClient();
+  const { message } = App.useApp();
+
+  const statusMutation = useMutation({
+    mutationFn: (newStatus: string) => tablesApi.updateStatus(id!, newStatus),
+    onSuccess: (updated) => {
+      qc.setQueryData(["table", id], updated);
+      message.success(`Status updated to ${updated.status}`);
+    },
+  });
+
+  const activePromotion = latestPromotion?.status === "running" ? latestPromotion : undefined;
+
+  // Precise filter: only regression runs that were created by THIS promotion run
+  const currentBatchRegressions = batchRuns?.filter(r => r.triggered_by === "promotion-regression") || [];
+
+  const activeRegressions = currentBatchRegressions.filter(r => r.status === "running");
+  
+  // Keep banner visible while running, or up to 5 minutes after completion so users can review
+  const isRecentPromotion = latestPromotion && dayjs().diff(dayjs(latestPromotion.created_at), 'minute') < 5;
+  const isPromoting = !!activePromotion || activeRegressions.length > 0 || (isRecentPromotion && currentBatchRegressions.length > 0);
+  
+  const phase = activePromotion ? "Phase 1: Evaluating Target Table" : 
+                activeRegressions.length > 0 ? "Phase 2: Running Regression Suite" : "Promotion Complete";
 
   const tabs: Array<{ key: TabKey; label: string }> = [
     { key: "overview",     label: t("tabs.overview") },
@@ -73,13 +123,56 @@ export function TableDetails() {
             </p>
           </div>
         </div>
-        {table.status !== "production" && (
-          <button className="btn btn--primary" onClick={() => setShowPublish(true)}>
-            <Rocket size={15} />
-            {t("publish.btn")}
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          {table.status === "draft" && (
+            <button className="btn btn--ghost" onClick={() => statusMutation.mutate("sandbox")}>
+              <FlaskConical size={14} /> Send to Sandbox
+            </button>
+          )}
+          {table.status === "sandbox" && (
+            <button className="btn btn--ghost" onClick={() => statusMutation.mutate("verified")}>
+              <ShieldCheck size={14} /> Verify Table
+            </button>
+          )}
+          {table.status === "production" && (
+            <button className="btn btn--ghost" onClick={() => statusMutation.mutate("sandbox")}>
+              <CornerUpLeft size={14} /> Demote to Sandbox
+            </button>
+          )}
+          {table.status !== "production" && (
+            <button className="btn btn--primary" onClick={() => setShowPublish(true)} disabled={!!activePromotion}>
+              <Rocket size={15} />
+              {activePromotion ? "Publishing..." : t("publish.btn")}
+            </button>
+          )}
+        </div>
       </div>
+
+      {isPromoting && (
+        <div style={{ 
+          margin: "0 0 20px 0", padding: "12px 16px", borderRadius: 8, 
+          background: "rgba(14,165,233,0.08)", border: "1px solid rgba(14,165,233,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "space-between"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--accent)" }}>
+            <div className="spinner-mini" style={{ width: 14, height: 14, border: "2px solid var(--accent)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <span style={{ fontWeight: 600 }}>{phase}...</span>
+              {!activePromotion && currentBatchRegressions.length > 0 && (
+                <span style={{ fontSize: 11, opacity: 0.8 }}>
+                  {currentBatchRegressions.filter(r => r.status === "completed" || r.status === "failed").length} / {currentBatchRegressions.length} Production Tables Validated
+                </span>
+              )}
+            </div>
+          </div>
+          <button 
+            className="btn btn--primary btn--sm" 
+            onClick={() => activePromotion ? setActiveTab("evaluations") : setShowRegressionModal(true)}
+          >
+            View {activePromotion ? "Progress" : "Regression Suite"}
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="tabs">
@@ -192,7 +285,52 @@ export function TableDetails() {
       {activeTab === "audit"       && <AuditTab tableId={id!} />}
 
       {showPublish && (
-        <PublishModal tableId={id!} onClose={() => setShowPublish(false)} />
+        <PublishModal 
+          tableId={id!} 
+          onClose={() => setShowPublish(false)} 
+          onTrackProgress={() => { setActiveTab("evaluations"); setShowPublish(false); }}
+        />
+      )}
+      {showRegressionModal && (
+        <div className="modal-overlay" onClick={() => setShowRegressionModal(false)}>
+          <div className="modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+            <h2 className="modal__title">Production Regression Suite</h2>
+            <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 16 }}>
+              Verifying all tables currently in production to ensure no performance degradation.
+            </p>
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Score</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentBatchRegressions.map(run => (
+                    <tr key={run.id}>
+                      <td style={{ fontWeight: 600, fontSize: 13 }}>{run.table_name || run.table_id.slice(0,8)}</td>
+                      <td>
+                        <div style={{ fontWeight: 700, color: run.score >= 0.5 ? "var(--status-production)" : "var(--status-degraded)" }}>
+                          {Math.round(run.score * 100)}%
+                        </div>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>
+                          {run.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="modal__actions">
+              <button className="btn btn--primary" onClick={() => setShowRegressionModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

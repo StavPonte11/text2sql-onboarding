@@ -1,20 +1,43 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session
+from sqlmodel import Session, select
 import time
+import logging
 from app.config import settings
 from app.db.engine import create_db_and_tables, engine
-from app.models.models import AuditQuery
+from app.models.models import AuditQuery, Admin
 from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit, profiling, feedback, health
-from app.routers import orchestration
+from app.routers import orchestration, admin_auth, admin_approval
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.auth import get_password_hash
+
+from app.models.models import Table, TableStatus
+
+logger = logging.getLogger(__name__)
+
+def seed_admin():
+    with Session(engine) as session:
+        admin = session.exec(select(Admin).where(Admin.username == "admin")).first()
+        if not admin:
+            hashed_pwd = get_password_hash("admin123")
+            new_admin = Admin(username="admin", hashed_password=hashed_pwd)
+            session.add(new_admin)
+            session.commit()
+            logger.info("Default admin 'admin' created.")
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_and_tables()
-    start_scheduler()
+    try:
+        create_db_and_tables()
+        seed_admin()
+
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"Startup error: {e}", exc_info=True)
+        raise e
     yield
     stop_scheduler()
 
@@ -62,7 +85,7 @@ async def audit_middleware(request: Request, call_next):
                 session.add(audit)
                 session.commit()
         except Exception as e:
-            print(f"Failed to log audit: {e}")
+            logger.error(f"Failed to log audit: {e}")
 
     return response
 
@@ -79,6 +102,8 @@ app.include_router(audit.router)
 app.include_router(profiling.router)
 app.include_router(feedback.router)
 app.include_router(health.router)
+app.include_router(admin_auth.router)
+app.include_router(admin_approval.router)
 
 
 @app.get("/health")
