@@ -104,7 +104,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_enrichment_versions_table_id'), 'enrichment_versions', ['table_id'], unique=False)
     op.create_table('eval_runs',
     sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('table_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('table_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('dataset_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('score', sa.Float(), nullable=False),
     sa.Column('pass_rate', sa.Float(), nullable=False),
@@ -119,6 +119,7 @@ def upgrade() -> None:
     sa.Column('dimension_averages', sa.JSON(), nullable=True),
     sa.Column('regression_detected', sa.Boolean(), nullable=False),
     sa.Column('regression_delta', sa.Float(), nullable=True),
+    sa.Column('promotion_run_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['table_id'], ['tables.id'], ondelete='CASCADE', onupdate='CASCADE'),
     sa.PrimaryKeyConstraint('id')

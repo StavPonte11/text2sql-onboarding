@@ -158,6 +158,12 @@ export interface RowFieldStats {
   top_values?: { value: string; count: number }[];
   min?: string;
   max?: string;
+  avg?: number;
+  q25?: number;
+  median?: number;
+  q75?: number;
+  stddev?: number;
+  histogram?: { lo: number | null; hi: number | null; count: number; label: string }[];
   children?: RowField[];
   note?: string;
 }
@@ -196,6 +202,7 @@ export interface ColumnProfile {
   stats_json?: {
     type?: string;
     children?: RowField[];
+    histogram?: { lo: number | null; hi: number | null; count: number; label: string }[];
     [key: string]: unknown;
   };
   created_at: string;

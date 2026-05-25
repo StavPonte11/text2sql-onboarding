@@ -57,7 +57,7 @@ export function PublishModal({ tableId, onClose, onTrackProgress }: Props) {
     },
     {
       label: "All columns have descriptions",
-      pass: enrichment?.data?.columns?.every((c: any) => c.description?.length >= 20) ?? false,
+      pass: enrichment?.data?.columns?.every((c: any) => c.description?.length >= 10) ?? false,
     },
   ];
 
