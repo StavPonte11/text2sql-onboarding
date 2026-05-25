@@ -1,6 +1,8 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle, Clock, Database, TrendingUp, Zap, Bell } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Activity, AlertTriangle, CheckCircle, Clock, Database, TrendingUp, Zap, Bell, ShieldOff } from "lucide-react";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { orchestrationApi } from "../api/orchestration";
@@ -94,6 +96,22 @@ function RecentRunRow({ run }: {
 // ── ControlCenterPage ──────────────────────────────────────────────────────────
 export function ControlCenterPage() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const noPermissions = searchParams.get('no_permissions') === '1';
+  const noPermBannerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-dismiss the "no permissions" banner after 6 seconds
+  useEffect(() => {
+    if (!noPermissions) return;
+    const timer = setTimeout(() => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('no_permissions');
+        return next;
+      });
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [noPermissions, setSearchParams]);
 
   const { data: health, isLoading: healthLoading } = useQuery({
     queryKey: ["system-health"],
@@ -134,6 +152,56 @@ export function ControlCenterPage() {
 
   return (
     <div className="page">
+      {/* ── No-permissions popup ── */}
+      {noPermissions && (
+        <div
+          ref={noPermBannerRef}
+          style={{
+            position: 'fixed', top: 20, right: 20, zIndex: 9999,
+            display: 'flex', alignItems: 'flex-start', gap: 12,
+            padding: '16px 20px',
+            background: 'rgba(239,68,68,0.12)',
+            border: '1px solid rgba(239,68,68,0.35)',
+            borderRadius: 10,
+            backdropFilter: 'blur(12px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+            maxWidth: 360,
+            animation: 'slideInRight 0.3s ease',
+          }}
+        >
+          <style>{`
+            @keyframes slideInRight {
+              from { opacity: 0; transform: translateX(40px); }
+              to   { opacity: 1; transform: translateX(0); }
+            }
+          `}</style>
+          <ShieldOff size={20} color="#ef4444" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#ef4444', marginBottom: 4 }}>
+              Access Denied
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              You do not have permission to access the admin panel.
+              Contact your administrator to request access.
+            </div>
+          </div>
+          <button
+            onClick={() => setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.delete('no_permissions');
+              return next;
+            })}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-muted)', fontSize: 18, lineHeight: 1,
+              padding: '0 0 0 8px', alignSelf: 'flex-start',
+            }}
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* ── Header ── */}
       <div className="page__header">
         <div>

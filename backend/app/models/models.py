@@ -574,24 +574,27 @@ class TableHealthRead(SQLModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADMIN MODELS
+# SECURITY USER MODELS  (maps to security.users in the combined DB)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class Admin(SQLModel, table=True):
-    __tablename__ = "admins"
+class SecurityUser(SQLModel, table=True):
+    __tablename__ = "users"
+    __table_args__ = {"schema": "security"}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    username: str = Field(unique=True, index=True)
-    hashed_password: str
+    email: str = Field(unique=True, index=True)
+    name: str
+    is_active: bool = Field(default=True)
+    is_admin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class AdminCreate(SQLModel):
-    username: str
-    password: str
-
-
-class AdminRead(SQLModel):
+class SecurityUserRead(SQLModel):
     id: str
-    username: str
+    email: str
+    name: str
+    is_active: bool
+    is_admin: bool
     created_at: datetime
+    updated_at: datetime
