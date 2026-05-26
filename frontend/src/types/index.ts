@@ -11,6 +11,8 @@ export interface Table {
   id: string;
   name: string;
   schema_name: string;
+  catalog: string;
+  service: string;
   status: TableStatus;
   owner_id?: string;
   oasis_source_id?: string;
