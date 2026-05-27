@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"
-
+    OPENMETADATA_SERVICE_NAME: str = "local_trino"
     # Trino connection
     TRINO_HOST: str = "localhost"
     TRINO_PORT: int = 8080
@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     TRINO_HTTP_SCHEME: str = "http"
     TRINO_REQUEST_TIMEOUT: float = 30.0
     TRINO_ENABLED: bool = True  # Set False to disable real Trino calls
+    TRINO_VERIFY: Union[bool, str] = False  # True to verify standard SSL, False to ignore, or path to cabundle.crt
+    TRINO_CERT_PATH: Optional[str] = None  # Path to client certificate for mTLS (.crt / .pem)
+    TRINO_KEY_PATH: Optional[str] = None   # Path to client private key for mTLS (.key / .pem)
     TRINO_SERVICE_URL: Optional[str] = None
 
     # JWT Config
