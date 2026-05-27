@@ -22,11 +22,11 @@ def get_fqn_from_source_id(oasis_source_id: str, default_fqn: str = None) -> str
     if settings.TRINO_SERVICE_URL:
         try:
             url = f"{settings.TRINO_SERVICE_URL.rstrip('/')}/source-db/get_trino_full_names_by_ids"
-            response = httpx.post(url, json=[oasis_source_id], timeout=10.0)
+            response = httpx.post(url, json=[oasis_source_id], timeout=10.0, verify=False)
             response.raise_for_status()
             data = response.json()
             if isinstance(data, list) and len(data) > 0:
-                return data[0]
+                return f"{settings.OPENMETADATA_SERVICE_NAME}.{data[0]}"
         except Exception as e:
             logger.warning(f"Failed to fetch FQN from TRINO_SERVICE_URL: {e}")
     return default_fqn if default_fqn else oasis_source_id
@@ -81,7 +81,7 @@ def create_table(
         # Instead of sending oasis_source_id into the URL, send the FQN
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
         token = settings.OPENMETADATA_TOKEN
-        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0, verify=False)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -161,7 +161,7 @@ def sync_table_schema(
     try:
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
         token = settings.OPENMETADATA_TOKEN
-        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0, verify=False)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
