@@ -73,17 +73,6 @@ def _build_questions_payload(questions: list, table: Table) -> list:
 
 @observe(name="eval-single-table")
 def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
-    """
-    Evaluates one table's golden questions and records the result.
-    Primary metric: contains_execution_accuracy (average across questions).
-
-    NOTE: This function does NOT create a Langfuse dataset. Only the two
-    promotion datasets ('text2sql_production' and 'text2sql_candidate') are
-    ever created in Langfuse. Regular eval runs score locally via stubs until
-    the real MCP agent is integrated.
-
-    Returns the average contains_execution_accuracy score (0.0–1.0).
-    """
     run = session.get(EvalRun, run_id)
     if not run:
         return -1.0
@@ -141,6 +130,14 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     }
     session.add(run)
 
+    for q, score in zip(questions, question_scores_contains):
+        session.add(EvalResult(
+            run_id=run_id,
+            question_id=q.id,
+            score=score,
+            status="pass" if score >= 0.50 else "fail",
+        ))
+
     # Lifecycle: draft → sandbox on first evaluation only
     table = session.get(Table, table_id)
     if table and table.status == TableStatus.draft:
@@ -193,24 +190,24 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
         all_production_questions.extend(qs)
 
     if langfuse_client.enabled:
-        if not langfuse_client.dataset_exists(PRODUCTION_DATASET_NAME):
-            all_questions_payload = []
-            for table in prod_tables:
-                qs_for_table = [q for q in all_production_questions if q.table_id == table.id]
-                all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
+        # Always sync — ensure_dataset_synced is idempotent (skips already-present questions).
+        # This covers: new dataset, empty dataset, or dataset missing recently added questions.
+        all_questions_payload = []
+        for table in prod_tables:
+            qs_for_table = [q for q in all_production_questions if q.table_id == table.id]
+            all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
 
+        if all_questions_payload:
             logger.info(
-                f"[Promotion/Phase-A] Building '{PRODUCTION_DATASET_NAME}' for the first time "
-                f"({len(all_questions_payload)} questions across {len(prod_tables)} tables)"
+                f"[Promotion/Phase-A] Syncing {len(all_questions_payload)} questions "
+                f"to '{PRODUCTION_DATASET_NAME}' (idempotent — new questions only)"
             )
             try:
                 langfuse_client.ensure_dataset_synced(PRODUCTION_DATASET_NAME, all_questions_payload)
             except Exception as e:
-                logger.warning(f"[Promotion/Phase-A] Dataset build failed: {e}")
+                logger.warning(f"[Promotion/Phase-A] Dataset sync failed: {e}")
         else:
-            logger.info(
-                f"[Promotion/Phase-A] Dataset '{PRODUCTION_DATASET_NAME}' already exists — using as-is"
-            )
+            logger.info("[Promotion/Phase-A] No questions to sync — production tables have no golden questions")
 
     run = EvalRun(
         table_id=None,
@@ -286,6 +283,59 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
             ))
 
     session.commit()
+
+    # Log per-question scores back to Langfuse so they appear in the Experiments UI
+    if langfuse_client.enabled and all_production_questions and question_scores_contains:
+        try:
+            import requests as _req
+            # Fetch dataset items to get their Langfuse item IDs (needed to link scores)
+            res = _req.get(
+                f"{langfuse_client._tracer.host}/api/public/dataset-items"
+                f"?datasetName={PRODUCTION_DATASET_NAME}&limit=500",
+                auth=(langfuse_client._tracer.public_key, langfuse_client._tracer.private_key),
+            )
+            item_map: dict[str, str] = {}  # question_id → langfuse_item_id
+            if res.status_code == 200:
+                for item in res.json().get("data", []):
+                    qid = item.get("metadata", {}).get("question_id")
+                    if qid:
+                        item_map[qid] = item["id"]
+
+            run_name = f"{run_name_prefix}-PhaseA"
+            for q, score in zip(all_production_questions, question_scores_contains):
+                lf_item_id = item_map.get(q.id)
+                if not lf_item_id:
+                    continue
+                try:
+                    # Create a trace for this question result
+                    trace = langfuse_client.client.trace(
+                        name=f"production-baseline-q-{q.id[:8]}",
+                        input={"question": q.question},
+                        output={"score": score, "status": "pass" if score >= 0.50 else "fail"},
+                        metadata={"question_id": q.id, "run_id": run.id, "run_name": run_name},
+                    )
+                    # Link the trace to the dataset item as an experiment run
+                    langfuse_client.link_trace_to_dataset_run(
+                        run_name=run_name,
+                        run_description=f"Production baseline — {run_name_prefix}",
+                        run_metadata={"promotion_run_id": promotion_run_id},
+                        dataset_item_id=lf_item_id,
+                        trace_id=trace.id,
+                    )
+                    # Score the trace
+                    langfuse_client.client.score(
+                        trace_id=trace.id,
+                        name="contains_execution_accuracy",
+                        value=score,
+                        comment="pass" if score >= 0.50 else "fail",
+                    )
+                except Exception as exc:
+                    logger.warning(f"[Promotion/Phase-A] Failed to log score for question {q.id}: {exc}")
+
+            langfuse_client.flush()
+            logger.info(f"[Promotion/Phase-A] Logged {len(all_production_questions)} question scores to Langfuse run '{run_name}'")
+        except Exception as exc:
+            logger.warning(f"[Promotion/Phase-A] Langfuse score logging failed: {exc}")
 
     logger.info(f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {avg_score_contains:.3f} "
                 f"exact_exec_accuracy = {avg_score_exact:.3f} ranking_accuracy = {avg_score_ranking:.3f} "
@@ -376,6 +426,19 @@ def _run_candidate_eval(
             "ranking_accuracy": avg_score_ranking
         }
         session.add(run)
+
+        # Persist per-question EvalResult rows so the report endpoint
+        # can show per-question scores in the UI.
+        existing_results = session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).first()
+        if not existing_results:
+            for q, score in zip(questions, question_scores_contains):
+                session.add(EvalResult(
+                    run_id=run.id,
+                    question_id=q.id,
+                    score=score,
+                    status="pass" if score >= 0.50 else "fail",
+                ))
+
         session.commit()
 
         logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "

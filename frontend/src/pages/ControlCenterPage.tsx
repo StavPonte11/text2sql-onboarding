@@ -133,13 +133,21 @@ export function ControlCenterPage() {
 
   const ackMut = useMutation({
     mutationFn: orchestrationApi.acknowledgeAlert,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["eval-alerts-unacked"] });
+    onMutate: (alertId: string) => {
+      // Optimistically remove the alert from the list instantly (synchronous, no delay)
+      qc.setQueryData<any[]>(["eval-alerts-unacked"], (old = []) =>
+        old.filter((a) => a.id !== alertId)
+      );
+    },
+    onSettled: () => {
+      // Quietly refresh in background to sync the active_alerts counter
       qc.invalidateQueries({ queryKey: ["system-health"] });
     },
   });
 
-  if (healthLoading) {
+  // Only show the full page spinner on the initial load, not during background refetches
+  // (like those triggered by invalidateQueries after acknowledging an alert).
+  if (healthLoading && !health) {
     return (
       <div className="page" style={{ display: "flex", justifyContent: "center", paddingTop: 80 }}>
         <Spinner size={36} />

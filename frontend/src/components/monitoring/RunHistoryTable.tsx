@@ -113,8 +113,8 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   {report.per_question.map((q: { question_id: string; question: string; score: number; status: string; failure_type: string | null }) => (
                     <div key={q.question_id} className="question-item">
                       <div className="question-item__dot" style={{ background: q.status === "pass" ? "#10b981" : "#ef4444" }} />
-                      <div className="question-item__id" title={q.question}>
-                        {q.question.slice(0, 16)}…
+                      <div className="question-item__id" title={q.question ?? q.question_id}>
+                        {(q.question ?? q.question_id).slice(0, 16)}…
                       </div>
                       <div className="question-item__score" style={{ color: q.score >= 0.5 ? "#10b981" : "#ef4444" }}>
                         {Math.round(q.score * 100)}%

@@ -65,7 +65,7 @@ def create_table(
     try:
         # Instead of sending oasis_source_id into the URL, send the FQN
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        token = "eyJraWQiOiJHYjM4OWEtOWY3Ni1nZGpzLWE5MmotMDI0MmJrOTQzNTYiLCJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJvcGVuLW1ldGFkYXRhLm9yZyIsInN1YiI6InByb2ZpbGVyLWJvdCIsInJvbGVzIjpbIlByb2ZpbGVyQm90Um9sZSJdLCJlbWFpbCI6InByb2ZpbGVyLWJvdEBvcGVuLW1ldGFkYXRhLm9yZyIsImlzQm90Ijp0cnVlLCJ0b2tlblR5cGUiOiJCT1QiLCJpYXQiOjE3Nzg3NDUyMDEsImV4cCI6bnVsbH0.nZr-FXxHEscRjzz2z-cE2NDTtIuTlAsDdeQ5hu_QVdB7j5bYj7xTmVettbyAT1rP1FHZgrCNb7R_TblLLtL_coyZSJWfKWoJoD82snkn3wc9fIHIYfktHUejU-UHM_DTIzx51qU2O-tbQT8L9FZWbSJQkbTvHDYKVxuERD26xcx-cQ3TSD87RIzw7b7m4ailKp4RUattt__jI0bz02cS4orJgptSpr0WG6ePmTMmlElcoUTZHBWtAwe1bL63lQlloKYJCYkX93Iy-eIEFnHf-YzS4NopwfKDrqbyZNWqR_GHxLDanf3Ylhb_WyB0zCVbtwImBBLdLcB3w9sgZBue-A"
+        token = "eyJraWQiOiJHYjM4OWEtOWY3Ni1nZGpzLWE5MmotMDI0MmJrOTQzNTYiLCJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJvcGVuLW1ldGFkYXRhLm9yZyIsInN1YiI6ImluZ2VzdGlvbi1ib3QiLCJyb2xlcyI6WyJJbmdlc3Rpb25Cb3RSb2xlIl0sImVtYWlsIjoiaW5nZXN0aW9uLWJvdEBvcGVuLW1ldGFkYXRhLm9yZyIsImlzQm90Ijp0cnVlLCJ0b2tlblR5cGUiOiJCT1QiLCJpYXQiOjE3NzkxOTk1MDksImV4cCI6bnVsbH0.e-A4ME1dKlDOtuf4xho4EAOEJJY_9t7yZKXzlmQGuDZs5M0oDhLEDoDqsFaOyGgMZ10uTV7sMLu3lfQH6law_FtM-F6aHinOZ8agPU_niRitPTVziN12-Nt9ATTQev3ye8V_NTOn_NEBvXMAfd5mOHAKuOtsvnFXSM5JcOSCk2n4qLWzUsCBVKS_v-pZcw_aGaDt7YXP0bUtxl___cT6gMjZWq6FEYXTSV7LaADraCzjmeVTpHkcpi3ts4pSuKKcpj69VUPBcOjreHTbpiDV-GR2LNpei583TZk9HKcmkJLrNraiy-cKJPqb09eR5dS8WVRYe6mffStq9OSEqtZRuQ"
         response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
         response.raise_for_status()
         data = response.json()
