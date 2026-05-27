@@ -24,6 +24,8 @@ class Table(SQLModel, table=True):
     status: TableStatus = Field(default=TableStatus.draft)
     owner_id: str
     oasis_source_id: str
+    catalog: str = Field(default="dataverse")
+    service: str = Field(default="trino_ingestion")
     openmetadata_json: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -40,6 +42,8 @@ class TableRead(SQLModel):
     status: TableStatus
     owner_id: str
     oasis_source_id: str
+    catalog: str
+    service: str
     openmetadata_json: Optional[dict]
     created_at: datetime
     updated_at: datetime

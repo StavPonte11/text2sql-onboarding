@@ -38,6 +38,8 @@ def upgrade() -> None:
     sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('schema_name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('catalog', sqlmodel.sql.sqltypes.AutoString(), server_default='dataverse', nullable=False),
+    sa.Column('service', sqlmodel.sql.sqltypes.AutoString(), server_default='local_trino', nullable=False),
     sa.Column('status', sa.Enum('draft', 'sandbox', 'verified', 'production', 'degraded', name='tablestatus'), nullable=False),
     sa.Column('owner_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('oasis_source_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),

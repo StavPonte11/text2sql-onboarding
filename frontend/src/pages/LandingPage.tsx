@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Database, Shield, Zap, Code2, LineChart, Cpu } from "lucide-react";
+import { ArrowRight, Shield, Zap, Code2, LineChart, Cpu } from "lucide-react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import "../styles/LandingPage.css";
 

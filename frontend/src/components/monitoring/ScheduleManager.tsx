@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Edit2, Clock, ToggleLeft, ToggleRight, CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, Clock, ToggleLeft, ToggleRight, CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
 import dayjs from "dayjs";
 import { orchestrationApi, type EvalSchedule, type EvalScheduleCreate } from "../../api/orchestration";
 import { StatusBadge, Spinner, EmptySlate } from "../common/EvalUI";

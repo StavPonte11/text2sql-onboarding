@@ -8,7 +8,7 @@ import { tablesApi, enrichmentApi, questionsApi } from "../../api/client";
 import type { TableCreate, EnrichmentData, GoldenQuestionCreate, Table } from "../../types";
 
 const STEPS = ["select", "schema", "enrichment", "validate", "questions", "submit"] as const;
-type Step = (typeof STEPS)[number];
+
 
 export function OnboardingWizard() {
   const { t } = useTranslation();
@@ -82,7 +82,7 @@ export function OnboardingWizard() {
     setCurrentStep((s) => Math.min(s + 1, STEPS.length - 1));
   };
 
-  const addQuestion = () => setQuestions((q) => [...q, { question: "", expected_sql: "", difficulty: "simple" }]);
+  const addQuestion = () => setQuestions((q) => [...q, { question: "", expected_sql: "", difficulty: "simple", question_type: "simple" }]);
   const updateQuestion = (i: number, patch: Partial<GoldenQuestionCreate>) =>
     setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, ...patch } : q));
 

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, RefreshCw, AlertTriangle, Check, X, ArrowRight } from "lucide-react";
+import { ChevronRight, RefreshCw, AlertTriangle, Check, X, ArrowRight } from "lucide-react";
 import dayjs from "dayjs";
 import { Link } from "react-router-dom";
-import { orchestrationApi, type EvalRunFull } from "../../api/orchestration";
+import { orchestrationApi } from "../../api/orchestration";
 import { StatusBadge, ScoreBar, Spinner, EmptySlate } from "../common/EvalUI";
 import "./RunHistoryTable.css";
 
