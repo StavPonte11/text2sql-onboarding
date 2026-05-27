@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi } from '../api/admin';
 import { useAdminStore } from '../store/adminStore';
@@ -17,8 +17,9 @@ export function AdminPanelPage() {
 
   const { data: pendingTables = [], isLoading, error } = useQuery({
     queryKey: ['admin', 'pendingTables'],
-    queryFn: adminApi.getPendingTables,
+    queryFn: () => adminApi.getPendingTables(),
     refetchInterval: 10000,
+    retry: false,
   });
 
   const approveMutation = useMutation({
@@ -81,7 +82,7 @@ export function AdminPanelPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ textAlign: 'right' }}>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Logged in as</p>
-            <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.username}</p>
+            <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.name || user?.email}</p>
           </div>
           <button 
             onClick={handleLogout}
@@ -100,8 +101,10 @@ export function AdminPanelPage() {
             Loading verified tables...
           </div>
         ) : error ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--status-degraded)' }}>
-            Failed to load pending tables
+          <div className="empty-state">
+            <CheckCircle2 size={48} className="empty-state__icon" />
+            <div className="empty-state__text">No pending tables right now</div>
+            <div className="empty-state__sub">There are no tables waiting for approval at the moment.</div>
           </div>
         ) : pendingTables.length === 0 ? (
           <div className="empty-state">

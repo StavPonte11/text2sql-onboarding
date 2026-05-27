@@ -18,6 +18,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 
+def get_fqn_from_source_id(oasis_source_id: str, default_fqn: str = None) -> str:
+    if settings.TRINO_SERVICE_URL:
+        try:
+            url = f"{settings.TRINO_SERVICE_URL.rstrip('/')}/source-db/get_trino_full_names_by_ids"
+            response = httpx.post(url, json=[oasis_source_id], timeout=10.0, verify=False)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                return f"{settings.OPENMETADATA_SERVICE_NAME}.{data[0]}"
+        except Exception as e:
+            logger.warning(f"Failed to fetch FQN from TRINO_SERVICE_URL: {e}")
+    return default_fqn if default_fqn else oasis_source_id
+
+def get_table_fqn(table: Table) -> str:
+    return f"{table.service}.{table.catalog}.{table.schema_name}.{table.name}"
 
 @router.get("", response_model=List[TableRead])
 def list_tables(
@@ -59,14 +74,14 @@ def create_table(
     payload: TableCreate,
     session: Session = Depends(get_session)
 ):
-    # For testing, we use the oasis_source_id directly as the OpenMetadata FQN
-    fqn = payload.oasis_source_id
+    # Get the FQN using the helper function
+    fqn = get_fqn_from_source_id(payload.oasis_source_id)
 
     try:
         # Instead of sending oasis_source_id into the URL, send the FQN
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        token = "eyJraWQiOiJHYjM4OWEtOWY3Ni1nZGpzLWE5MmotMDI0MmJrOTQzNTYiLCJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJvcGVuLW1ldGFkYXRhLm9yZyIsInN1YiI6InByb2ZpbGVyLWJvdCIsInJvbGVzIjpbIlByb2ZpbGVyQm90Um9sZSJdLCJlbWFpbCI6InByb2ZpbGVyLWJvdEBvcGVuLW1ldGFkYXRhLm9yZyIsImlzQm90Ijp0cnVlLCJ0b2tlblR5cGUiOiJCT1QiLCJpYXQiOjE3Nzg3NDUyMDEsImV4cCI6bnVsbH0.nZr-FXxHEscRjzz2z-cE2NDTtIuTlAsDdeQ5hu_QVdB7j5bYj7xTmVettbyAT1rP1FHZgrCNb7R_TblLLtL_coyZSJWfKWoJoD82snkn3wc9fIHIYfktHUejU-UHM_DTIzx51qU2O-tbQT8L9FZWbSJQkbTvHDYKVxuERD26xcx-cQ3TSD87RIzw7b7m4ailKp4RUattt__jI0bz02cS4orJgptSpr0WG6ePmTMmlElcoUTZHBWtAwe1bL63lQlloKYJCYkX93Iy-eIEFnHf-YzS4NopwfKDrqbyZNWqR_GHxLDanf3Ylhb_WyB0zCVbtwImBBLdLcB3w9sgZBue-A"
-        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+        token = settings.OPENMETADATA_TOKEN
+        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0, verify=False)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -76,6 +91,9 @@ def create_table(
     metadata = data.get("metadata", data)
     name = metadata.get("name", data.get("name"))
     schema_name = metadata.get("databaseSchema", {}).get("name") if "databaseSchema" in metadata else data.get("databaseSchema", {}).get("name")
+    service_name = metadata.get("service", {}).get("name") if "service" in metadata else data.get("service", {}).get("name")
+    catalog_name = metadata.get("database", {}).get("name") if "database" in metadata else data.get("database", {}).get("name")
+
     description = metadata.get("description", data.get("description", ""))
     om_columns = metadata.get("columns", data.get("columns", []))
 
@@ -83,6 +101,8 @@ def create_table(
     table = Table(
         name=name,
         schema_name=schema_name,
+        catalog=catalog_name,
+        service=service_name,
         owner_id="system",
         oasis_source_id=payload.oasis_source_id,
         openmetadata_json=data
@@ -135,14 +155,13 @@ def sync_table_schema(
     if not table.oasis_source_id:
         raise HTTPException(status_code=400, detail="Table has no oasis_source_id")
 
-    # Stub for the inner URL service that converts oasis_source_id to FQN
-    # We use oasis_source_id directly as the FQN for testing
-    fqn = table.oasis_source_id
+    # Get the FQN using the helper function, get the updated from open and if not exist get the last table fqn in the database
+    fqn = get_fqn_from_source_id(table.oasis_source_id, default_fqn=get_table_fqn(table))
 
     try:
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        token = "eyJraWQiOiJHYjM4OWEtOWY3Ni1nZGpzLWE5MmotMDI0MmJrOTQzNTYiLCJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJvcGVuLW1ldGFkYXRhLm9yZyIsInN1YiI6InByb2ZpbGVyLWJvdCIsInJvbGVzIjpbIlByb2ZpbGVyQm90Um9sZSJdLCJlbWFpbCI6InByb2ZpbGVyLWJvdEBvcGVuLW1ldGFkYXRhLm9yZyIsImlzQm90Ijp0cnVlLCJ0b2tlblR5cGUiOiJCT1QiLCJpYXQiOjE3Nzg3NDUyMDEsImV4cCI6bnVsbH0.nZr-FXxHEscRjzz2z-cE2NDTtIuTlAsDdeQ5hu_QVdB7j5bYj7xTmVettbyAT1rP1FHZgrCNb7R_TblLLtL_coyZSJWfKWoJoD82snkn3wc9fIHIYfktHUejU-UHM_DTIzx51qU2O-tbQT8L9FZWbSJQkbTvHDYKVxuERD26xcx-cQ3TSD87RIzw7b7m4ailKp4RUattt__jI0bz02cS4orJgptSpr0WG6ePmTMmlElcoUTZHBWtAwe1bL63lQlloKYJCYkX93Iy-eIEFnHf-YzS4NopwfKDrqbyZNWqR_GHxLDanf3Ylhb_WyB0zCVbtwImBBLdLcB3w9sgZBue-A"
-        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+        token = settings.OPENMETADATA_TOKEN
+        response = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0, verify=False)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -152,12 +171,17 @@ def sync_table_schema(
     metadata = data.get("metadata", data)
     name = metadata.get("name", data.get("name"))
     schema_name = metadata.get("databaseSchema", {}).get("name") if "databaseSchema" in metadata else data.get("databaseSchema", {}).get("name")
+    service_name = metadata.get("service", {}).get("name") if "service" in metadata else data.get("service", {}).get("name")
+    catalog_name = metadata.get("database", {}).get("name") if "database" in metadata else data.get("database", {}).get("name")
+
     description = metadata.get("description", data.get("description", ""))
     om_columns = metadata.get("columns", data.get("columns", []))
 
     # Update the table
     table.name = name
     table.schema_name = schema_name
+    table.catalog = catalog_name
+    table.service = service_name
     table.openmetadata_json = data
     table.updated_at = datetime.utcnow()
     

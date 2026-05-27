@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PlayCircle, Database, ChevronDown, ListChecks, CalendarClock, History, Check } from "lucide-react";
+import { PlayCircle, Database, CalendarClock, History, Check } from "lucide-react";
 import { App } from "antd";
 import { tablesApi } from "../api/client";
 import { orchestrationApi } from "../api/orchestration";

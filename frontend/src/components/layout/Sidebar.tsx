@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Database, FlaskConical, Activity, Shield, LayoutDashboard, BarChart2, ClipboardList } from "lucide-react";
+import { Database, Activity, Shield, LayoutDashboard, BarChart2, ClipboardList } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { orchestrationApi } from "../../api/orchestration";
 import "./Sidebar.css";
@@ -46,7 +46,7 @@ function AlertDot({ count }: { count: number }) {
 }
 
 export function Sidebar() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const { data: health } = useQuery({
     queryKey: ["system-health"],

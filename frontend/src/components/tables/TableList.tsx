@@ -110,6 +110,8 @@ export function TableList() {
             <thead>
               <tr>
                 <th>{t("tables.cols.name")}</th>
+                <th>{t("tables.cols.service", "Service")}</th>
+                <th>{t("tables.cols.catalog", "Catalog")}</th>
                 <th>{t("tables.cols.schema")}</th>
                 <th>{t("tables.cols.status")}</th>
                 <th>{t("tables.cols.owner")}</th>
@@ -125,6 +127,8 @@ export function TableList() {
                       {table.name}
                     </span>
                   </td>
+                  <td><code className="table-schema-code">{table.service}</code></td>
+                  <td><code className="table-schema-code">{table.catalog}</code></td>
                   <td><code className="table-schema-code">{table.schema_name}</code></td>
                   <td><StatusBadge status={table.status} /></td>
                   <td className="table-owner-cell">{table.owner_id}</td>

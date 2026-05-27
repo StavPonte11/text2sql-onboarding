@@ -18,7 +18,7 @@ const DIFFICULTY_COLORS: Record<DifficultyLevel, string> = {
   complex: "var(--status-degraded)",
 };
 
-const EMPTY_FORM: GoldenQuestionCreate = { question: "", expected_sql: "", difficulty: "simple" };
+const EMPTY_FORM: GoldenQuestionCreate = { question: "", expected_sql: "", difficulty: "simple", question_type: "simple" };
 
 export function GoldenQuestions({ tableId }: Props) {
   const { t } = useTranslation();

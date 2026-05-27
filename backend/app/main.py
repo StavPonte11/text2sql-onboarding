@@ -1,30 +1,17 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select
+from sqlmodel import Session
 import time
 import logging
 from app.config import settings
 from app.db.engine import create_db_and_tables, engine
-from app.models.models import AuditQuery, Admin
+from app.models.models import AuditQuery, SecurityUser
 from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit, profiling, feedback, health
 from app.routers import orchestration, admin_auth, admin_approval
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.services.auth import get_password_hash
-
-from app.models.models import Table, TableStatus
 
 logger = logging.getLogger(__name__)
-
-def seed_admin():
-    with Session(engine) as session:
-        admin = session.exec(select(Admin).where(Admin.username == "admin")).first()
-        if not admin:
-            hashed_pwd = get_password_hash("admin123")
-            new_admin = Admin(username="admin", hashed_password=hashed_pwd)
-            session.add(new_admin)
-            session.commit()
-            logger.info("Default admin 'admin' created.")
 
 
 
@@ -32,8 +19,6 @@ def seed_admin():
 async def lifespan(app: FastAPI):
     try:
         create_db_and_tables()
-        seed_admin()
-
         start_scheduler()
     except Exception as e:
         logger.error(f"Startup error: {e}", exc_info=True)
@@ -51,8 +36,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

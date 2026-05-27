@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Activity, RefreshCw, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { healthApi } from "../../api/client";
-import type { TableHealth } from "../../types";
+
 
 function ScoreGauge({ score }: { score: number }) {
   const pct = Math.round(score * 100);

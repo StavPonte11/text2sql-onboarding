@@ -3,25 +3,26 @@ import { persist } from 'zustand/middleware';
 
 interface AdminUser {
   id: string;
-  username: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  is_active: boolean;
 }
 
 interface AdminState {
-  token: string | null;
   user: AdminUser | null;
   isAuthenticated: boolean;
-  setAuth: (token: string, user: AdminUser) => void;
+  setAuth: (user: AdminUser) => void;
   logout: () => void;
 }
 
 export const useAdminStore = create<AdminState>()(
   persist(
     (set) => ({
-      token: null,
       user: null,
       isAuthenticated: false,
-      setAuth: (token, user) => set({ token, user, isAuthenticated: true }),
-      logout: () => set({ token: null, user: null, isAuthenticated: false }),
+      setAuth: (user) => set({ user, isAuthenticated: true }),
+      logout: () => set({ user: null, isAuthenticated: false }),
     }),
     {
       name: 'admin-storage',

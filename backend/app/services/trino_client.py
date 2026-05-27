@@ -35,7 +35,11 @@ def get_trino_connection():
     from app.config import settings
 
     auth = None
-    if settings.TRINO_PASSWORD:
+    if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
+        auth = trino.auth.CertificateAuthentication(
+            settings.TRINO_CERT_PATH, settings.TRINO_KEY_PATH
+        )
+    elif settings.TRINO_PASSWORD:
         auth = trino.auth.BasicAuthentication(
             settings.TRINO_USER, settings.TRINO_PASSWORD
         )
@@ -49,6 +53,7 @@ def get_trino_connection():
         http_scheme=settings.TRINO_HTTP_SCHEME,
         auth=auth,
         request_timeout=settings.TRINO_REQUEST_TIMEOUT,
+        verify=settings.TRINO_VERIFY,
     )
 
 

@@ -1,57 +1,31 @@
-from datetime import datetime, timedelta
 from typing import Optional
-from jose import JWTError, jwt
-import bcrypt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session, select
-from app.config import settings
 from app.db.engine import get_session
-from app.models.models import Admin
+from app.models.models import SecurityUser
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="admin/login")
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+def get_user_by_email(email: str, session: Session) -> Optional[SecurityUser]:
+    """Fetch a user from security.users by email."""
+    return session.exec(
+        select(SecurityUser).where(SecurityUser.email == email)
+    ).first()
 
-def get_password_hash(password: str) -> str:
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(hours=settings.JWT_EXPIRE_HOURS)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
-    return encoded_jwt
-
-def decode_token(token: str) -> dict:
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        return payload
-    except JWTError:
+def require_admin(email: str, session: Session = Depends(get_session)) -> SecurityUser:
+    """
+    Dependency that validates the email belongs to an active admin user.
+    Raises 403 if the user is not found, inactive, or not an admin.
+    """
+    user = get_user_by_email(email, session)
+    if not user or not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not found or inactive",
         )
-
-def get_current_admin(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)) -> Admin:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    payload = decode_token(token)
-    username: str = payload.get("sub")
-    if username is None:
-        raise credentials_exception
-    
-    admin = session.exec(select(Admin).where(Admin.username == username)).first()
-    if admin is None:
-        raise credentials_exception
-    return admin
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have admin permissions",
+        )
+    return user

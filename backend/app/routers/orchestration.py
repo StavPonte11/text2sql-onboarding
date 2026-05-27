@@ -106,8 +106,8 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
         metadata={"table_ids": table_ids, "run_ids": run_ids, "triggered_by": triggered_by}
     )
     
-    with Session(engine) as session:
-        for table_id, run_id in zip(table_ids, run_ids):
+    for table_id, run_id in zip(table_ids, run_ids):
+        with Session(engine) as session:
             run = session.get(EvalRun, run_id)
             if not run:
                 continue

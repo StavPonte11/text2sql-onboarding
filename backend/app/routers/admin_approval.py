@@ -1,11 +1,11 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from typing import List
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlmodel import Session, select, desc
 from pydantic import BaseModel
 from datetime import datetime
 from app.db.engine import get_session
-from app.models.models import Table, TableStatus, Admin, EvalRun, EvalStatus, GoldenQuestion
-from app.services.auth import get_current_admin
+from app.models.models import Table, TableStatus, SecurityUser, EvalRun, EvalStatus, GoldenQuestion
+from app.services.auth import require_admin
 from app.services.langfuse_client import langfuse_client
 import logging
 
@@ -18,6 +18,14 @@ PRODUCTION_DATASET_NAME = "text2sql_production"
 
 class RejectionNote(BaseModel):
     note: str
+
+
+def _get_admin_from_header(
+    x_admin_email: str = Header(..., alias="X-Admin-Email"),
+    session: Session = Depends(get_session),
+) -> SecurityUser:
+    """Dependency: extracts the admin email from X-Admin-Email header and validates it."""
+    return require_admin(x_admin_email, session)
 
 
 def _sync_questions_to_production_dataset(table: Table, session: Session):
@@ -74,7 +82,7 @@ def _sync_questions_to_production_dataset(table: Table, session: Session):
 
 @router.get("/pending", response_model=List[dict])
 def get_pending_tables(
-    current_admin: Admin = Depends(get_current_admin),
+    current_admin: SecurityUser = Depends(_get_admin_from_header),
     session: Session = Depends(get_session)
 ):
     """Get all tables in 'verified' status (awaiting admin approval)."""
@@ -107,7 +115,7 @@ def get_pending_tables(
 @router.post("/{table_id}/approve")
 def approve_table(
     table_id: str,
-    current_admin: Admin = Depends(get_current_admin),
+    current_admin: SecurityUser = Depends(_get_admin_from_header),
     session: Session = Depends(get_session)
 ):
     """
@@ -137,7 +145,7 @@ def approve_table(
     _sync_questions_to_production_dataset(table, session)
 
     logger.info(
-        f"[AdminApproval] Admin '{current_admin.username}' approved table '{table.name}' → production"
+        f"[AdminApproval] Admin '{current_admin.email}' approved table '{table.name}' → production"
     )
     return {
         "message": "Table approved for production",
@@ -150,7 +158,7 @@ def approve_table(
 def reject_table(
     table_id: str,
     rejection: RejectionNote,
-    current_admin: Admin = Depends(get_current_admin),
+    current_admin: SecurityUser = Depends(_get_admin_from_header),
     session: Session = Depends(get_session)
 ):
     """
@@ -172,7 +180,7 @@ def reject_table(
     session.commit()
 
     logger.info(
-        f"[AdminApproval] Admin '{current_admin.username}' rejected table '{table.name}' "
+        f"[AdminApproval] Admin '{current_admin.email}' rejected table '{table.name}' "
         f"→ sandbox. Reason: {rejection.note}"
     )
     return {

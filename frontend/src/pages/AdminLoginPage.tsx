@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, AlertCircle } from 'lucide-react';
+import { ShieldCheck, AlertCircle, Mail } from 'lucide-react';
 import { adminApi } from '../api/admin';
 import { useAdminStore } from '../store/adminStore';
 
 export function AdminLoginPage() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -18,11 +17,29 @@ export function AdminLoginPage() {
     setLoading(true);
 
     try {
-      const { access_token } = await adminApi.login(username, password);
-      setAuth(access_token, { id: 'admin-id', username });
+      const user = await adminApi.login(email);
+
+      if (!user.is_admin) {
+        // Should not normally reach here — the backend already rejects non-admins
+        // but guard on the client side too
+        navigate('/control-center?no_permissions=1', { replace: true });
+        return;
+      }
+
+      setAuth(user);
       navigate('/admin');
     } catch (err: any) {
-      setError(err.message || 'Login failed. Please check your credentials.');
+      const msg: string = err.message || 'Login failed.';
+      // If the error is a permissions error, redirect to control center with popup
+      if (
+        msg.toLowerCase().includes('permission') ||
+        msg.toLowerCase().includes('forbidden') ||
+        msg.toLowerCase().includes('admin')
+      ) {
+        navigate('/control-center?no_permissions=1', { replace: true });
+        return;
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -30,56 +47,67 @@ export function AdminLoginPage() {
 
   return (
     <div className="layout" style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div className="card card--elevated" style={{ width: '100%', maxWidth: '400px', padding: '32px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{ display: 'inline-flex', padding: '16px', background: 'var(--bg-hover)', borderRadius: '50%', marginBottom: '16px' }}>
-            <Lock size={32} color="var(--accent)" />
+      <div className="card card--elevated" style={{ width: '100%', maxWidth: '420px', padding: '40px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <div style={{
+            display: 'inline-flex', padding: '18px',
+            background: 'linear-gradient(135deg, rgba(14,165,233,0.15), rgba(139,92,246,0.15))',
+            borderRadius: '50%', marginBottom: '18px',
+            border: '1px solid rgba(14,165,233,0.2)',
+          }}>
+            <ShieldCheck size={34} color="var(--accent)" />
           </div>
-          <h2 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>Admin Access</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>Secure area for table approvals</p>
+          <h2 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+            Admin Access
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+            Enter your email to access the admin panel
+          </p>
         </div>
 
         {error && (
-          <div className="form-error" style={{ marginBottom: '20px', padding: '12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}>
-            <AlertCircle size={16} />
-            <span style={{ marginLeft: '8px' }}>{error}</span>
+          <div style={{
+            marginBottom: '20px', padding: '12px 14px',
+            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: '8px',
+          }}>
+            <AlertCircle size={15} color="#ef4444" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '13.5px', color: '#ef4444' }}>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Username</label>
-            <input
-              type="text"
-              className="form-input"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
-              required
-            />
-          </div>
-
           <div className="form-group" style={{ marginBottom: '24px' }}>
-            <label className="form-label">Password</label>
+            <label className="form-label">
+              <Mail size={13} style={{ marginRight: 5, verticalAlign: 'middle' }} />
+              Email address
+            </label>
             <input
-              type="password"
+              id="admin-email"
+              type="email"
               className="form-input"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
               required
+              autoFocus
             />
           </div>
 
           <button
+            id="admin-login-submit"
             type="submit"
             className="btn btn--primary"
-            style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', fontSize: '14px' }}
+            style={{ width: '100%', justifyContent: 'center', padding: '11px 16px', fontSize: '14px' }}
             disabled={loading}
           >
-            {loading ? 'Authenticating...' : 'Sign In'}
+            {loading ? 'Verifying…' : 'Sign In'}
           </button>
         </form>
+
+        <p style={{ marginTop: '20px', textAlign: 'center', fontSize: '12.5px', color: 'var(--text-muted)' }}>
+          Access is restricted to users with admin privileges.
+        </p>
       </div>
     </div>
   );
