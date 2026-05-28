@@ -1,5 +1,7 @@
 import logging
+
 from sqlmodel import Session, select
+
 from app.db.engine import engine
 from app.models.models import ColumnProfile, CrossTableProfile
 

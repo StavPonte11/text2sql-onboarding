@@ -9,9 +9,9 @@ Reference: docs/prompts/scoring_mechanism.md
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Optional
-
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -226,6 +226,7 @@ def classify_failure(
 # ─── Main Scoring Function ─────────────────────────────────────────────────────
 
 from langfuse.decorators import observe
+
 
 @observe()
 def compute_score(

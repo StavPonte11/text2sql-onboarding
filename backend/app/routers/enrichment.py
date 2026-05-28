@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select, col
+import logging
 from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, col, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    EnrichmentVersion, EnrichmentCreate, EnrichmentRead,
-    Table, TableStatus
+    EnrichmentCreate,
+    EnrichmentRead,
+    EnrichmentVersion,
+    Table,
+    TableStatus,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 

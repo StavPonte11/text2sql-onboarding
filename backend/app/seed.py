@@ -1,13 +1,23 @@
-import asyncio
 from sqlmodel import Session, select
-from app.db.engine import engine
+
+from app.db.engine import create_db_and_tables, engine
 from app.models.models import (
-    Table, EnrichmentVersion, GoldenQuestion, EvalRun, EvalResult, UserScope,
-    TableStatus, DifficultyLevel, EvalStatus
+    DifficultyLevel,
+    EnrichmentVersion,
+    EvalResult,
+    EvalRun,
+    EvalStatus,
+    GoldenQuestion,
+    Table,
+    TableStatus,
+    UserScope,
 )
-import json
+
 
 def seed():
+    # Run migrations to ensure all schemas and tables exist
+    create_db_and_tables()
+
     with Session(engine) as session:
         # Check if already seeded
         if session.exec(select(Table)).first():

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import UserScope, UserScopeCreate, UserScopeRead
 

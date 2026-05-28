@@ -5,6 +5,7 @@ Replaces all stubs with real Trino-backed execution via profiling_engine.
 New endpoint: GET /tables/{id}/profile/context — LLM-ready context blob.
 """
 import logging
+import traceback
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -13,10 +14,19 @@ from sqlmodel import Session, select
 
 from app.db.engine import engine, get_session
 from app.models.models import (
-    ColumnProfile, ColumnProfileRead,
-    CrossTableProfile, CrossTableProfileRead,
-    ProfilingStatus, Table,
-    TableProfile, TableProfileRead,
+    ColumnProfile,
+    ColumnProfileRead,
+    CrossTableProfile,
+    CrossTableProfileRead,
+    ProfilingStatus,
+    Table,
+    TableProfile,
+    TableProfileRead,
+)
+from app.services.join_detection import discover_joins_for_table
+from app.services.profiling_engine import (
+    build_context_for_llm,
+    run_table_profiling,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,9 +39,6 @@ def _run_profile_job(table_id: str, profile_id: str):
     Background task: runs real Trino profiling via profiling_engine,
     then persists results into table_profiles + column_profiles.
     """
-    from app.config import settings
-    from app.services.profiling_engine import run_table_profiling
-
     with Session(engine) as session:
         profile = session.get(TableProfile, profile_id)
         table = session.get(Table, table_id)
@@ -68,7 +75,6 @@ def _run_profile_job(table_id: str, profile_id: str):
             version=version,
         )
     except Exception as exc:
-        import traceback
         with open("error.log", "w") as f:
             f.write(traceback.format_exc())
         logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
@@ -134,7 +140,7 @@ def _run_profile_job(table_id: str, profile_id: str):
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)
 def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
-    if not table:   
+    if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
     completed = session.exec(
@@ -151,7 +157,7 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
 
     if not completed and not latest:
         raise HTTPException(status_code=404, detail="No profile found. Run POST /profile/run first.")
-        
+
     # If a new profile is running, return the old data but indicate it's running
     if completed and latest and latest.status == ProfilingStatus.running:
         completed.status = ProfilingStatus.running
@@ -182,7 +188,7 @@ def run_all_profiles(
             ).first()
             if stale:
                 continue
-        
+
         profile = TableProfile(table_id=str(table.id), status=ProfilingStatus.running, version=1)
         session.add(profile)
         session.commit()
@@ -190,7 +196,7 @@ def run_all_profiles(
 
         background_tasks.add_task(_run_profile_job, str(table.id), profile.id)
         count += 1
-        
+
     logger.info(f"[Profiling] Queued profiling job for {count} out of {len(tables)} tables.")
     return {"message": f"Queued profiling for {count} tables.", "total_tables": len(tables), "queued": count}
 
@@ -277,8 +283,6 @@ def get_profile_context(table_id: str, session: Session = Depends(get_session)) 
     completed profile. Used by the TextToSQL context builder for
     system-prompt injection, enrichment suggestions, and join suggestions.
     """
-    from app.services.profiling_engine import build_context_for_llm
-
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -313,7 +317,6 @@ def get_profile_context(table_id: str, session: Session = Depends(get_session)) 
 @router.post("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead], status_code=201)
 def cross_profile(table_id: str, session: Session = Depends(get_session)):
     """Discover cross-table join suggestions based on profiling statistics."""
-    from app.services.join_detection import discover_joins_for_table
     return discover_joins_for_table(table_id)
 
 

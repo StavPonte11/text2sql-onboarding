@@ -17,16 +17,17 @@ Merge path:
 
 from __future__ import annotations
 
+import logging
 import random
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from langfuse.decorators import observe, langfuse_context
+from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session
 
-from app.services.langfuse_client import langfuse_client as _lf_client, Evaluation
-from app.models.models import GoldenQuestion, EvalResult
-import logging
+from app.models.models import EvalResult, GoldenQuestion
+from app.services.langfuse_client import Evaluation
+from app.services.langfuse_client import langfuse_client as _lf_client
 
 logger = logging.getLogger(__name__)
 

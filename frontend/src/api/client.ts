@@ -1,5 +1,6 @@
 import axios from "axios";
 import { useAppStore } from "../store/appStore";
+import { API_BASE_URL } from "../config/constants";
 import type {
   Table, TableCreate, EnrichmentVersion, GoldenQuestion,
   GoldenQuestionCreate, EvalRun, EvalResult, UserScope,
@@ -10,7 +11,7 @@ import type {
 } from "../types";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:8000",
+  baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
 });
 

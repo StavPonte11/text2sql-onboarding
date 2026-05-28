@@ -4,11 +4,18 @@ Reads EvaluationSchedule rows from the DB on startup and registers cron jobs.
 """
 import logging
 from datetime import datetime
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlmodel import Session, select
+
 from app.db.engine import engine
-from app.models.models import EvaluationSchedule, EvalRun, EvalStatus, Table, GoldenQuestion
+from app.models.models import (
+    EvalRun,
+    EvaluationSchedule,
+    GoldenQuestion,
+    Table,
+)
 
 logger = logging.getLogger(__name__)
 

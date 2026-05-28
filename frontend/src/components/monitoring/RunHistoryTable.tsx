@@ -117,7 +117,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         {(q.question ?? q.question_id).slice(0, 16)}…
                       </div>
                       <div className="question-item__score" style={{ color: q.score >= 0.5 ? "#10b981" : "#ef4444" }}>
-                        {Math.round(q.score * 100)}%
+                        {q.score >= 0.5 ? 100 : 0}%
                       </div>
                       {q.failure_type && (
                         <span className="question-item__failure-type">
@@ -185,17 +185,17 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: "#10b981" }}>
-                            {Math.round(item.baseline_score * 100)}%
+                            {item.baseline_score >= 0.5 ? 100 : 0}
                           </span>
                           <ArrowRight size={11} style={{ color: "var(--text-muted)" }} />
                           <span style={{ fontSize: 12, fontWeight: 700, color: "#ef4444" }}>
-                            {Math.round(item.regression_score * 100)}%
+                            {item.regression_score >= 0.5 ? 100 : 0}
                           </span>
                           <span style={{
                             fontSize: 11, fontWeight: 800, padding: "1px 6px",
                             borderRadius: 6, background: "rgba(239,68,68,0.15)", color: "#ef4444",
                           }}>
-                            −{Math.round(item.score_drop * 100)}%
+                            −{item.score_drop >= 0.5 ? 100 : 0}
                           </span>
                         </div>
                       </div>

@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PlayCircle, Database, CalendarClock, History, Check } from "lucide-react";
 import { App } from "antd";
-import { tablesApi } from "../api/client";
-import { orchestrationApi } from "../api/orchestration";
+import { useTables } from "../hooks/useTables";
+import { useEvalReadiness, useTriggerOrchestrationRun } from "../hooks/useEvaluations";
 import { RunHistoryTable } from "../components/monitoring/RunHistoryTable";
 import { ScheduleManager } from "../components/monitoring/ScheduleManager";
 import { Spinner, SectionHeader, EmptySlate } from "../components/common/EvalUI";
@@ -14,36 +13,32 @@ type Tab = "history" | "schedules" | "run";
 
 // ── Run trigger panel ──────────────────────────────────────────────────────────
 function RunTriggerPanel() {
-  const qc = useQueryClient();
   const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
   const [triggeredBy] = useState("user");
   const [launched, setLaunched] = useState(false);
   const { message } = App.useApp();
 
-  const { data: tables = [], isLoading: tablesLoading } = useQuery({
-    queryKey: ["tables-all"],
-    queryFn: () => tablesApi.list(),
-  });
+  const { data: tables = [], isLoading: tablesLoading } = useTables();
 
-  const { data: readiness = {} } = useQuery({
-    queryKey: ["eval-readiness"],
-    queryFn: () => orchestrationApi.getReadiness(),
-    staleTime: 30_000,
-  });
+  const { data: readiness = {} } = useEvalReadiness();
 
-  const triggerMut = useMutation({
-    mutationFn: () => orchestrationApi.triggerRun(selectedTableIds, triggeredBy),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["eval-runs"] });
-      qc.invalidateQueries({ queryKey: ["system-health"] });
-      setLaunched(true);
-      setTimeout(() => setLaunched(false), 4000);
-    },
-    onError: (err: any) => {
-      const detail = err?.response?.data?.detail;
-      message.error(detail || "Evaluation failed. Please check table descriptions in Oasis platform.", 10);
-    }
-  });
+  const triggerMut = useTriggerOrchestrationRun();
+
+  const handleLaunch = () => {
+    triggerMut.mutate(
+      { tableIds: selectedTableIds, triggeredBy },
+      {
+        onSuccess: () => {
+          setLaunched(true);
+          setTimeout(() => setLaunched(false), 4000);
+        },
+        onError: (err: any) => {
+          const detail = err?.response?.data?.detail;
+          message.error(detail || "Evaluation failed. Please check table descriptions in Oasis platform.", 10);
+        }
+      }
+    );
+  };
 
   const toggleTable = (id: string) => {
     // Prevent selecting incomplete tables
@@ -128,7 +123,7 @@ function RunTriggerPanel() {
       <button
         className="btn btn--primary launch-btn-full"
         disabled={selectedTableIds.length === 0 || triggerMut.isPending}
-        onClick={() => triggerMut.mutate()}
+        onClick={handleLaunch}
       >
         {triggerMut.isPending
           ? <><Spinner size={15} color="#fff" /> Running…</>

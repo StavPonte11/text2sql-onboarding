@@ -13,24 +13,32 @@ On pass  → table.status = verified  (awaits admin approval)
 On fail  → table.status = sandbox   + alert created
 """
 
-import time
-from datetime import datetime
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-
-from sqlmodel import Session, select, desc
-from app.db.engine import get_session, engine
-from app.models.models import (
-    Table, TableStatus, GoldenQuestion,
-    EvalRun, EvalRunRead, EvalStatus,
-    EvalResult, EvalResultRead,
-    EvaluationAlert, AlertSeverity,
-    EnrichmentVersion,
-)
-from app.services.langfuse_client import langfuse_client
-from app.services.evaluator import TextToSQLEvaluator
-from langfuse.decorators import observe, langfuse_context
 import logging
+import random
+from datetime import datetime
+from typing import Optional
+
+import requests
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from langfuse.decorators import langfuse_context, observe
+from sqlmodel import Session, desc, select
+
+from app.db.engine import engine, get_session
+from app.models.models import (
+    AlertSeverity,
+    EnrichmentVersion,
+    EvalResult,
+    EvalResultRead,
+    EvalRun,
+    EvalRunRead,
+    EvalStatus,
+    EvaluationAlert,
+    GoldenQuestion,
+    Table,
+    TableStatus,
+)
+from app.services.evaluator import TextToSQLEvaluator
+from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +103,7 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 
     # Score locally — stub returns 0.0 or 1.0 per question.
     # MERGE: replace with real MCP/Trino calls via TextToSQLEvaluator.
-    import random
+
     question_scores_contains: list[float] = [
         float(random.choice([0, 1])) for _ in questions
     ]
@@ -234,7 +242,6 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
         except Exception as e:
             logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
 
-    import random
     if not question_scores:
         question_scores = [
             float(random.choice([0, 1]))
@@ -287,9 +294,8 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
     # Log per-question scores back to Langfuse so they appear in the Experiments UI
     if langfuse_client.enabled and all_production_questions and question_scores_contains:
         try:
-            import requests as _req
             # Fetch dataset items to get their Langfuse item IDs (needed to link scores)
-            res = _req.get(
+            res = requests.get(
                 f"{langfuse_client._tracer.host}/api/public/dataset-items"
                 f"?datasetName={PRODUCTION_DATASET_NAME}&limit=500",
                 auth=(langfuse_client._tracer.public_key, langfuse_client._tracer.private_key),
@@ -380,7 +386,7 @@ def _run_candidate_eval(
                 langfuse_client.ensure_dataset_synced(
                     dataset_name, _build_questions_payload(questions, table)
                 )
-                
+
                 evaluator = TextToSQLEvaluator(
                     run_name=f"{run_name_prefix}-Candidate",
                     session=session,
@@ -393,11 +399,11 @@ def _run_candidate_eval(
                 logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
 
         if not question_scores:
-            import random
+
             question_scores = [float(random.choice([0, 1])) for _ in questions]
 
         # Generate stubs for exact and ranking based on the same length
-        import random
+
         question_scores_contains = question_scores
         question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
         question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
@@ -495,7 +501,7 @@ def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_i
         except Exception as e:
             logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
 
-    import random
+
     if not question_scores:
         # Slight variance from baseline to simulate real regression testing.
         # Use the same question count as the loaded production questions.
@@ -728,18 +734,18 @@ def trigger_eval(
 def list_runs(table_id: str, session: Session = Depends(get_session)):
     # Subquery to find all promotion_run_ids for this table
     promotion_run_ids = select(EvalRun.id).where(EvalRun.table_id == table_id)
-    
+
     results = session.exec(
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(
-            ((EvalRun.table_id == table_id) | 
+            ((EvalRun.table_id == table_id) |
             (EvalRun.promotion_run_id.in_(promotion_run_ids)))
             & (EvalRun.triggered_by != "promotion")
         )
         .order_by(desc(EvalRun.created_at))
     ).all()
-    
+
     out = []
     for run, name in results:
         # Provide a descriptive name for baseline/regression runs that have no table_id

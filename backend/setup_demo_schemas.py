@@ -9,8 +9,6 @@ Run from the backend/ directory:
 
 import subprocess
 import sys
-import json
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -318,6 +316,7 @@ COMPLEX_TABLES = [
 
 import httpx
 
+
 def om_upsert(method: str, path: str, body: dict, token: str) -> tuple:
     url = f"http://localhost:8585/api/v1/{path}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -338,13 +337,13 @@ def om_get(path: str, token: str) -> tuple:
         return "ERROR", {"error": str(e)}
 
 def register_in_openmetadata(container: str):
-    print(f"\n[3/3] Registering in OpenMetadata via localhost:8585 API …")
+    print("\n[3/3] Registering in OpenMetadata via localhost:8585 API …")
 
     # Login
     import base64
     try:
         b64_password = base64.b64encode(b"admin").decode("utf-8")
-        r = httpx.post("http://localhost:8585/api/v1/users/login", 
+        r = httpx.post("http://localhost:8585/api/v1/users/login",
                        json={"email": "admin@open-metadata.org", "password": b64_password},
                        timeout=10.0)
         status = str(r.status_code)
@@ -360,10 +359,10 @@ def register_in_openmetadata(container: str):
 
     token = body_json.get("accessToken") or body_json.get("token", "")
     if not token:
-        print(f"  ✗ Could not parse token from login response.")
+        print("  ✗ Could not parse token from login response.")
         sys.exit(1)
 
-    print(f"  ✓ Logged in to OpenMetadata")
+    print("  ✓ Logged in to OpenMetadata")
 
     # Create DatabaseService
     st, svc = om_get(f"services/databaseServices/name/{OM_SERVICE_NAME}", token)
@@ -396,7 +395,7 @@ def register_in_openmetadata(container: str):
     st, db = om_get(f"databases/name/{db_fqn}", token)
     if st == "200":
         db_id = db["id"]
-        print(f"  ↺ Database 'minio' already exists")
+        print("  ↺ Database 'minio' already exists")
     else:
         st, db = om_upsert("POST", "databases", {
             "name": "minio",
@@ -407,7 +406,7 @@ def register_in_openmetadata(container: str):
             print(f"  ✗ Failed to create database (HTTP {st}): {db}")
             sys.exit(1)
         db_id = db["id"]
-        print(f"  ✓ Database 'minio' created")
+        print("  ✓ Database 'minio' created")
 
     # Register all tables
     all_tables = SIMPLE_TABLES + COMPLEX_TABLES

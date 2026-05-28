@@ -17,20 +17,20 @@ Merge notes:
 """
 from __future__ import annotations
 
-import os
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import langfuse as sdk
+import requests
 from langfuse.api.resources.dataset_run_items.types.create_dataset_run_item_request import (
     CreateDatasetRunItemRequest,
 )
 from langfuse.decorators import langfuse_context
 
 from app.config import settings
-
 
 # ─── Shared types ──────────────────────────────────────────────────────────────
 
@@ -266,9 +266,7 @@ class LangfuseDatasetService:
         self.logger.info(
             f"[LangfuseDatasetService] Syncing {len(questions)} questions to '{dataset_name}'"
         )
-        
-        # Fetch existing to avoid duplicates since upsert by ID is not supported natively
-        import requests
+
         existing_qids = set()
         if self._tracer.public_key:
             res = requests.get(
@@ -320,7 +318,6 @@ class LangfuseDatasetService:
         """
         Deletes all items in a dataset.
         """
-        import requests
         if not self.enabled:
             return
 
@@ -352,7 +349,6 @@ class LangfuseDatasetService:
         Removes all dataset items belonging to a specific table from a dataset.
         Since Langfuse SDK does not expose delete natively, this uses requests.
         """
-        import requests
         if not self.enabled:
             return
 
@@ -371,10 +367,10 @@ class LangfuseDatasetService:
                 return
 
             data = res.json().get("data", [])
-            
+
             # 2. Filter items belonging to the table
             items_to_delete = [
-                item for item in data 
+                item for item in data
                 if item.get("metadata", {}).get("table_id") == table_id
             ]
 
@@ -392,7 +388,7 @@ class LangfuseDatasetService:
                     self.logger.error(f"[LangfuseDatasetService] Failed to delete item {item['id']}: {del_res.text}")
                 else:
                     self.logger.debug(f"[LangfuseDatasetService] Deleted dataset item {item['id']} for table {table_id}.")
-            
+
             self.logger.info(f"[LangfuseDatasetService] Removed {len(items_to_delete)} questions for table {table_id} from {dataset_name}.")
         except Exception as exc:
             self.logger.error(f"[LangfuseDatasetService] Error removing questions: {exc}")
@@ -423,9 +419,7 @@ class LangfuseDatasetService:
         self.logger.info(
             f"[LangfuseDatasetService] Appending {len(questions)} questions to '{dataset_name}'"
         )
-        
-        # Fetch existing to avoid duplicates
-        import requests
+
         existing_qids = set()
         if self._tracer.public_key:
             res = requests.get(

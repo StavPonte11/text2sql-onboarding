@@ -7,6 +7,8 @@ import { message, Modal, Input } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge } from '../components/common/StatusBadge';
 
+import { QUERY_KEYS } from '../config/constants';
+
 export function AdminPanelPage() {
   const { user, logout } = useAdminStore();
   const navigate = useNavigate();
@@ -16,7 +18,7 @@ export function AdminPanelPage() {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
 
   const { data: pendingTables = [], isLoading, error } = useQuery({
-    queryKey: ['admin', 'pendingTables'],
+    queryKey: [QUERY_KEYS.PENDING_TABLES],
     queryFn: () => adminApi.getPendingTables(),
     refetchInterval: 10000,
     retry: false,
@@ -26,8 +28,8 @@ export function AdminPanelPage() {
     mutationFn: adminApi.approveTable,
     onSuccess: () => {
       message.success('Table approved for production!');
-      queryClient.invalidateQueries({ queryKey: ['admin', 'pendingTables'] });
-      queryClient.invalidateQueries({ queryKey: ['tables'] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.PENDING_TABLES] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
     },
     onError: (error: any) => {
       message.error(error.message || 'Failed to approve table');
@@ -41,8 +43,8 @@ export function AdminPanelPage() {
       setRejectModalOpen(false);
       setRejectNote('');
       setSelectedTableId(null);
-      queryClient.invalidateQueries({ queryKey: ['admin', 'pendingTables'] });
-      queryClient.invalidateQueries({ queryKey: ['tables'] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.PENDING_TABLES] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
     },
     onError: (error: any) => {
       message.error(error.message || 'Failed to reject table');

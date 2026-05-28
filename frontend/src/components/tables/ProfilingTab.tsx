@@ -876,13 +876,17 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
                                 {(() => {
                                   let parsedVal = val;
                                   if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                                    try { parsedVal = JSON.parse(val); } catch (e) { }
+                                    try { parsedVal = JSON.parse(val); } catch (e) {
+                                      // ignore parsing errors
+                                    }
                                   } else if (typeof val === 'string' && val.includes('=') && val.startsWith('{')) {
                                     // Hack for Trino ROW string format: {kind=active, count=5}
                                     try {
                                       const pairs = val.slice(1, -1).split(', ');
                                       parsedVal = Object.fromEntries(pairs.map(p => p.split('=')));
-                                    } catch (e) { }
+                                    } catch (e) {
+                                      // ignore parsing errors
+                                    }
                                   }
 
                                   if (parsedVal === null || parsedVal === undefined) {
