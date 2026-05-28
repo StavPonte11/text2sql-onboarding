@@ -17,16 +17,17 @@ Merge path:
 
 from __future__ import annotations
 
+import logging
 import random
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from langfuse.decorators import observe, langfuse_context
+from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session
 
-from app.services.langfuse_client import langfuse_client as _lf_client, Evaluation
-from app.models.models import GoldenQuestion, EvalResult
-import logging
+from app.models.models import EvalResult, GoldenQuestion
+from app.services.langfuse_client import Evaluation
+from app.services.langfuse_client import langfuse_client as _lf_client
 
 logger = logging.getLogger(__name__)
 
@@ -174,10 +175,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Score = 1.0 if generated SQL matches expected SQL exactly (case-insensitive,
         whitespace-normalised), 0.0 otherwise.
 
-        STUB: Returns a random value ≥ 0.35 until the real agent is integrated.
+        STUB: Returns 0.0 or 1.0 until the real agent is integrated.
         """
         # ── STUB ───────────────────────────────────────────────────────────────
-        value = round(random.uniform(0.35, 1.0), 3)
+        value = float(random.choice([0, 1]))
         # ── REAL (uncomment on merge) ───────────────────────────────────────────
         # generated = (result.get("response") or "").strip().lower()
         # expected  = (result.get("expected_sql") or "").strip().lower()
@@ -192,10 +193,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Executes the generated SQL and checks whether the result rows exactly match
         the expected rows (order-independent set comparison).
 
-        STUB: Returns a random value ≥ 0.35.
+        STUB: Returns 0.0 or 1.0.
         """
         # ── STUB ───────────────────────────────────────────────────────────────
-        value = round(random.uniform(0.35, 1.0), 3)
+        value = float(random.choice([0, 1]))
         # ── REAL (uncomment on merge) ───────────────────────────────────────────
         # generated_sql = result.get("response")
         # if not generated_sql:

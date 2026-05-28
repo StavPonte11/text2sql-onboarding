@@ -13,14 +13,23 @@ health_status:
   <  0.45 → critical
 """
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    Table, TableHealth, TableHealthRead, HealthStatus,
-    EvalRun, EvalStatus, EvalResult,
-    QueryFeedback, FeedbackRating,
-    TableProfile, ProfilingStatus,
+    EvalResult,
+    EvalRun,
+    EvalStatus,
+    FeedbackRating,
+    HealthStatus,
+    ProfilingStatus,
+    QueryFeedback,
+    Table,
+    TableHealth,
+    TableHealthRead,
+    TableProfile,
 )
 
 router = APIRouter(tags=["health"])

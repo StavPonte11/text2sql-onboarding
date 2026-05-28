@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Any, List, Dict
+from typing import Any, Dict, List, Optional
 
-from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, JSON, text, ForeignKey
+from sqlalchemy import JSON, Column, ForeignKey
+from sqlmodel import Field, SQLModel
 
 
 class TableStatus(str, Enum):

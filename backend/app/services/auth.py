@@ -1,6 +1,8 @@
 from typing import Optional
+
 from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import SecurityUser
 

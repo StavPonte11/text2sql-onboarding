@@ -4,9 +4,13 @@ Feedback signals are consumed by the Table Health scoring engine.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    AuditQuery, QueryFeedback, QueryFeedbackCreate, QueryFeedbackRead,
+    AuditQuery,
+    QueryFeedback,
+    QueryFeedbackCreate,
+    QueryFeedbackRead,
 )
 
 router = APIRouter(tags=["feedback"])

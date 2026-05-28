@@ -1,9 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { FlaskConical } from "lucide-react";
 import { Link } from "react-router-dom";
 import dayjs from "dayjs";
-import { evalApi } from "../api/client";
+import { useAllEvalRuns } from "../hooks/useEvaluations";
 import { SkeletonTable } from "../components/common/Skeleton";
 import { ErrorState } from "../components/common/ErrorState";
 
@@ -16,10 +15,7 @@ function ScoreRing({ score }: { score: number }) {
 export function SandboxPage() {
   const { t } = useTranslation();
 
-  const { data: runs, isLoading, isError, refetch } = useQuery({
-    queryKey: ["eval-runs-all"],
-    queryFn: () => evalApi.listAllRuns(),
-  });
+  const { data: runs, isLoading, isError, refetch } = useAllEvalRuns();
 
   return (
     <div className="page">

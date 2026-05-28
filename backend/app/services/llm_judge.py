@@ -1,9 +1,10 @@
-import json
 import logging
 from typing import Optional
-from pydantic import BaseModel, Field
+
 import httpx
-from app.services.scoring import JudgeOutput, ExecutionResult, ExpectedShape
+from pydantic import BaseModel, Field
+
+from app.services.scoring import ExecutionResult, ExpectedShape, JudgeOutput
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +112,10 @@ def evaluate_with_llm(
     )
 
     logger.info(f"LLM Judge evaluating question: {user_question[:50]}...")
-    
+
     from app.config import settings
     api_key = getattr(settings, "OPENAI_API_KEY", None)
-    
+
     if not api_key:
         logger.warning("OPENAI_API_KEY not found. LLM judge cannot run. Returning fallback 0.0 scores.")
         return JudgeOutput(
@@ -126,7 +127,7 @@ def evaluate_with_llm(
             reasoning={"error": "OPENAI_API_KEY is missing. Evaluation skipped."},
             confidence_in_judgment=0.0
         )
-        
+
     try:
         # Real LLM Execution via OpenAI API
         with httpx.Client(timeout=30.0) as client:
@@ -148,13 +149,13 @@ def evaluate_with_llm(
                 }
             )
             response.raise_for_status()
-            
+
         result_json = response.json()
         content = result_json["choices"][0]["message"]["content"]
-        
+
         # Parse into strictly validated model
         parsed_output = JudgeStructuredOutput.model_validate_json(content)
-        
+
         return JudgeOutput(
             table_selection_correctness=parsed_output.table_selection_correctness,
             sql_semantic_equivalence=parsed_output.sql_semantic_equivalence,
@@ -164,7 +165,7 @@ def evaluate_with_llm(
             reasoning=parsed_output.reasoning.model_dump(),
             confidence_in_judgment=parsed_output.confidence_in_judgment
         )
-        
+
     except Exception as e:
         logger.error(f"LLM Judge API Error: {str(e)}")
         return JudgeOutput(

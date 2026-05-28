@@ -1,13 +1,22 @@
-from typing import List
-from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlmodel import Session, select, desc
-from pydantic import BaseModel
+import logging
 from datetime import datetime
+from typing import List
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
+from sqlmodel import Session, desc, select
+
 from app.db.engine import get_session
-from app.models.models import Table, TableStatus, SecurityUser, EvalRun, EvalStatus, GoldenQuestion
+from app.models.models import (
+    EvalRun,
+    EvalStatus,
+    GoldenQuestion,
+    SecurityUser,
+    Table,
+    TableStatus,
+)
 from app.services.auth import require_admin
 from app.services.langfuse_client import langfuse_client
-import logging
 
 logger = logging.getLogger(__name__)
 

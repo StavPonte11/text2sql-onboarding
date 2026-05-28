@@ -1,18 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
-from typing import Optional, List
-from sqlmodel import Session, select, col
+import logging
 from datetime import datetime
+from typing import List, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlmodel import Session, col, select
+
+from app.config import settings
 from app.db.engine import get_session
 from app.models.models import (
-    Table, TableCreate, TableRead,
-    TableStatus, UserScope, TableProfile, ProfilingStatus,
-    EnrichmentVersion
+    EnrichmentVersion,
+    Table,
+    TableCreate,
+    TableRead,
+    TableStatus,
+    UserScope,
 )
-import httpx
-from app.config import settings
-from fastapi import BackgroundTasks
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +112,7 @@ def create_table(
     )
     session.add(table)
     session.commit()
-    
+
     # Extract columns in the format expected by the frontend
     def parse_columns(cols):
         parsed = []
@@ -137,7 +140,7 @@ def create_table(
     )
     session.add(new_enrichment)
     session.commit()
-    
+
     session.refresh(table)
 
     return table
@@ -184,7 +187,7 @@ def sync_table_schema(
     table.service = service_name
     table.openmetadata_json = data
     table.updated_at = datetime.utcnow()
-    
+
     session.add(table)
 
     # Create/Update Enrichment
@@ -223,7 +226,7 @@ def sync_table_schema(
         }
     )
     session.add(new_enrichment)
-    
+
     session.commit()
     session.refresh(table)
 
@@ -250,20 +253,20 @@ def update_table_status(
     session.commit()
     session.refresh(table)
 
-    from app.services.langfuse_client import langfuse_client
-    from app.routers.evaluation import _build_questions_payload, PRODUCTION_DATASET_NAME
     from app.models.models import GoldenQuestion
+    from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
+    from app.services.langfuse_client import langfuse_client
 
     # Handle transitions
     if status == TableStatus.production and previous_status != TableStatus.production:
         logger.info(f"[Tables] Table '{table.name}' approved for production. Adding to dataset.")
-        
+
         # Upsert golden questions to production dataset
         qs = session.exec(select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)).all()
         if qs:
             payload = _build_questions_payload(qs, table)
             langfuse_client.ensure_dataset_synced(PRODUCTION_DATASET_NAME, payload)
-            
+
     elif status in [TableStatus.sandbox, TableStatus.degraded] and previous_status == TableStatus.production:
         logger.info(f"[Tables] Table '{table.name}' demoted from production -> {status.value}. Removing from dataset.")
         # Remove questions from production dataset

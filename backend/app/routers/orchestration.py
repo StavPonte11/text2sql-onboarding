@@ -9,33 +9,34 @@ New endpoints:
   Alerts:      GET /evaluations/alerts, POST /evaluations/alerts/{id}/ack
   System:      GET /evaluations/system-health
 """
-import uuid
-import time
 import random
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session, select
-from app.db.engine import get_session, engine
+
+from app.db.engine import engine, get_session
 from app.models.models import (
-    Table, GoldenQuestion,
-    EvalRun, EvalRunRead, EvalStatus,
-    EvalResult,
-    EvaluationSchedule, EvaluationScheduleCreate, EvaluationScheduleUpdate, EvaluationScheduleRead,
-    EvaluationHistoryMetric, EvaluationHistoryMetricRead,
-    EvaluationAlert, EvaluationAlertRead, AlertSeverity,
+    AlertSeverity,
     EnrichmentVersion,
+    EvalResult,
+    EvalRun,
+    EvalRunRead,
+    EvalStatus,
+    EvaluationAlert,
+    EvaluationAlertRead,
+    EvaluationHistoryMetric,
+    EvaluationSchedule,
+    EvaluationScheduleCreate,
+    EvaluationScheduleRead,
+    EvaluationScheduleUpdate,
+    GoldenQuestion,
+    Table,
 )
-from app.services.scoring import (
-    JudgeOutput, ExecutionResult, ExpectedShape,
-    compute_score, compute_dataset_score,
-    PASS_THRESHOLD,
-)
-from app.services.llm_judge import evaluate_with_llm
-from app.services.trino_client import execute_query_sync
-from app.services.langfuse_client import langfuse_client
-from langfuse.decorators import observe, langfuse_context
 from app.routers.evaluation import execute_single_table_eval
+from app.services.trino_client import execute_query_sync
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -52,19 +53,19 @@ def run_text2sql_agent(question: str, table_id: str) -> dict:
     """Simulates the LangGraph Text2SQL agent flow with up to 4 refinement iterations."""
     # In reality, this would invoke the LangGraph text2sql workflow
     # For evaluation, we execute the generated SQL against real Trino
-    
+
     generated_sql = f'SELECT id, name, value FROM "{table_id[:8]}" LIMIT 100'
-    
+
     # Execute against Trino
     trino_result = execute_query_sync(generated_sql, table_id)
-    
+
     iterations = random.choices([1, 2, 3, 4], weights=[60, 25, 10, 5])[0]
-    
+
     langfuse_context.update_current_trace(
         tags=["evaluation", f"table_{table_id[:8]}"],
         metadata={"iterations": iterations, "success": trino_result.success}
     )
-    
+
     return {
         "generated_sql": generated_sql,
         "tables_used": [f"{table_id[:8]}"],
@@ -105,7 +106,7 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
         tags=["evaluation_run"],
         metadata={"table_ids": table_ids, "run_ids": run_ids, "triggered_by": triggered_by}
     )
-    
+
     for table_id, run_id in zip(table_ids, run_ids):
         with Session(engine) as session:
             run = session.get(EvalRun, run_id)
@@ -114,7 +115,7 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
 
             # ── Delegate to shared core logic ───────────────────────────
             score = execute_single_table_eval(table_id, run_id, session)
-            
+
             # Fetch updated run state
             session.refresh(run)
 
@@ -271,7 +272,7 @@ def list_runs(
         query = query.where(EvalRun.status == status)
     if table_id:
         query = query.where(EvalRun.table_id == table_id)
-        
+
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
@@ -288,10 +289,10 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         .join(Table, EvalRun.table_id == Table.id)
         .where(EvalRun.id == run_id)
     ).first()
-    
+
     if not result:
         raise HTTPException(status_code=404, detail="Eval run not found")
-        
+
     run, table_name = result
     t_name = table_name if table_name else "All prod tables"
     return EvalRunRead.model_validate(run, update={"table_name": t_name})
@@ -304,12 +305,12 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
     results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
-    
+
     # fetch questions text for each question
     q_ids = [r.question_id for r in results]
     questions = session.exec(select(GoldenQuestion).where(GoldenQuestion.id.in_(q_ids))).all()
     question_map = {q.id: q.question for q in questions}
-    
+
     return {
         "run_id": run_id,
         "table_id": run.table_id,

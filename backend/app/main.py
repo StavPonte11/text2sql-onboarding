@@ -1,14 +1,28 @@
+import logging
+import time
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
-import time
-import logging
-from app.config import settings
+
 from app.db.engine import create_db_and_tables, engine
-from app.models.models import AuditQuery, SecurityUser
-from app.routers import tables, enrichment, questions, evaluation, publish, scopes, audit, profiling, feedback, health
-from app.routers import orchestration, admin_auth, admin_approval
+from app.models.models import AuditQuery
+from app.routers import (
+    admin_approval,
+    admin_auth,
+    audit,
+    enrichment,
+    evaluation,
+    feedback,
+    health,
+    orchestration,
+    profiling,
+    publish,
+    questions,
+    scopes,
+    tables,
+)
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
@@ -52,9 +66,9 @@ async def audit_middleware(request: Request, call_next):
         # Extract table_id if present in path (e.g. /tables/{table_id}/...)
         path_parts = request.url.path.split("/")
         table_id = path_parts[2] if len(path_parts) > 2 and path_parts[2] != "eval" else None
-        
+
         # In a real app, user_id comes from auth token
-        user_id = "user-1" 
+        user_id = "user-1"
         query_desc = f"{request.method} {request.url.path}"
 
         try:

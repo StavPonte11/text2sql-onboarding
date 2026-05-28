@@ -5,11 +5,14 @@ Connects to the production Trino cluster using the trino-python-client.
 Falls back gracefully with a structured error if the cluster is unreachable.
 All queries are logged with execution time for observability.
 """
-import time
 import logging
+import time
 from typing import Any, List, Optional
 
+import trino
 from pydantic import BaseModel
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +28,6 @@ class TrinoExecutionResult(BaseModel):
 
 def get_trino_connection():
     """Create a real Trino DBAPI connection from settings."""
-    try:
-        import trino
-    except ImportError:
-        raise RuntimeError(
-            "trino package not installed. Run: pip install trino"
-        )
-
-    from app.config import settings
-
     auth = None
     if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
         auth = trino.auth.CertificateAuthentication(
@@ -64,8 +58,6 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
     Returns a structured TrinoExecutionResult with rows, columns, and timing.
     Never raises — all errors are captured in error_message.
     """
-    from app.config import settings
-
     start_time = time.time()
     log_sql = sql.strip().replace("\n", " ")[:300]
     logger.info(f"[TrinoClient] table_id={table_id} | {log_sql}")

@@ -1,15 +1,20 @@
 import io
 import json
-import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import List
 
+import pandas as pd
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    GoldenQuestion, GoldenQuestionCreate, GoldenQuestionRead, Table, QuestionType, DifficultyLevel
+    DifficultyLevel,
+    GoldenQuestion,
+    GoldenQuestionCreate,
+    GoldenQuestionRead,
+    QuestionType,
+    Table,
 )
-from app.services.langfuse_client import langfuse_client
 
 router = APIRouter(prefix="/tables", tags=["golden-questions"])
 
@@ -72,15 +77,15 @@ async def upload_questions(
         # Validate required fields
         question_text = q_item.get("question") or q_item.get("question_text")
         expected_sql = q_item.get("expected_sql") or q_item.get("sql")
-        
+
         if not question_text or not expected_sql:
             continue
-            
+
         # Parse enums with defaults
         difficulty = q_item.get("difficulty", "simple")
         if difficulty not in [d.value for d in DifficultyLevel]:
             difficulty = "simple"
-            
+
         q_type = q_item.get("question_type", "simple")
         if q_type not in [t.value for t in QuestionType]:
             q_type = "simple"
@@ -94,7 +99,7 @@ async def upload_questions(
         )
         session.add(q)
         session.flush() # get ID without commit
-        
+
         created_count += 1
 
     session.commit()

@@ -6,16 +6,21 @@ Publish triggers an asynchronous promotion workflow that:
 2. Runs regression tests on all production tables.
 3. Only promotes if all pass.
 """
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+import uuid
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    Table, TableStatus, EvalRun, EvalStatus,
-    EnrichmentVersion, GoldenQuestion,
+    EnrichmentVersion,
+    EvalRun,
+    EvalStatus,
+    GoldenQuestion,
+    Table,
 )
-from app.services.scoring import BLOCK_THRESHOLD, REGRESSION_BLOCK
 from app.routers.evaluation import promote_table_to_production_workflow
+from app.services.scoring import REGRESSION_BLOCK
 
 router = APIRouter(prefix="/tables", tags=["publish"])
 
@@ -44,7 +49,7 @@ def _check_regression(table_id: str, new_score: float, session: Session) -> list
 
 @router.post("/{table_id}/publish")
 def publish_table(
-    table_id: str, 
+    table_id: str,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
@@ -73,7 +78,6 @@ def publish_table(
         raise HTTPException(status_code=422, detail={"blocking_errors": blocking_errors, "warnings": warnings})
 
     # ── Trigger Promotion Workflow (Async) ────────────────────────────────────
-    import uuid
     run_id = str(uuid.uuid4())
 
     background_tasks.add_task(promote_table_to_production_workflow, table_id, run_id)
