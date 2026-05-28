@@ -174,10 +174,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Score = 1.0 if generated SQL matches expected SQL exactly (case-insensitive,
         whitespace-normalised), 0.0 otherwise.
 
-        STUB: Returns a random value ≥ 0.35 until the real agent is integrated.
+        STUB: Returns 0.0 or 1.0 until the real agent is integrated.
         """
         # ── STUB ───────────────────────────────────────────────────────────────
-        value = round(random.uniform(0.35, 1.0), 3)
+        value = float(random.choice([0, 1]))
         # ── REAL (uncomment on merge) ───────────────────────────────────────────
         # generated = (result.get("response") or "").strip().lower()
         # expected  = (result.get("expected_sql") or "").strip().lower()
@@ -192,10 +192,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Executes the generated SQL and checks whether the result rows exactly match
         the expected rows (order-independent set comparison).
 
-        STUB: Returns a random value ≥ 0.35.
+        STUB: Returns 0.0 or 1.0.
         """
         # ── STUB ───────────────────────────────────────────────────────────────
-        value = round(random.uniform(0.35, 1.0), 3)
+        value = float(random.choice([0, 1]))
         # ── REAL (uncomment on merge) ───────────────────────────────────────────
         # generated_sql = result.get("response")
         # if not generated_sql:

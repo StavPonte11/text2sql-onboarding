@@ -93,17 +93,17 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         tags=["eval-run", f"table:{table_id}"],
     )
 
-    # Score locally — stub returns random values ≥ 0.35 per question.
+    # Score locally — stub returns 0.0 or 1.0 per question.
     # MERGE: replace with real MCP/Trino calls via TextToSQLEvaluator.
     import random
     question_scores_contains: list[float] = [
-        round(random.uniform(0.35, 1.0), 3) for _ in questions
+        float(random.choice([0, 1])) for _ in questions
     ]
     question_scores_exact: list[float] = [
-        round(random.uniform(0.35, 1.0), 3) for _ in questions
+        float(random.choice([0, 1])) for _ in questions
     ]
     question_scores_ranking: list[float] = [
-        round(random.uniform(0.35, 1.0), 3) for _ in questions
+        float(random.choice([0, 1])) for _ in questions
     ]
     logger.info(f"[Eval] Scored {len(questions)} questions for table {table_id} (local stubs)")
 
@@ -237,13 +237,13 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
     import random
     if not question_scores:
         question_scores = [
-            round(random.uniform(0.35, 1.0), 3)
+            float(random.choice([0, 1]))
             for _ in (all_production_questions or range(5))
         ]
 
     question_scores_contains = question_scores
-    question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
-    question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+    question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+    question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
 
     avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 1.0
     pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
@@ -394,13 +394,13 @@ def _run_candidate_eval(
 
         if not question_scores:
             import random
-            question_scores = [round(random.uniform(0.35, 1.0), 3) for _ in questions]
+            question_scores = [float(random.choice([0, 1])) for _ in questions]
 
         # Generate stubs for exact and ranking based on the same length
         import random
         question_scores_contains = question_scores
-        question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
-        question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+        question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+        question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
 
         avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
         pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
@@ -500,13 +500,13 @@ def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_i
         # Slight variance from baseline to simulate real regression testing.
         # Use the same question count as the loaded production questions.
         question_scores = [
-            round(random.uniform(0.35, 1.0), 3)
+            float(random.choice([0, 1]))
             for _ in (all_production_questions or range(5))
         ]
 
     question_scores_contains = question_scores
-    question_scores_exact = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
-    question_scores_ranking = [round(random.uniform(0.35, 1.0), 3) for _ in range(len(question_scores_contains))]
+    question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+    question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
 
     avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
     pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
