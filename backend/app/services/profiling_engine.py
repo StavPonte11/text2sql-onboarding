@@ -5,14 +5,13 @@ Runs full scan queries against Trino, computes column statistics,
 detects categorical vs continuous columns, and produces structured output
 ready for PostgreSQL persistence and LLM context injection.
 """
-import concurrent.futures
 import logging
+from datetime import datetime, date
 from dataclasses import dataclass, field
-from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.trino_client import TrinoExecutionResult, execute_query_sync
+from app.services.trino_client import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
@@ -264,19 +263,17 @@ from app.config import settings
 _global_trino_executor = concurrent.futures.ThreadPoolExecutor(max_workers=settings.PROFILER_MAX_CONCURRENT_QUERIES)
 
 def execute_with_timeout(query: str, table_id: str):
-    """Runs execute_query_sync in a thread and enforces a hard wall-clock timeout."""
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(execute_query_sync, query, table_id)
-        try:
-            return future.result(timeout=QUERY_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
-            logger.warning(f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}")
-            from app.services.trino_client import TrinoExecutionResult
-            return TrinoExecutionResult(
-                success=False,
-                error_message=f"Query timed out after {QUERY_TIMEOUT_SECONDS}s",
-            )
+    """Runs execute_query_sync in a global thread pool and enforces a hard wall-clock timeout."""
+    future = _global_trino_executor.submit(execute_query_sync, query, table_id)
+    try:
+        return future.result(timeout=QUERY_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        logger.warning(f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}")
+        from app.services.trino_client import TrinoExecutionResult
+        return TrinoExecutionResult(
+            success=False,
+            error_message=f"Query timed out after {QUERY_TIMEOUT_SECONDS}s",
+        )
 
 
 def _detect_semantic_type(
@@ -374,7 +371,7 @@ def _analyze_row_column(
                     child_stats["stddev"] = _safe_float(row[4])
                     child["min_value"] = str(child_stats["min"])
                     child["max_value"] = str(child_stats["max"])
-
+                    
                     min_f = _safe_float(child_stats["min"])
                     max_f = _safe_float(child_stats["max"])
                     if min_f is not None and max_f is not None:
@@ -423,8 +420,9 @@ def _analyze_row_column(
                     child["max_value"] = str(child_stats["max"])
                     min_unix = _safe_float(row[4])
                     max_unix = _safe_float(row[5])
-
+                    
                     if min_unix is not None and max_unix is not None:
+                        from datetime import datetime
                         cast_expr = f'to_unixtime(CAST({field_path} AS TIMESTAMP))'
                         hist_r = execute_with_timeout(build_generic_histogram_query(fqn, field_path, cast_expr, min_unix, max_unix, 8), table_id)
                         if hist_r.success and hist_r.rows:
@@ -545,7 +543,7 @@ def _analyze_column(
                 stats.median_value = _safe_float(quants[1])
                 stats.q75_value = _safe_float(quants[2])
             stats.stddev_value = _safe_float(row[4])
-
+            
             # Build actual histogram
             if stats.min_value is not None and stats.max_value is not None:
                 min_f = float(stats.min_value)
@@ -556,7 +554,7 @@ def _analyze_column(
                     hist_data = []
                     step = (max_f - min_f) / 8 if max_f > min_f else 0
                     bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
-
+                    
                     if max_f > min_f:
                         for i in range(1, 9):
                             cnt = bucket_counts.get(i, 0)
@@ -565,11 +563,11 @@ def _analyze_column(
                             hist_data.append({"lo": lo, "hi": hi, "count": cnt, "label": f"{lo:g}"})
                     else:
                         hist_data.append({"lo": min_f, "hi": max_f, "count": bucket_counts.get(1, 0), "label": f"{min_f:g}"})
-
+                        
                     null_cnt = bucket_counts.get('null', 0)
                     if null_cnt > 0:
                         hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
-
+                        
                     stats.histogram = hist_data
                 else:
                     stats.errors.append(f"numeric_histogram: {hist_r.error_message}")
@@ -591,7 +589,7 @@ def _analyze_column(
             stats.stddev_value = _safe_float(row[3])
             min_unix = _safe_float(row[4])
             max_unix = _safe_float(row[5])
-
+            
             # Build actual histogram for time
             if min_unix is not None and max_unix is not None:
                 from datetime import datetime
@@ -601,7 +599,7 @@ def _analyze_column(
                     hist_data = []
                     step = (max_unix - min_unix) / 8 if max_unix > min_unix else 0
                     bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
-
+                    
                     if max_unix > min_unix:
                         for i in range(1, 9):
                             cnt = bucket_counts.get(i, 0)
@@ -610,11 +608,11 @@ def _analyze_column(
                             hist_data.append({"lo": datetime.fromtimestamp(lo).isoformat(), "hi": datetime.fromtimestamp(hi).isoformat(), "count": cnt, "label": datetime.fromtimestamp(lo).strftime('%Y-%m-%d')})
                     else:
                         hist_data.append({"lo": datetime.fromtimestamp(min_unix).isoformat(), "hi": datetime.fromtimestamp(max_unix).isoformat(), "count": bucket_counts.get(1, 0), "label": datetime.fromtimestamp(min_unix).strftime('%Y-%m-%d')})
-
+                        
                     null_cnt = bucket_counts.get('null', 0)
                     if null_cnt > 0:
                         hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
-
+                        
                     stats.histogram = hist_data
                 else:
                     stats.errors.append(f"time_histogram: {hist_r.error_message}")
