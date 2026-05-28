@@ -1,11 +1,13 @@
 import React from 'react';
-import { beforeAll, afterEach, afterAll } from 'vitest';
-import { server } from './mocks/server';
-import { cleanup, render } from '@testing-library/react';
-import '@testing-library/jest-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { ConfigProvider, App as AntApp } from 'antd';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render } from '@testing-library/react';
+import { App as AntApp, ConfigProvider } from 'antd';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+
+import { server } from './mocks/server';
+
+import '@testing-library/jest-dom';
 
 // Ant Design (and some other component libraries) rely on window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
@@ -43,11 +45,9 @@ export function renderWithProviders(ui: React.ReactElement) {
     <ConfigProvider>
       <AntApp>
         <QueryClientProvider client={queryClient}>
-          <MemoryRouter>
-            {ui}
-          </MemoryRouter>
+          <MemoryRouter>{ui}</MemoryRouter>
         </QueryClientProvider>
       </AntApp>
-    </ConfigProvider>
+    </ConfigProvider>,
   );
 }

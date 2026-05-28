@@ -1,25 +1,38 @@
-import axios from "axios";
-import { useAppStore } from "../store/appStore";
-import { API_BASE_URL } from "../config/constants";
+import axios from 'axios';
+
+import { API_BASE_URL } from '../config/constants';
+import { useAppStore } from '../store/appStore';
+
 import type {
-  Table, TableCreate, EnrichmentVersion, GoldenQuestion,
-  GoldenQuestionCreate, EvalRun, EvalResult, UserScope,
-  UserScopeCreate, AuditQuery,
-  TableProfile, ColumnProfile, CrossTableProfile,
-  QueryFeedback, QueryFeedbackCreate,
+  AuditQuery,
+  ColumnProfile,
+  CrossTableProfile,
+  EnrichmentVersion,
+  EvalResult,
+  EvalRun,
+  ForeignKeyMapping,
+  ForeignKeyMappingCreate,
+  GoldenQuestion,
+  GoldenQuestionCreate,
+  QueryFeedback,
+  QueryFeedbackCreate,
+  Table,
+  TableCreate,
   TableHealth,
-  ForeignKeyMapping, ForeignKeyMappingCreate,
-} from "../types";
+  TableProfile,
+  UserScope,
+  UserScopeCreate,
+} from '../types';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: { "Content-Type": "application/json" },
+  headers: { 'Content-Type': 'application/json' },
 });
 
 api.interceptors.request.use((config) => {
   const scope = useAppStore.getState().activeScope;
   if (scope) {
-    config.headers["X-Scope-Id"] = scope.id;
+    config.headers['X-Scope-Id'] = scope.id;
   }
   return config;
 });
@@ -27,21 +40,19 @@ api.interceptors.request.use((config) => {
 // ── Tables ────────────────────────────────────────────────────────────────────
 export const tablesApi = {
   list: (params?: { status?: string; owner_id?: string; search?: string }) =>
-    api.get<Table[]>("/tables", { params }).then((r) => r.data),
+    api.get<Table[]>('/tables', { params }).then((r) => r.data),
   get: (id: string) => api.get<Table>(`/tables/${id}`).then((r) => r.data),
-  create: (payload: TableCreate) =>
-    api.post<Table>("/tables", payload).then((r) => r.data),
+  create: (payload: TableCreate) => api.post<Table>('/tables', payload).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<Table>(`/tables/${id}/status`, null, { params: { status } }).then((r) => r.data),
-  syncSchema: (id: string) =>
-    api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
+  syncSchema: (id: string) => api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
 };
 
 // ── Enrichment ────────────────────────────────────────────────────────────────
 export const enrichmentApi = {
   getLatest: (tableId: string) =>
     api.get<EnrichmentVersion>(`/tables/${tableId}/enrichment/latest`).then((r) => r.data),
-  create: (tableId: string, data: EnrichmentVersion["data"]) =>
+  create: (tableId: string, data: EnrichmentVersion['data']) =>
     api.post<EnrichmentVersion>(`/tables/${tableId}/enrichment`, { data }).then((r) => r.data),
 };
 
@@ -53,10 +64,12 @@ export const questionsApi = {
     api.post<GoldenQuestion>(`/tables/${tableId}/questions`, payload).then((r) => r.data),
   uploadQuestions: (tableId: string, file: File) => {
     const formData = new FormData();
-    formData.append("file", file);
-    return api.post(`/tables/${tableId}/questions/upload`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    }).then((r) => r.data);
+    formData.append('file', file);
+    return api
+      .post(`/tables/${tableId}/questions/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data);
   },
   delete: (tableId: string, questionId: string) =>
     api.delete(`/tables/${tableId}/questions/${questionId}`),
@@ -66,8 +79,7 @@ export const questionsApi = {
 export const evalApi = {
   triggerRun: (tableId: string) =>
     api.post<EvalRun>(`/tables/${tableId}/eval/run`).then((r) => r.data),
-  listAllRuns: () =>
-    api.get<EvalRun[]>("/eval/runs/all").then((r) => r.data),
+  listAllRuns: () => api.get<EvalRun[]>('/eval/runs/all').then((r) => r.data),
   listRuns: (tableId: string) =>
     api.get<EvalRun[]>(`/tables/${tableId}/eval/runs`).then((r) => r.data),
   listBatchRuns: (promotionRunId: string) =>
@@ -79,15 +91,13 @@ export const evalApi = {
 
 // ── Publish ───────────────────────────────────────────────────────────────────
 export const publishApi = {
-  publish: (tableId: string) =>
-    api.post(`/tables/${tableId}/publish`).then((r) => r.data),
+  publish: (tableId: string) => api.post(`/tables/${tableId}/publish`).then((r) => r.data),
 };
 
 // ── Scopes ────────────────────────────────────────────────────────────────────
 export const scopesApi = {
-  list: () => api.get<UserScope[]>("/scopes").then((r) => r.data),
-  create: (payload: UserScopeCreate) =>
-    api.post<UserScope>("/scopes", payload).then((r) => r.data),
+  list: () => api.get<UserScope[]>('/scopes').then((r) => r.data),
+  create: (payload: UserScopeCreate) => api.post<UserScope>('/scopes', payload).then((r) => r.data),
   activate: (scopeId: string) =>
     api.post<UserScope>(`/scopes/${scopeId}/activate`).then((r) => r.data),
 };
@@ -95,13 +105,12 @@ export const scopesApi = {
 // ── Audit ─────────────────────────────────────────────────────────────────────
 export const auditApi = {
   queries: (params?: { table_id?: string; user_id?: string; limit?: number }) =>
-    api.get<AuditQuery[]>("/audit/queries", { params }).then((r) => r.data),
+    api.get<AuditQuery[]>('/audit/queries', { params }).then((r) => r.data),
 };
 
 // ── Profiling ─────────────────────────────────────────────────────────────────
 export const profilingApi = {
-  get: (tableId: string) =>
-    api.get<TableProfile>(`/tables/${tableId}/profile`).then((r) => r.data),
+  get: (tableId: string) => api.get<TableProfile>(`/tables/${tableId}/profile`).then((r) => r.data),
   run: (tableId: string) =>
     api.post<TableProfile>(`/tables/${tableId}/profile/run`).then((r) => r.data),
   getColumns: (tableId: string) =>
@@ -115,7 +124,7 @@ export const profilingApi = {
 // ── Feedback ──────────────────────────────────────────────────────────────────
 export const feedbackApi = {
   submit: (payload: QueryFeedbackCreate) =>
-    api.post<QueryFeedback>("/feedback", payload).then((r) => r.data),
+    api.post<QueryFeedback>('/feedback', payload).then((r) => r.data),
   getForTable: (tableId: string) =>
     api.get<QueryFeedback[]>(`/feedback/table/${tableId}`).then((r) => r.data),
   getForQuery: (queryId: string) =>
@@ -124,12 +133,10 @@ export const feedbackApi = {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 export const healthApi = {
-  get: (tableId: string) =>
-    api.get<TableHealth>(`/tables/${tableId}/health`).then((r) => r.data),
+  get: (tableId: string) => api.get<TableHealth>(`/tables/${tableId}/health`).then((r) => r.data),
   recompute: (tableId: string) =>
     api.post<TableHealth>(`/tables/${tableId}/health/recompute`).then((r) => r.data),
-  getAll: () =>
-    api.get<TableHealth[]>("/health/all").then((r) => r.data),
+  getAll: () => api.get<TableHealth[]>('/health/all').then((r) => r.data),
 };
 
 // ── Foreign Keys ──────────────────────────────────────────────────────────────
@@ -138,8 +145,7 @@ export const foreignKeysApi = {
     api.get<ForeignKeyMapping[]>(`/tables/${tableId}/foreign-keys`).then((r) => r.data),
   create: (tableId: string, payload: ForeignKeyMappingCreate) =>
     api.post<ForeignKeyMapping>(`/tables/${tableId}/foreign-keys`, payload).then((r) => r.data),
-  delete: (tableId: string, fkId: string) =>
-    api.delete(`/tables/${tableId}/foreign-keys/${fkId}`),
+  delete: (tableId: string, fkId: string) => api.delete(`/tables/${tableId}/foreign-keys/${fkId}`),
 };
 
 export default api;

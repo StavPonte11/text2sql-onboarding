@@ -15,13 +15,15 @@ Merge notes:
   LangfuseTracer used in the main application. When merging, keep this class
   as-is and swap the dataset helpers for the real MCP / Trino calls.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import langfuse as sdk
 import requests
@@ -34,15 +36,18 @@ from app.config import settings
 
 # ─── Shared types ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class Evaluation:
     """Result of an evaluation function."""
+
     value: float
-    comment: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    comment: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ─── Abstract connection base ──────────────────────────────────────────────────
+
 
 class Connection(ABC):
     """
@@ -81,6 +86,7 @@ class Connection(ABC):
 
 # ─── LangfuseTracer ───────────────────────────────────────────────────────────
 
+
 class LangfuseTracer(Connection):
     """
     Langfuse connection — mirrors LangfuseTracer from the main application.
@@ -100,15 +106,15 @@ class LangfuseTracer(Connection):
 
     def __init__(
         self,
-        public_key: Optional[str] = None,
-        private_key: Optional[str] = None,
-        host: Optional[str] = None,
+        public_key: str | None = None,
+        private_key: str | None = None,
+        host: str | None = None,
     ) -> None:
         super().__init__()
         self.public_key = public_key or settings.LANGFUSE_PUBLIC_KEY
         self.private_key = private_key or settings.LANGFUSE_SECRET_KEY
         self.host = host or settings.LANGFUSE_HOST
-        self.client: Optional[sdk.Langfuse] = None
+        self.client: sdk.Langfuse | None = None
 
         # Expose keys to environment so decorator-based tracing also picks them up
         if self.public_key and self.private_key:
@@ -123,7 +129,9 @@ class LangfuseTracer(Connection):
     def connect(self) -> None:
         """Establish the Langfuse client connection."""
         if not (self.public_key and self.private_key):
-            self.logger.warning("[LangfuseTracer] Credentials not configured — tracing disabled.")
+            self.logger.warning(
+                "[LangfuseTracer] Credentials not configured — tracing disabled."
+            )
             return
         try:
             self.client = sdk.Langfuse(
@@ -160,14 +168,16 @@ class LangfuseTracer(Connection):
 
     # ── Prompt helpers (match main app's LangfuseTracer) ──────────────────────
 
-    def get_prompt(self, name: str) -> Optional[Any]:
+    def get_prompt(self, name: str) -> Any | None:
         """
         Fetch a prompt from Langfuse by name.
 
         Returns the prompt object or None if unavailable.
         """
         if self.client is None:
-            self.logger.warning("[LangfuseTracer] get_prompt called but client is not connected.")
+            self.logger.warning(
+                "[LangfuseTracer] get_prompt called but client is not connected."
+            )
             return None
         try:
             return self.client.get_prompt(name)
@@ -175,7 +185,7 @@ class LangfuseTracer(Connection):
             self.logger.error(f"[LangfuseTracer] get_prompt('{name}') failed: {exc}")
             return None
 
-    def get_prompt_as_langchain(self, name: str) -> Optional[Any]:
+    def get_prompt_as_langchain(self, name: str) -> Any | None:
         """
         Fetch a Langfuse prompt and return it as a LangChain-compatible prompt.
 
@@ -188,7 +198,9 @@ class LangfuseTracer(Connection):
         try:
             return prompt.get_langchain_prompt()
         except Exception as exc:
-            self.logger.error(f"[LangfuseTracer] get_prompt_as_langchain('{name}') failed: {exc}")
+            self.logger.error(
+                f"[LangfuseTracer] get_prompt_as_langchain('{name}') failed: {exc}"
+            )
             return None
 
     # ── Convenience property ───────────────────────────────────────────────────
@@ -200,6 +212,7 @@ class LangfuseTracer(Connection):
 
 
 # ─── Dataset & experiment helpers (onboarding-app specific) ───────────────────
+
 
 class LangfuseDatasetService:
     """
@@ -281,7 +294,9 @@ class LangfuseDatasetService:
         try:
             self._tracer.client.create_dataset(name=dataset_name)
         except Exception as exc:
-            self.logger.warning(f"[LangfuseDatasetService] create_dataset warning: {exc}")
+            self.logger.warning(
+                f"[LangfuseDatasetService] create_dataset warning: {exc}"
+            )
 
         # ── Fetch current state from Langfuse ──────────────────────────────────
         pub = self._tracer.public_key
@@ -323,18 +338,20 @@ class LangfuseDatasetService:
                 existing_by_qid[qid] = {
                     "langfuse_id": item["id"],
                     "question_text": (item.get("input") or {}).get("query", ""),
-                    "expected_sql": (item.get("expectedOutput") or {}).get("response", ""),
+                    "expected_sql": (item.get("expectedOutput") or {}).get(
+                        "response", ""
+                    ),
                 }
 
         # Build lookup for desired state: question_id → question dict
         desired_by_qid: dict[str, dict] = {q["question_id"]: q for q in questions}
 
-        desired_qids  = set(desired_by_qid.keys())
+        desired_qids = set(desired_by_qid.keys())
         existing_qids = set(existing_by_qid.keys())
 
-        to_add    = desired_qids - existing_qids          # new questions
-        to_remove = existing_qids - desired_qids          # stale questions
-        to_check  = desired_qids & existing_qids          # may need update
+        to_add = desired_qids - existing_qids  # new questions
+        to_remove = existing_qids - desired_qids  # stale questions
+        to_check = desired_qids & existing_qids  # may need update
 
         # Identify changed questions (text or SQL differs)
         to_update: set[str] = set()
@@ -393,7 +410,9 @@ class LangfuseDatasetService:
                         "split": q.get("split", ""),
                         "difficulty": str(q.get("difficulty", "")).lower().strip(),
                         "question_id": q["question_id"],
-                        "question_type": str(q.get("question_type", "")).lower().strip(),
+                        "question_type": str(q.get("question_type", ""))
+                        .lower()
+                        .strip(),
                         "table_id": q.get("table_id", ""),
                     },
                 )
@@ -437,23 +456,30 @@ class LangfuseDatasetService:
 
             res = requests.get(
                 f"{host}/api/public/dataset-items?datasetName={dataset_name}",
-                auth=(pub, sec)
+                auth=(pub, sec),
             )
             if res.status_code != 200:
-                self.logger.warning(f"[LangfuseDatasetService] Failed to fetch items for clear: {res.status_code} {res.text}")
+                self.logger.warning(
+                    f"[LangfuseDatasetService] Failed to fetch items for clear: {res.status_code} {res.text}"
+                )
                 return
 
             data = res.json().get("data", [])
             for item in data:
                 requests.delete(
-                    f"{host}/api/public/dataset-items/{item['id']}",
-                    auth=(pub, sec)
+                    f"{host}/api/public/dataset-items/{item['id']}", auth=(pub, sec)
                 )
-            self.logger.info(f"[LangfuseDatasetService] Cleared {len(data)} items from dataset '{dataset_name}'.")
+            self.logger.info(
+                f"[LangfuseDatasetService] Cleared {len(data)} items from dataset '{dataset_name}'."
+            )
         except Exception as exc:
-            self.logger.error(f"[LangfuseDatasetService] Error clearing dataset '{dataset_name}': {exc}")
+            self.logger.error(
+                f"[LangfuseDatasetService] Error clearing dataset '{dataset_name}': {exc}"
+            )
 
-    def remove_table_questions_from_dataset(self, dataset_name: str, table_id: str) -> None:
+    def remove_table_questions_from_dataset(
+        self, dataset_name: str, table_id: str
+    ) -> None:
         """
         Removes all dataset items belonging to a specific table from a dataset.
         Since Langfuse SDK does not expose delete natively, this uses requests.
@@ -469,38 +495,50 @@ class LangfuseDatasetService:
 
             res = requests.get(
                 f"{host}/api/public/dataset-items?datasetName={dataset_name}",
-                auth=(pub, sec)
+                auth=(pub, sec),
             )
             if res.status_code != 200:
-                self.logger.warning(f"[LangfuseDatasetService] Failed to fetch items: {res.status_code} {res.text}")
+                self.logger.warning(
+                    f"[LangfuseDatasetService] Failed to fetch items: {res.status_code} {res.text}"
+                )
                 return
 
             data = res.json().get("data", [])
 
             # 2. Filter items belonging to the table
             items_to_delete = [
-                item for item in data
+                item
+                for item in data
                 if item.get("metadata", {}).get("table_id") == table_id
             ]
 
             if not items_to_delete:
-                self.logger.info(f"[LangfuseDatasetService] No items found for table {table_id} in {dataset_name}.")
+                self.logger.info(
+                    f"[LangfuseDatasetService] No items found for table {table_id} in {dataset_name}."
+                )
                 return
 
             # 3. Delete them
             for item in items_to_delete:
                 del_res = requests.delete(
-                    f"{host}/api/public/dataset-items/{item['id']}",
-                    auth=(pub, sec)
+                    f"{host}/api/public/dataset-items/{item['id']}", auth=(pub, sec)
                 )
                 if del_res.status_code != 200:
-                    self.logger.error(f"[LangfuseDatasetService] Failed to delete item {item['id']}: {del_res.text}")
+                    self.logger.error(
+                        f"[LangfuseDatasetService] Failed to delete item {item['id']}: {del_res.text}"
+                    )
                 else:
-                    self.logger.debug(f"[LangfuseDatasetService] Deleted dataset item {item['id']} for table {table_id}.")
+                    self.logger.debug(
+                        f"[LangfuseDatasetService] Deleted dataset item {item['id']} for table {table_id}."
+                    )
 
-            self.logger.info(f"[LangfuseDatasetService] Removed {len(items_to_delete)} questions for table {table_id} from {dataset_name}.")
+            self.logger.info(
+                f"[LangfuseDatasetService] Removed {len(items_to_delete)} questions for table {table_id} from {dataset_name}."
+            )
         except Exception as exc:
-            self.logger.error(f"[LangfuseDatasetService] Error removing questions: {exc}")
+            self.logger.error(
+                f"[LangfuseDatasetService] Error removing questions: {exc}"
+            )
 
     def append_questions_to_dataset(self, dataset_name: str, questions: list) -> bool:
         """
@@ -542,11 +580,11 @@ class LangfuseDatasetService:
     def run_experiment(
         self,
         dataset_name: str,
-        task: Callable[[Any], Dict[str, Any]],
-        run_name: Optional[str] = None,
-        run_description: Optional[str] = None,
-        run_metadata: Optional[dict] = None,
-        evaluators: Optional[List[Callable[[Any, Dict[str, Any]], Evaluation]]] = None,
+        task: Callable[[Any], dict[str, Any]],
+        run_name: str | None = None,
+        run_description: str | None = None,
+        run_metadata: dict | None = None,
+        evaluators: list[Callable[[Any, dict[str, Any]], Evaluation]] | None = None,
     ):
         if not self.enabled:
             return None
@@ -568,7 +606,9 @@ class LangfuseDatasetService:
                                     evaluation = eval_func(item, task_result)
                                     self._tracer.client.score(
                                         trace_id=trace_id,
-                                        observation_id=task_result.get("observation_id"),
+                                        observation_id=task_result.get(
+                                            "observation_id"
+                                        ),
                                         name=eval_func.__name__,
                                         value=evaluation.value,
                                         comment=evaluation.comment,
@@ -601,5 +641,3 @@ langfuse_tracer = LangfuseTracer()
 # The dataset service — use this for evaluation dataset operations.
 # Aliased as `langfuse_client` for backward compatibility with existing imports.
 langfuse_client = LangfuseDatasetService(langfuse_tracer)
-
-

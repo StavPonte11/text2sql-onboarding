@@ -2,6 +2,7 @@
 Feedback router — stores and retrieves user feedback (👍/👎) on queries.
 Feedback signals are consumed by the Table Health scoring engine.
 """
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
@@ -17,7 +18,9 @@ router = APIRouter(tags=["feedback"])
 
 
 @router.post("/feedback", response_model=QueryFeedbackRead, status_code=201)
-def submit_feedback(payload: QueryFeedbackCreate, session: Session = Depends(get_session)):
+def submit_feedback(
+    payload: QueryFeedbackCreate, session: Session = Depends(get_session)
+):
     # Validate query exists
     query = session.get(AuditQuery, payload.query_id)
     if not query:

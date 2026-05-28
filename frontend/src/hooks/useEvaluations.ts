@@ -1,8 +1,10 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { evalApi, healthApi } from "../api/client";
-import { orchestrationApi } from "../api/orchestration";
-import { QUERY_KEYS, QUERY_CONFIG } from "../config/constants";
-import type { EvalScheduleCreate, EvalScheduleUpdate } from "../api/orchestration";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { evalApi, healthApi } from '../api/client';
+import { orchestrationApi } from '../api/orchestration';
+import { QUERY_CONFIG, QUERY_KEYS } from '../config/constants';
+
+import type { EvalScheduleCreate, EvalScheduleUpdate } from '../api/orchestration';
 
 // ── Trigger single table evaluation ──────────────────────────────────────────
 export function useTriggerEval() {
@@ -30,7 +32,7 @@ export function useTriggerOrchestrationRun() {
 // ── List all evaluation runs ───────────────────────────────────────────────────
 export function useAllEvalRuns() {
   return useQuery({
-    queryKey: [QUERY_KEYS.EVAL_RUNS, "all"],
+    queryKey: [QUERY_KEYS.EVAL_RUNS, 'all'],
     queryFn: () => evalApi.listAllRuns(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
   });
@@ -39,7 +41,7 @@ export function useAllEvalRuns() {
 // ── List runs for a specific table ─────────────────────────────────────────────
 export function useTableEvalRuns(tableId: string) {
   return useQuery({
-    queryKey: [QUERY_KEYS.EVAL_RUNS, "table", tableId],
+    queryKey: [QUERY_KEYS.EVAL_RUNS, 'table', tableId],
     queryFn: () => evalApi.listRuns(tableId),
     enabled: !!tableId,
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
@@ -49,7 +51,7 @@ export function useTableEvalRuns(tableId: string) {
 // ── List batch runs for a promotion run ────────────────────────────────────────
 export function useBatchEvalRuns(promotionRunId: string) {
   return useQuery({
-    queryKey: [QUERY_KEYS.EVAL_RUNS, "batch", promotionRunId],
+    queryKey: [QUERY_KEYS.EVAL_RUNS, 'batch', promotionRunId],
     queryFn: () => evalApi.listBatchRuns(promotionRunId),
     enabled: !!promotionRunId,
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
@@ -69,7 +71,7 @@ export function useEvalRunDetails(runId: string) {
 // ── Get run report ─────────────────────────────────────────────────────────────
 export function useEvalRunReport(runId: string) {
   return useQuery({
-    queryKey: [QUERY_KEYS.EVAL_REPORT, "report", runId],
+    queryKey: [QUERY_KEYS.EVAL_REPORT, 'report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
     enabled: !!runId,
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
@@ -89,7 +91,7 @@ export function useRegressionDiff(runId: string, enabled = true) {
 // ── List schedules ─────────────────────────────────────────────────────────────
 export function useEvalSchedules() {
   return useQuery({
-    queryKey: [QUERY_KEYS.SCOPES, "schedules"],
+    queryKey: [QUERY_KEYS.SCOPES, 'schedules'],
     queryFn: () => orchestrationApi.listSchedules(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
   });
@@ -101,7 +103,7 @@ export function useCreateSchedule() {
   return useMutation({
     mutationFn: (payload: EvalScheduleCreate) => orchestrationApi.createSchedule(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, "schedules"] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, 'schedules'] });
     },
   });
 }
@@ -113,7 +115,7 @@ export function useUpdateSchedule() {
     mutationFn: ({ id, payload }: { id: string; payload: EvalScheduleUpdate }) =>
       orchestrationApi.updateSchedule(id, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, "schedules"] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, 'schedules'] });
     },
   });
 }
@@ -124,7 +126,7 @@ export function useDeleteSchedule() {
   return useMutation({
     mutationFn: (id: string) => orchestrationApi.deleteSchedule(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, "schedules"] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.SCOPES, 'schedules'] });
     },
   });
 }
@@ -150,7 +152,7 @@ export function useTableAnalytics() {
 // ── Compare two runs ───────────────────────────────────────────────────────────
 export function useCompareRuns(run1: string, run2: string) {
   return useQuery({
-    queryKey: [QUERY_KEYS.EVAL_REPORT, "compare", run1, run2],
+    queryKey: [QUERY_KEYS.EVAL_REPORT, 'compare', run1, run2],
     queryFn: () => orchestrationApi.compareRuns(run1, run2),
     enabled: !!run1 && !!run2,
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
@@ -190,7 +192,7 @@ export function useSystemHealth() {
 // ── Get evaluations readiness status ───────────────────────────────────────────
 export function useEvalReadiness() {
   return useQuery({
-    queryKey: [QUERY_KEYS.TABLES, "readiness"],
+    queryKey: [QUERY_KEYS.TABLES, 'readiness'],
     queryFn: () => orchestrationApi.getReadiness(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
   });
@@ -213,7 +215,7 @@ export function useRecomputeHealth() {
     mutationFn: (tableId: string) => healthApi.recompute(tableId),
     onSuccess: (_, tableId) => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.HEALTH, tableId] });
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.HEALTH, "all"] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.HEALTH, 'all'] });
     },
   });
 }
@@ -221,7 +223,7 @@ export function useRecomputeHealth() {
 // ── Get all tables health ──────────────────────────────────────────────────────
 export function useAllTablesHealth() {
   return useQuery({
-    queryKey: [QUERY_KEYS.HEALTH, "all"],
+    queryKey: [QUERY_KEYS.HEALTH, 'all'],
     queryFn: () => healthApi.getAll(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
   });

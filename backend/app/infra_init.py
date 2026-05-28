@@ -11,6 +11,7 @@ the entire data layer is self-healing after `docker compose down/up`:
 
 All steps are fully idempotent. Running this multiple times is safe.
 """
+
 import base64
 import logging
 import time
@@ -18,6 +19,8 @@ from typing import Any
 
 import trino
 import trino.dbapi
+from minio import Minio
+from minio.error import S3Error
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,7 @@ _OM_URL = "http://openmetadata-server:8585"
 _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
-_TRINO_READY_INTERVAL = 5   # seconds between retries
+_TRINO_READY_INTERVAL = 5  # seconds between retries
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,48 +169,190 @@ _TABLES: list[dict[str, Any]] = [
 # ── OpenMetadata table column definitions (for API registration) ───────────────
 _OM_TABLE_COLUMNS: dict[str, list[dict]] = {
     "simple_retail.orders": [
-        {"name": "order_id",       "dataType": "VARCHAR", "dataLength": 255, "description": "Unique order identifier"},
-        {"name": "customer_name",  "dataType": "VARCHAR", "dataLength": 255, "description": "Full name of the customer"},
-        {"name": "customer_email", "dataType": "VARCHAR", "dataLength": 255, "description": "Customer email address"},
-        {"name": "product_name",   "dataType": "VARCHAR", "dataLength": 255, "description": "Name of the product ordered"},
-        {"name": "quantity",       "dataType": "INT",                        "description": "Number of units ordered"},
-        {"name": "unit_price",     "dataType": "DOUBLE",                     "description": "Price per unit (USD)"},
-        {"name": "total_amount",   "dataType": "DOUBLE",                     "description": "Total order value (USD)"},
-        {"name": "status",         "dataType": "VARCHAR", "dataLength": 255, "description": "Order status"},
-        {"name": "order_date",     "dataType": "DATE",                       "description": "Date the order was placed"},
+        {
+            "name": "order_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Unique order identifier",
+        },
+        {
+            "name": "customer_name",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Full name of the customer",
+        },
+        {
+            "name": "customer_email",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Customer email address",
+        },
+        {
+            "name": "product_name",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Name of the product ordered",
+        },
+        {
+            "name": "quantity",
+            "dataType": "INT",
+            "description": "Number of units ordered",
+        },
+        {
+            "name": "unit_price",
+            "dataType": "DOUBLE",
+            "description": "Price per unit (USD)",
+        },
+        {
+            "name": "total_amount",
+            "dataType": "DOUBLE",
+            "description": "Total order value (USD)",
+        },
+        {
+            "name": "status",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Order status",
+        },
+        {
+            "name": "order_date",
+            "dataType": "DATE",
+            "description": "Date the order was placed",
+        },
     ],
     "complex_retail.customers": [
-        {"name": "customer_id", "dataType": "VARCHAR",   "dataLength": 255, "description": "Unique customer ID"},
-        {"name": "first_name",  "dataType": "VARCHAR",   "dataLength": 255, "description": "Customer first name"},
-        {"name": "last_name",   "dataType": "VARCHAR",   "dataLength": 255, "description": "Customer last name"},
-        {"name": "email",       "dataType": "VARCHAR",   "dataLength": 255, "description": "Customer email"},
-        {"name": "country",     "dataType": "VARCHAR",   "dataLength": 255, "description": "Country"},
-        {"name": "city",        "dataType": "VARCHAR",   "dataLength": 255, "description": "City"},
-        {"name": "created_at",  "dataType": "TIMESTAMP",                    "description": "Account creation timestamp"},
+        {
+            "name": "customer_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Unique customer ID",
+        },
+        {
+            "name": "first_name",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Customer first name",
+        },
+        {
+            "name": "last_name",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Customer last name",
+        },
+        {
+            "name": "email",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Customer email",
+        },
+        {
+            "name": "country",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Country",
+        },
+        {
+            "name": "city",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "City",
+        },
+        {
+            "name": "created_at",
+            "dataType": "TIMESTAMP",
+            "description": "Account creation timestamp",
+        },
     ],
     "complex_retail.products": [
-        {"name": "product_id",     "dataType": "VARCHAR", "dataLength": 255, "description": "Unique product ID"},
-        {"name": "name",           "dataType": "VARCHAR", "dataLength": 255, "description": "Product name"},
-        {"name": "category",       "dataType": "VARCHAR", "dataLength": 255, "description": "Category"},
-        {"name": "subcategory",    "dataType": "VARCHAR", "dataLength": 255, "description": "Sub-category"},
-        {"name": "price",          "dataType": "DOUBLE",                     "description": "List price (USD)"},
-        {"name": "stock_quantity", "dataType": "INT",                        "description": "Units in stock"},
+        {
+            "name": "product_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Unique product ID",
+        },
+        {
+            "name": "name",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Product name",
+        },
+        {
+            "name": "category",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Category",
+        },
+        {
+            "name": "subcategory",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Sub-category",
+        },
+        {"name": "price", "dataType": "DOUBLE", "description": "List price (USD)"},
+        {"name": "stock_quantity", "dataType": "INT", "description": "Units in stock"},
     ],
     "complex_retail.orders": [
-        {"name": "order_id",         "dataType": "VARCHAR", "dataLength": 255, "description": "Unique order ID"},
-        {"name": "customer_id",      "dataType": "VARCHAR", "dataLength": 255, "description": "FK → customers.customer_id"},
-        {"name": "order_date",       "dataType": "DATE",                       "description": "Date placed"},
-        {"name": "status",           "dataType": "VARCHAR", "dataLength": 255, "description": "Order status"},
-        {"name": "total_amount",     "dataType": "DOUBLE",                     "description": "Total value (USD)"},
-        {"name": "shipping_address", "dataType": "VARCHAR", "dataLength": 255, "description": "Delivery address"},
+        {
+            "name": "order_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Unique order ID",
+        },
+        {
+            "name": "customer_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "FK → customers.customer_id",
+        },
+        {"name": "order_date", "dataType": "DATE", "description": "Date placed"},
+        {
+            "name": "status",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Order status",
+        },
+        {
+            "name": "total_amount",
+            "dataType": "DOUBLE",
+            "description": "Total value (USD)",
+        },
+        {
+            "name": "shipping_address",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Delivery address",
+        },
     ],
     "complex_retail.order_items": [
-        {"name": "item_id",      "dataType": "VARCHAR", "dataLength": 255, "description": "Unique line item ID"},
-        {"name": "order_id",     "dataType": "VARCHAR", "dataLength": 255, "description": "FK → orders.order_id"},
-        {"name": "product_id",   "dataType": "VARCHAR", "dataLength": 255, "description": "FK → products.product_id"},
-        {"name": "quantity",     "dataType": "INT",                        "description": "Units ordered"},
-        {"name": "unit_price",   "dataType": "DOUBLE",                     "description": "Price at time of order (USD)"},
-        {"name": "discount_pct", "dataType": "DOUBLE",                     "description": "Discount applied (0.0–1.0)"},
+        {
+            "name": "item_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "Unique line item ID",
+        },
+        {
+            "name": "order_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "FK → orders.order_id",
+        },
+        {
+            "name": "product_id",
+            "dataType": "VARCHAR",
+            "dataLength": 255,
+            "description": "FK → products.product_id",
+        },
+        {"name": "quantity", "dataType": "INT", "description": "Units ordered"},
+        {
+            "name": "unit_price",
+            "dataType": "DOUBLE",
+            "description": "Price at time of order (USD)",
+        },
+        {
+            "name": "discount_pct",
+            "dataType": "DOUBLE",
+            "description": "Discount applied (0.0-1.0)",
+        },
     ],
 }
 
@@ -216,10 +361,9 @@ _OM_TABLE_COLUMNS: dict[str, list[dict]] = {
 # Step 1 — MinIO bucket
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _ensure_minio_bucket() -> None:
     """Create the 'warehouse' S3 bucket in MinIO if it doesn't exist."""
-    from minio import Minio
-    from minio.error import S3Error
 
     logger.info("[InfraInit] Checking MinIO bucket '%s' …", _WAREHOUSE_BUCKET)
     client = Minio(
@@ -230,7 +374,9 @@ def _ensure_minio_bucket() -> None:
     )
     try:
         if client.bucket_exists(_WAREHOUSE_BUCKET):
-            logger.info("[InfraInit] MinIO bucket '%s' already exists — OK", _WAREHOUSE_BUCKET)
+            logger.info(
+                "[InfraInit] MinIO bucket '%s' already exists — OK", _WAREHOUSE_BUCKET
+            )
         else:
             client.make_bucket(_WAREHOUSE_BUCKET)
             logger.info("[InfraInit] MinIO bucket '%s' created ✓", _WAREHOUSE_BUCKET)
@@ -242,6 +388,7 @@ def _ensure_minio_bucket() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 2 — Trino connectivity + DDL
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _trino_conn():
     """Open a raw Trino DBAPI connection (no catalog/schema defaults)."""
@@ -264,7 +411,9 @@ def _trino_exec(sql: str, *, ignore_errors: bool = False) -> list:
         return rows
     except Exception as exc:
         if ignore_errors:
-            logger.debug("[InfraInit] Trino exec (ignored error): %s — %s", sql[:120], exc)
+            logger.debug(
+                "[InfraInit] Trino exec (ignored error): %s — %s", sql[:120], exc
+            )
             return []
         raise
     finally:
@@ -276,10 +425,11 @@ def _ensure_iceberg_tables() -> None:
     Ensure the Postgres tables required by the Iceberg JDBC catalog exist.
     If they are missing, Trino fails to initialize the catalog.
     """
+
     import psycopg2
-    import os
+
     logger.info("[InfraInit] Ensuring Iceberg JDBC catalog tables exist in Postgres …")
-    
+
     # We use psycopg2 directly since it's already installed via pyproject.toml
     conn_str = "postgresql://postgres:postgres@db:5432/text2sql"
     try:
@@ -310,6 +460,7 @@ def _ensure_iceberg_tables() -> None:
         logger.error("[InfraInit] Failed to create Iceberg JDBC tables: %s", exc)
         raise
 
+
 def _wait_for_trino() -> None:
     """
     Poll until Trino's minio catalog is responsive.
@@ -323,10 +474,18 @@ def _wait_for_trino() -> None:
         try:
             rows = _trino_exec("SHOW SCHEMAS FROM minio", ignore_errors=True)
             if rows is not None:
-                logger.info("[InfraInit] Trino minio catalog ready after %d attempt(s) ✓", attempt)
+                logger.info(
+                    "[InfraInit] Trino minio catalog ready after %d attempt(s) ✓",
+                    attempt,
+                )
                 return
         except Exception as exc:
-            logger.debug("[InfraInit] Trino not ready (attempt %d/%d): %s", attempt, _TRINO_READY_RETRIES, exc)
+            logger.debug(
+                "[InfraInit] Trino not ready (attempt %d/%d): %s",
+                attempt,
+                _TRINO_READY_RETRIES,
+                exc,
+            )
         time.sleep(_TRINO_READY_INTERVAL)
 
     # Final attempt — raise on failure
@@ -343,9 +502,13 @@ def _ensure_trino_schemas() -> None:
         except Exception as exc:
             err = str(exc).lower()
             if "already exists" in err:
-                logger.info("[InfraInit] Trino schema '%s' already exists — OK", schema["name"])
+                logger.info(
+                    "[InfraInit] Trino schema '%s' already exists — OK", schema["name"]
+                )
             else:
-                logger.error("[InfraInit] Failed to create schema '%s': %s", schema["name"], exc)
+                logger.error(
+                    "[InfraInit] Failed to create schema '%s': %s", schema["name"], exc
+                )
                 raise
 
 
@@ -358,9 +521,13 @@ def _ensure_trino_tables() -> None:
         except Exception as exc:
             err = str(exc).lower()
             if "already exists" in err:
-                logger.info("[InfraInit] Trino table '%s' already exists — OK", table["fqn"])
+                logger.info(
+                    "[InfraInit] Trino table '%s' already exists — OK", table["fqn"]
+                )
             else:
-                logger.error("[InfraInit] Failed to create table '%s': %s", table["fqn"], exc)
+                logger.error(
+                    "[InfraInit] Failed to create table '%s': %s", table["fqn"], exc
+                )
                 raise
 
 
@@ -376,17 +543,24 @@ def _seed_trino_data() -> None:
             rows = _trino_exec(table["count_sql"])
             count = rows[0][0] if rows else 0
             if count > 0:
-                logger.info("[InfraInit] Table '%s' has %d row(s) — skipping seed", table["fqn"], count)
+                logger.info(
+                    "[InfraInit] Table '%s' has %d row(s) — skipping seed",
+                    table["fqn"],
+                    count,
+                )
                 continue
             _trino_exec(table["seed_sql"])
             logger.info("[InfraInit] Seeded sample data into '%s' ✓", table["fqn"])
         except Exception as exc:
-            logger.warning("[InfraInit] Could not seed '%s' (non-fatal): %s", table["fqn"], exc)
+            logger.warning(
+                "[InfraInit] Could not seed '%s' (non-fatal): %s", table["fqn"], exc
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 3 — OpenMetadata registration
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _om_login() -> str:
     """Log in to OpenMetadata and return an access token."""
@@ -412,6 +586,7 @@ def _om_login() -> str:
 
 def _om_get(path: str, token: str) -> tuple[str, dict]:
     import httpx
+
     try:
         r = httpx.get(
             f"{_OM_URL}/api/v1/{path}",
@@ -425,11 +600,15 @@ def _om_get(path: str, token: str) -> tuple[str, dict]:
 
 def _om_post(path: str, body: dict, token: str) -> tuple[str, dict]:
     import httpx
+
     try:
         r = httpx.post(
             f"{_OM_URL}/api/v1/{path}",
             json=body,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
             timeout=10.0,
         )
         return str(r.status_code), r.json()
@@ -491,20 +670,24 @@ def _ensure_om_service(token: str) -> str | None:
         logger.info("[InfraInit] OM service '%s' already exists — OK", _OM_SERVICE_NAME)
         return data["id"]
 
-    status, data = _om_post("services/databaseServices", {
-        "name": _OM_SERVICE_NAME,
-        "displayName": "Local Trino",
-        "description": "Local Trino cluster with MinIO/Iceberg storage",
-        "serviceType": "Trino",
-        "connection": {
-            "config": {
-                "type": "Trino",
-                "hostPort": "trino:8080",
-                "username": "trino",
-                "catalog": "minio",
-            }
+    status, data = _om_post(
+        "services/databaseServices",
+        {
+            "name": _OM_SERVICE_NAME,
+            "displayName": "Local Trino",
+            "description": "Local Trino cluster with MinIO/Iceberg storage",
+            "serviceType": "Trino",
+            "connection": {
+                "config": {
+                    "type": "Trino",
+                    "hostPort": "trino:8080",
+                    "username": "trino",
+                    "catalog": "minio",
+                }
+            },
         },
-    }, token)
+        token,
+    )
 
     if status in ("200", "201"):
         logger.info("[InfraInit] OM service '%s' created ✓", _OM_SERVICE_NAME)
@@ -520,11 +703,15 @@ def _ensure_om_database(token: str, db_fqn: str, svc_id: str) -> str | None:
         logger.info("[InfraInit] OM database '%s' already exists — OK", db_fqn)
         return data["id"]
 
-    status, data = _om_post("databases", {
-        "name": "minio",
-        "displayName": "minio",
-        "service": _OM_SERVICE_NAME,
-    }, token)
+    status, data = _om_post(
+        "databases",
+        {
+            "name": "minio",
+            "displayName": "minio",
+            "service": _OM_SERVICE_NAME,
+        },
+        token,
+    )
 
     if status in ("200", "201"):
         logger.info("[InfraInit] OM database 'minio' created ✓")
@@ -534,23 +721,34 @@ def _ensure_om_database(token: str, db_fqn: str, svc_id: str) -> str | None:
     return None
 
 
-def _ensure_om_schema(token: str, schema_fqn: str, schema_name: str, db_fqn: str) -> str | None:
+def _ensure_om_schema(
+    token: str, schema_fqn: str, schema_name: str, db_fqn: str
+) -> str | None:
     status, data = _om_get(f"databaseSchemas/name/{schema_fqn}", token)
     if status == "200":
         logger.info("[InfraInit] OM schema '%s' already exists — OK", schema_fqn)
         return data["id"]
 
-    status, data = _om_post("databaseSchemas", {
-        "name": schema_name,
-        "displayName": schema_name.replace("_", " ").title(),
-        "database": db_fqn,
-    }, token)
+    status, data = _om_post(
+        "databaseSchemas",
+        {
+            "name": schema_name,
+            "displayName": schema_name.replace("_", " ").title(),
+            "database": db_fqn,
+        },
+        token,
+    )
 
     if status in ("200", "201"):
         logger.info("[InfraInit] OM schema '%s' created ✓", schema_fqn)
         return data["id"]
 
-    logger.error("[InfraInit] Failed to create OM schema '%s' (HTTP %s): %s", schema_fqn, status, data)
+    logger.error(
+        "[InfraInit] Failed to create OM schema '%s' (HTTP %s): %s",
+        schema_fqn,
+        status,
+        data,
+    )
     return None
 
 
@@ -566,23 +764,33 @@ def _ensure_om_table(
         logger.info("[InfraInit] OM table '%s' already exists — OK", table_fqn)
         return
 
-    status, data = _om_post("tables", {
-        "name": table_name,
-        "displayName": table_name.replace("_", " ").title(),
-        "tableType": "Regular",
-        "databaseSchema": schema_fqn,
-        "columns": columns,
-    }, token)
+    status, data = _om_post(
+        "tables",
+        {
+            "name": table_name,
+            "displayName": table_name.replace("_", " ").title(),
+            "tableType": "Regular",
+            "databaseSchema": schema_fqn,
+            "columns": columns,
+        },
+        token,
+    )
 
     if status in ("200", "201"):
         logger.info("[InfraInit] OM table '%s' registered ✓", table_fqn)
     else:
-        logger.error("[InfraInit] Failed to register OM table '%s' (HTTP %s): %s", table_fqn, status, data)
+        logger.error(
+            "[InfraInit] Failed to register OM table '%s' (HTTP %s): %s",
+            table_fqn,
+            status,
+            data,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def init_infrastructure() -> None:
     """
@@ -613,7 +821,9 @@ def init_infrastructure() -> None:
         _ensure_openmetadata_registration()
     except Exception as exc:
         # OM registration failure is non-fatal — backend can still serve traffic
-        logger.warning("[InfraInit] OpenMetadata registration failed (non-fatal): %s", exc)
+        logger.warning(
+            "[InfraInit] OpenMetadata registration failed (non-fatal): %s", exc
+        )
 
     logger.info("[InfraInit] ═══════════════════════════════════════")
     logger.info("[InfraInit] Infrastructure initialization complete ✓")

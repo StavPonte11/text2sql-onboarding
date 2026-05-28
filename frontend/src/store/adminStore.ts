@@ -26,6 +26,6 @@ export const useAdminStore = create<AdminState>()(
     }),
     {
       name: 'admin-storage',
-    }
-  )
+    },
+  ),
 );

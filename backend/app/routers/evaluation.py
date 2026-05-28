@@ -16,7 +16,6 @@ On fail  → table.status = sandbox   + alert created
 import logging
 import random
 from datetime import datetime
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -50,13 +49,23 @@ PRODUCTION_DATASET_NAME = "text2sql_production"
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
-def _create_alert(session: Session, run_id: Optional[str], table_id: Optional[str],
-                  alert_type: str, severity: AlertSeverity, message: str,
-                  details: Optional[dict] = None):
+
+def _create_alert(
+    session: Session,
+    run_id: str | None,
+    table_id: str | None,
+    alert_type: str,
+    severity: AlertSeverity,
+    message: str,
+    details: dict | None = None,
+):
     alert = EvaluationAlert(
-        run_id=run_id, table_id=table_id,
-        alert_type=alert_type, severity=severity,
-        message=message, details=details,
+        run_id=run_id,
+        table_id=table_id,
+        alert_type=alert_type,
+        severity=severity,
+        message=message,
+        details=details,
     )
     session.add(alert)
     session.commit()
@@ -70,14 +79,19 @@ def _build_questions_payload(questions: list, table: Table) -> list:
             "expected_sql": q.expected_sql or "",
             "table_id": q.table_id,
             "schema_name": table.schema_name,
-            "question_type": q.question_type.value if hasattr(q.question_type, "value") else str(q.question_type),
-            "difficulty": q.difficulty.value if hasattr(q.difficulty, "value") else str(q.difficulty),
+            "question_type": q.question_type.value
+            if hasattr(q.question_type, "value")
+            else str(q.question_type),
+            "difficulty": q.difficulty.value
+            if hasattr(q.difficulty, "value")
+            else str(q.difficulty),
         }
         for q in questions
     ]
 
 
 # ─── Core evaluation runner (single dataset) ───────────────────────────────────
+
 
 @observe(name="eval-single-table")
 def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
@@ -113,15 +127,21 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     question_scores_ranking: list[float] = [
         float(random.choice([0, 1])) for _ in questions
     ]
-    logger.info(f"[Eval] Scored {len(questions)} questions for table {table_id} (local stubs)")
+    logger.info(
+        f"[Eval] Scored {len(questions)} questions for table {table_id} (local stubs)"
+    )
 
-    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3)
+    avg_score_contains = round(
+        sum(question_scores_contains) / len(question_scores_contains), 3
+    )
     pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
     pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3)
     avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3)
     pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
     pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3)
-    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+    avg_score_ranking = round(
+        sum(question_scores_ranking) / len(question_scores_ranking), 3
+    )
     pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
     pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3)
 
@@ -134,17 +154,19 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     run.dimension_averages = {
         "contains_execution_accuracy": avg_score_contains,
         "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking
+        "ranking_accuracy": avg_score_ranking,
     }
     session.add(run)
 
-    for q, score in zip(questions, question_scores_contains):
-        session.add(EvalResult(
-            run_id=run_id,
-            question_id=q.id,
-            score=score,
-            status="pass" if score >= 0.50 else "fail",
-        ))
+    for q, score in zip(questions, question_scores_contains, strict=False):
+        session.add(
+            EvalResult(
+                run_id=run_id,
+                question_id=q.id,
+                score=score,
+                status="pass" if score >= 0.50 else "fail",
+            )
+        )
 
     # Lifecycle: draft → sandbox on first evaluation only
     table = session.get(Table, table_id)
@@ -167,7 +189,10 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 
 # ─── Phase A: measure baseline score on production dataset ────────────────────
 
-def _run_production_dataset_eval(session: Session, run_name_prefix: str, promotion_run_id: str) -> float:
+
+def _run_production_dataset_eval(
+    session: Session, run_name_prefix: str, promotion_run_id: str
+) -> float:
     """
     Measures baseline contains_execution_accuracy on the unified
     'text2sql_production' Langfuse dataset.
@@ -202,7 +227,9 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
         # This covers: new dataset, empty dataset, or dataset missing recently added questions.
         all_questions_payload = []
         for table in prod_tables:
-            qs_for_table = [q for q in all_production_questions if q.table_id == table.id]
+            qs_for_table = [
+                q for q in all_production_questions if q.table_id == table.id
+            ]
             all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
 
         if all_questions_payload:
@@ -211,11 +238,15 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
                 f"to '{PRODUCTION_DATASET_NAME}' (adds new, removes stale, updates changed)"
             )
             try:
-                langfuse_client.sync_dataset(PRODUCTION_DATASET_NAME, all_questions_payload)
+                langfuse_client.sync_dataset(
+                    PRODUCTION_DATASET_NAME, all_questions_payload
+                )
             except Exception as e:
                 logger.warning(f"[Promotion/Phase-A] Dataset sync failed: {e}")
         else:
-            logger.info("[Promotion/Phase-A] No questions to sync — production tables have no golden questions")
+            logger.info(
+                "[Promotion/Phase-A] No questions to sync — production tables have no golden questions"
+            )
 
     run = EvalRun(
         table_id=None,
@@ -244,25 +275,52 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
 
     if not question_scores:
         question_scores = [
-            float(random.choice([0, 1]))
-            for _ in (all_production_questions or range(5))
+            float(random.choice([0, 1])) for _ in (all_production_questions or range(5))
         ]
 
     question_scores_contains = question_scores
-    question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
-    question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+    question_scores_exact = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
+    question_scores_ranking = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
 
-    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 1.0
+    avg_score_contains = (
+        round(sum(question_scores_contains) / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 1.0
+    )
     pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+    pass_rate_contains = (
+        round(pass_count_contains / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 1.0
+    )
 
-    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 1.0
+    avg_score_exact = (
+        round(sum(question_scores_exact) / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 1.0
+    )
     pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+    (
+        round(pass_count_exact / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 1.0
+    )
 
-    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+    avg_score_ranking = (
+        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 1.0
+    )
     pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+    (
+        round(pass_count_ranking / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 1.0
+    )
 
     run.score = avg_score_contains
     run.pass_rate = pass_rate_contains
@@ -273,32 +331,45 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
     run.dimension_averages = {
         "contains_execution_accuracy": avg_score_contains,
         "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking
+        "ranking_accuracy": avg_score_ranking,
     }
     session.add(run)
 
     # Persist per-question EvalResult rows so the regression diff can compare
     # Only if the evaluator didn't already insert them
-    existing_results = session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).first()
+    existing_results = session.exec(
+        select(EvalResult).where(EvalResult.run_id == run.id)
+    ).first()
     if not existing_results and all_production_questions:
-        for q, score in zip(all_production_questions, question_scores_contains):
-            session.add(EvalResult(
-                run_id=run.id,
-                question_id=q.id,
-                score=score,
-                status="pass" if score >= 0.50 else "fail",
-            ))
+        for q, score in zip(
+            all_production_questions, question_scores_contains, strict=False
+        ):
+            session.add(
+                EvalResult(
+                    run_id=run.id,
+                    question_id=q.id,
+                    score=score,
+                    status="pass" if score >= 0.50 else "fail",
+                )
+            )
 
     session.commit()
 
     # Log per-question scores back to Langfuse so they appear in the Experiments UI
-    if langfuse_client.enabled and all_production_questions and question_scores_contains:
+    if (
+        langfuse_client.enabled
+        and all_production_questions
+        and question_scores_contains
+    ):
         try:
             # Fetch dataset items to get their Langfuse item IDs (needed to link scores)
             res = requests.get(
                 f"{langfuse_client._tracer.host}/api/public/dataset-items"
                 f"?datasetName={PRODUCTION_DATASET_NAME}&limit=500",
-                auth=(langfuse_client._tracer.public_key, langfuse_client._tracer.private_key),
+                auth=(
+                    langfuse_client._tracer.public_key,
+                    langfuse_client._tracer.private_key,
+                ),
             )
             item_map: dict[str, str] = {}  # question_id → langfuse_item_id
             if res.status_code == 200:
@@ -308,7 +379,9 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
                         item_map[qid] = item["id"]
 
             run_name = f"{run_name_prefix}-PhaseA"
-            for q, score in zip(all_production_questions, question_scores_contains):
+            for q, score in zip(
+                all_production_questions, question_scores_contains, strict=False
+            ):
                 lf_item_id = item_map.get(q.id)
                 if not lf_item_id:
                     continue
@@ -317,8 +390,15 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
                     trace = langfuse_client.client.trace(
                         name=f"production-baseline-q-{q.id[:8]}",
                         input={"question": q.question},
-                        output={"score": score, "status": "pass" if score >= 0.50 else "fail"},
-                        metadata={"question_id": q.id, "run_id": run.id, "run_name": run_name},
+                        output={
+                            "score": score,
+                            "status": "pass" if score >= 0.50 else "fail",
+                        },
+                        metadata={
+                            "question_id": q.id,
+                            "run_id": run.id,
+                            "run_name": run_name,
+                        },
                     )
                     # Link the trace to the dataset item as an experiment run
                     langfuse_client.link_trace_to_dataset_run(
@@ -336,18 +416,23 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
                         comment="pass" if score >= 0.50 else "fail",
                     )
                 except Exception as exc:
-                    logger.warning(f"[Promotion/Phase-A] Failed to log score for question {q.id}: {exc}")
+                    logger.warning(
+                        f"[Promotion/Phase-A] Failed to log score for question {q.id}: {exc}"
+                    )
 
             langfuse_client.flush()
-            logger.info(f"[Promotion/Phase-A] Logged {len(all_production_questions)} question scores to Langfuse run '{run_name}'")
+            logger.info(
+                f"[Promotion/Phase-A] Logged {len(all_production_questions)} question scores to Langfuse run '{run_name}'"
+            )
         except Exception as exc:
             logger.warning(f"[Promotion/Phase-A] Langfuse score logging failed: {exc}")
 
-    logger.info(f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {avg_score_contains:.3f} "
-                f"exact_exec_accuracy = {avg_score_exact:.3f} ranking_accuracy = {avg_score_ranking:.3f} "
-                f"({len(question_scores_contains)} questions)")
+    logger.info(
+        f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {avg_score_contains:.3f} "
+        f"exact_exec_accuracy = {avg_score_exact:.3f} ranking_accuracy = {avg_score_ranking:.3f} "
+        f"({len(question_scores_contains)} questions)"
+    )
     return avg_score_contains
-
 
 
 # We no longer use a fixed dataset name to avoid soft-delete conflicts and question accumulation.
@@ -355,7 +440,11 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
 
 
 def _run_candidate_eval(
-    table: Table, questions: list, run_name_prefix: str, session: Session, promotion_run_id: str
+    table: Table,
+    questions: list,
+    run_name_prefix: str,
+    session: Session,
+    promotion_run_id: str,
 ) -> float:
     """
     Writes the candidate table's golden questions into the fixed
@@ -399,26 +488,53 @@ def _run_candidate_eval(
                 logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
 
         if not question_scores:
-
             question_scores = [float(random.choice([0, 1])) for _ in questions]
 
         # Generate stubs for exact and ranking based on the same length
 
         question_scores_contains = question_scores
-        question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
-        question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+        question_scores_exact = [
+            float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+        ]
+        question_scores_ranking = [
+            float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+        ]
 
-        avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
+        avg_score_contains = (
+            round(sum(question_scores_contains) / len(question_scores_contains), 3)
+            if question_scores_contains
+            else 0.0
+        )
         pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-        pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+        pass_rate_contains = (
+            round(pass_count_contains / len(question_scores_contains), 3)
+            if question_scores_contains
+            else 1.0
+        )
 
-        avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 0.0
+        avg_score_exact = (
+            round(sum(question_scores_exact) / len(question_scores_exact), 3)
+            if question_scores_exact
+            else 0.0
+        )
         pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-        pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+        (
+            round(pass_count_exact / len(question_scores_exact), 3)
+            if question_scores_exact
+            else 1.0
+        )
 
-        avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 0.0
+        avg_score_ranking = (
+            round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+            if question_scores_ranking
+            else 0.0
+        )
         pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-        pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+        (
+            round(pass_count_ranking / len(question_scores_ranking), 3)
+            if question_scores_ranking
+            else 1.0
+        )
 
         run.score = avg_score_contains
         run.pass_rate = pass_rate_contains
@@ -429,36 +545,46 @@ def _run_candidate_eval(
         run.dimension_averages = {
             "contains_execution_accuracy": avg_score_contains,
             "exact_execution_accuracy": avg_score_exact,
-            "ranking_accuracy": avg_score_ranking
+            "ranking_accuracy": avg_score_ranking,
         }
         session.add(run)
 
         # Persist per-question EvalResult rows so the report endpoint
         # can show per-question scores in the UI.
-        existing_results = session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).first()
+        existing_results = session.exec(
+            select(EvalResult).where(EvalResult.run_id == run.id)
+        ).first()
         if not existing_results:
-            for q, score in zip(questions, question_scores_contains):
-                session.add(EvalResult(
-                    run_id=run.id,
-                    question_id=q.id,
-                    score=score,
-                    status="pass" if score >= 0.50 else "fail",
-                ))
+            for q, score in zip(questions, question_scores_contains, strict=False):
+                session.add(
+                    EvalResult(
+                        run_id=run.id,
+                        question_id=q.id,
+                        score=score,
+                        status="pass" if score >= 0.50 else "fail",
+                    )
+                )
 
         session.commit()
 
-        logger.info(f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
-                    f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}")
+        logger.info(
+            f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
+            f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
+        )
     finally:
         # User requested: remove the items after the evaluation so they don't accumulate
         if langfuse_client.enabled:
             langfuse_client.clear_dataset(dataset_name)
-            logger.info(f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after evaluation.")
+            logger.info(
+                f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after evaluation."
+            )
 
     return avg_score_contains
 
 
-def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_id: str) -> float:
+def _run_regression_eval(
+    run_name_prefix: str, session: Session, promotion_run_id: str
+) -> float:
     """
     Re-runs the production dataset evaluation AFTER the candidate table has been
     temporarily added to the warehouse. Returns the new score.
@@ -501,30 +627,56 @@ def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_i
         except Exception as e:
             logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
 
-
     if not question_scores:
         # Slight variance from baseline to simulate real regression testing.
         # Use the same question count as the loaded production questions.
         question_scores = [
-            float(random.choice([0, 1]))
-            for _ in (all_production_questions or range(5))
+            float(random.choice([0, 1])) for _ in (all_production_questions or range(5))
         ]
 
     question_scores_contains = question_scores
-    question_scores_exact = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
-    question_scores_ranking = [float(random.choice([0, 1])) for _ in range(len(question_scores_contains))]
+    question_scores_exact = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
+    question_scores_ranking = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
 
-    avg_score_contains = round(sum(question_scores_contains) / len(question_scores_contains), 3) if question_scores_contains else 0.0
+    avg_score_contains = (
+        round(sum(question_scores_contains) / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 0.0
+    )
     pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3) if question_scores_contains else 1.0
+    pass_rate_contains = (
+        round(pass_count_contains / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 1.0
+    )
 
-    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3) if question_scores_exact else 0.0
+    avg_score_exact = (
+        round(sum(question_scores_exact) / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 0.0
+    )
     pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3) if question_scores_exact else 1.0
+    (
+        round(pass_count_exact / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 1.0
+    )
 
-    avg_score_ranking = round(sum(question_scores_ranking) / len(question_scores_ranking), 3) if question_scores_ranking else 0.0
+    avg_score_ranking = (
+        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 0.0
+    )
     pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3) if question_scores_ranking else 1.0
+    (
+        round(pass_count_ranking / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 1.0
+    )
 
     run.score = avg_score_contains
     run.pass_rate = pass_rate_contains
@@ -535,31 +687,40 @@ def _run_regression_eval(run_name_prefix: str, session: Session, promotion_run_i
     run.dimension_averages = {
         "contains_execution_accuracy": avg_score_contains,
         "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking
+        "ranking_accuracy": avg_score_ranking,
     }
     session.add(run)
 
     # Persist per-question EvalResult rows so the regression diff endpoint can
     # compare which questions passed baseline but failed here.
     # Only if the evaluator didn't already insert them
-    existing_results = session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).first()
+    existing_results = session.exec(
+        select(EvalResult).where(EvalResult.run_id == run.id)
+    ).first()
     if not existing_results and all_production_questions:
-        for q, score in zip(all_production_questions, question_scores_contains):
-            session.add(EvalResult(
-                run_id=run.id,
-                question_id=q.id,
-                score=score,
-                status="pass" if score >= 0.50 else "fail",
-            ))
+        for q, score in zip(
+            all_production_questions, question_scores_contains, strict=False
+        ):
+            session.add(
+                EvalResult(
+                    run_id=run.id,
+                    question_id=q.id,
+                    score=score,
+                    status="pass" if score >= 0.50 else "fail",
+                )
+            )
 
     session.commit()
 
-    logger.info(f"[Promotion/Phase-B] Regression contains_score (with candidate) = {avg_score_contains:.3f} "
-                f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}")
+    logger.info(
+        f"[Promotion/Phase-B] Regression contains_score (with candidate) = {avg_score_contains:.3f} "
+        f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
+    )
     return avg_score_contains
 
 
 # ─── Main promotion workflow ───────────────────────────────────────────────────
+
 
 @observe(name="promotion-workflow")
 def promote_table_to_production_workflow(table_id: str, run_id: str):
@@ -595,31 +756,46 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
         if not questions:
             msg = f"Promotion failed: table '{table.name}' has no golden questions."
             logger.error(f"[Promotion] {msg}")
-            _create_alert(session, run_id, table_id, "promotion_failed", AlertSeverity.critical, msg)
+            _create_alert(
+                session,
+                run_id,
+                table_id,
+                "promotion_failed",
+                AlertSeverity.critical,
+                msg,
+            )
             return
 
         run_name_prefix = f"Promo-{run_id[:8]}"
 
         # ── Phase A: baseline ──────────────────────────────────────────────────
         logger.info(f"[Promotion] Phase A: measuring baseline score for run {run_id}")
-        baseline_score = _run_production_dataset_eval(session, run_name_prefix, promotion_run_id=run_id)
+        baseline_score = _run_production_dataset_eval(
+            session, run_name_prefix, promotion_run_id=run_id
+        )
         threshold_min = round(baseline_score - 0.10, 3)
-        logger.info(f"[Promotion] Baseline={baseline_score:.3f}, regression must be >= {threshold_min:.3f}")
+        logger.info(
+            f"[Promotion] Baseline={baseline_score:.3f}, regression must be >= {threshold_min:.3f}"
+        )
 
         candidate_score = 0.0
         regression_score = 0.0
 
         # ── Phase B step 1: evaluate candidate's golden questions ──────────
-        candidate_score = _run_candidate_eval(table, questions, run_name_prefix, session, promotion_run_id=run_id)
+        candidate_score = _run_candidate_eval(
+            table, questions, run_name_prefix, session, promotion_run_id=run_id
+        )
 
         # ── Phase B step 2: regression on production dataset ───────────────
         if candidate_score >= 0.50:
-            regression_score = _run_regression_eval(run_name_prefix, session, promotion_run_id=run_id)
+            regression_score = _run_regression_eval(
+                run_name_prefix, session, promotion_run_id=run_id
+            )
         else:
-            regression_score = baseline_score # Skip regression, candidate failed
+            regression_score = baseline_score  # Skip regression, candidate failed
 
         # ── Evaluate pass criteria ─────────────────────────────────────────────
-        candidate_ok  = candidate_score  >= 0.50
+        candidate_ok = candidate_score >= 0.50
         regression_ok = regression_score >= threshold_min and regression_score >= 0.50
 
         if candidate_ok and regression_ok:
@@ -642,15 +818,22 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
             logger.error(f"[Promotion] FAIL — {msg}")
             table.status = TableStatus.sandbox
             session.add(table)
-            _create_alert(session, run_id, table_id, "promotion_failed", AlertSeverity.critical, msg, {
-                "baseline_score": baseline_score,
-                "candidate_score": candidate_score,
-                "regression_score": regression_score,
-            })
+            _create_alert(
+                session,
+                run_id,
+                table_id,
+                "promotion_failed",
+                AlertSeverity.critical,
+                msg,
+                {
+                    "baseline_score": baseline_score,
+                    "candidate_score": candidate_score,
+                    "regression_score": regression_score,
+                },
+            )
 
         session.commit()
         logger.info(f"[Promotion] Done. Table '{table.name}' → {table.status}")
-
 
 
 @observe(name="eval-run")
@@ -660,6 +843,7 @@ def _run_evaluation_pipeline(table_id: str, run_id: str):
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.get("/eval/readiness")
 def get_readiness(session: Session = Depends(get_session)):
@@ -678,9 +862,11 @@ def get_readiness(session: Session = Depends(get_session)):
         elif not enrichment.data.get("table_description"):
             missing.append("table description")
 
-        q_count = len(session.exec(
-            select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
-        ).all())
+        q_count = len(
+            session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+            ).all()
+        )
         if q_count == 0:
             missing.append("golden questions")
 
@@ -739,8 +925,10 @@ def list_runs(table_id: str, session: Session = Depends(get_session)):
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(
-            ((EvalRun.table_id == table_id) |
-            (EvalRun.promotion_run_id.in_(promotion_run_ids)))
+            (
+                (EvalRun.table_id == table_id)
+                | (EvalRun.promotion_run_id.in_(promotion_run_ids))
+            )
             & (EvalRun.triggered_by != "promotion")
         )
         .order_by(desc(EvalRun.created_at))
@@ -769,7 +957,10 @@ def get_all_eval_runs(session: Session = Depends(get_session)):
         .order_by(desc(EvalRun.created_at))
         .limit(100)
     ).all()
-    return [EvalRunRead.model_validate(run, update={"table_name": name}) for run, name in results]
+    return [
+        EvalRunRead.model_validate(run, update={"table_name": name})
+        for run, name in results
+    ]
 
 
 @router.get("/eval/batch/{promotion_run_id}", response_model=list[EvalRunRead])
@@ -778,12 +969,18 @@ def get_batch_runs(promotion_run_id: str, session: Session = Depends(get_session
         select(EvalRun, Table.name)
         .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(
-            ((EvalRun.id == promotion_run_id) | (EvalRun.promotion_run_id == promotion_run_id))
+            (
+                (EvalRun.id == promotion_run_id)
+                | (EvalRun.promotion_run_id == promotion_run_id)
+            )
             & (EvalRun.triggered_by != "promotion")
         )
         .order_by(desc(EvalRun.created_at))
     ).all()
-    return [EvalRunRead.model_validate(run, update={"table_name": name or "Unknown"}) for run, name in results]
+    return [
+        EvalRunRead.model_validate(run, update={"table_name": name or "Unknown"})
+        for run, name in results
+    ]
 
 
 @router.get("/eval/{run_id}", response_model=EvalRunRead)
@@ -812,7 +1009,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
 
     results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
 
-    total  = len(results)
+    total = len(results)
     passes = sum(1 for r in results if r.status == "pass")
 
     return {
@@ -843,7 +1040,9 @@ def get_regression_diff(run_id: str, session: Session = Depends(get_session)):
     if not regression_run:
         raise HTTPException(status_code=404, detail="Run not found")
     if regression_run.triggered_by != "promotion-regression":
-        raise HTTPException(status_code=400, detail="Run is not a promotion-regression run")
+        raise HTTPException(
+            status_code=400, detail="Run is not a promotion-regression run"
+        )
 
     # Find the baseline run for the same promotion workflow
     baseline_run = session.exec(
@@ -864,11 +1063,15 @@ def get_regression_diff(run_id: str, session: Session = Depends(get_session)):
     # Load EvalResult rows for both runs, keyed by question_id
     baseline_results = {
         r.question_id: r
-        for r in session.exec(select(EvalResult).where(EvalResult.run_id == baseline_run.id)).all()
+        for r in session.exec(
+            select(EvalResult).where(EvalResult.run_id == baseline_run.id)
+        ).all()
     }
     regression_results = {
         r.question_id: r
-        for r in session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+        for r in session.exec(
+            select(EvalResult).where(EvalResult.run_id == run_id)
+        ).all()
     }
 
     # Questions that passed baseline but failed regression = true regressions
@@ -892,14 +1095,18 @@ def get_regression_diff(run_id: str, session: Session = Depends(get_session)):
         [
             {
                 "question_id": qid,
-                "question": questions_map[qid].question if qid in questions_map else "Unknown",
+                "question": questions_map[qid].question
+                if qid in questions_map
+                else "Unknown",
                 "baseline_score": round(baseline_results[qid].score, 3),
                 "regression_score": round(regression_results[qid].score, 3),
-                "score_drop": round(baseline_results[qid].score - regression_results[qid].score, 3),
+                "score_drop": round(
+                    baseline_results[qid].score - regression_results[qid].score, 3
+                ),
             }
             for qid in regressed_ids
         ],
-        key=lambda x: x["score_drop"],
+        key=lambda x: x["score_drop"],  # type: ignore[return-value]
         reverse=True,
     )
 

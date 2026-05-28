@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
@@ -9,10 +7,10 @@ from app.models.models import AuditQuery, AuditQueryRead
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
-@router.get("/queries", response_model=List[AuditQueryRead])
+@router.get("/queries", response_model=list[AuditQueryRead])
 def list_audit_queries(
-    table_id: Optional[str] = Query(default=None),
-    user_id: Optional[str] = Query(default=None),
+    table_id: str | None = Query(default=None),
+    user_id: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     session: Session = Depends(get_session),
 ):

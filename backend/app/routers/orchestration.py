@@ -9,9 +9,9 @@ New endpoints:
   Alerts:      GET /evaluations/alerts, POST /evaluations/alerts/{id}/ack
   System:      GET /evaluations/system-health
 """
+
 import random
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse.decorators import langfuse_context, observe
@@ -48,6 +48,7 @@ LOW_SCORE_THRESHOLD = 0.70
 
 # ── Stubbed external calls (same as in evaluation.py) ─────────────────────────
 
+
 @observe(as_type="generation", name="text2sql_agent")
 def run_text2sql_agent(question: str, table_id: str) -> dict:
     """Simulates the LangGraph Text2SQL agent flow with up to 4 refinement iterations."""
@@ -63,7 +64,7 @@ def run_text2sql_agent(question: str, table_id: str) -> dict:
 
     langfuse_context.update_current_trace(
         tags=["evaluation", f"table_{table_id[:8]}"],
-        metadata={"iterations": iterations, "success": trino_result.success}
+        metadata={"iterations": iterations, "success": trino_result.success},
     )
 
     return {
@@ -87,11 +88,15 @@ def _stub_judge(exec_success: bool) -> dict:
     base = random.uniform(0.70, 0.95) if exec_success else random.uniform(0.20, 0.45)
     failure_types = [None, None, None, "wrong_table", "wrong_join", "wrong_filter"]
     return {
-        "table_selection_correctness": round(min(1.0, base + random.uniform(-0.1, 0.1)), 3),
-        "sql_semantic_equivalence":    round(min(1.0, base + random.uniform(-0.15, 0.1)), 3),
-        "result_correctness":          round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
-        "hallucination_detected":      random.random() < 0.05,
-        "failure_type":                random.choice(failure_types) if not exec_success else None,
+        "table_selection_correctness": round(
+            min(1.0, base + random.uniform(-0.1, 0.1)), 3
+        ),
+        "sql_semantic_equivalence": round(
+            min(1.0, base + random.uniform(-0.15, 0.1)), 3
+        ),
+        "result_correctness": round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
+        "hallucination_detected": random.random() < 0.05,
+        "failure_type": random.choice(failure_types) if not exec_success else None,
         "reasoning": {},
         "confidence_in_judgment": round(random.uniform(0.7, 0.95), 3),
     }
@@ -99,15 +104,22 @@ def _stub_judge(exec_success: bool) -> dict:
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
+
 @observe(name="evaluation_pipeline")
-def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: str = "user"):
+def _run_full_pipeline(
+    table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
+):
     """Run evaluation for multiple tables (one run per table)."""
     langfuse_context.update_current_trace(
         tags=["evaluation_run"],
-        metadata={"table_ids": table_ids, "run_ids": run_ids, "triggered_by": triggered_by}
+        metadata={
+            "table_ids": table_ids,
+            "run_ids": run_ids,
+            "triggered_by": triggered_by,
+        },
     )
 
-    for table_id, run_id in zip(table_ids, run_ids):
+    for table_id, run_id in zip(table_ids, run_ids, strict=False):
         with Session(engine) as session:
             run = session.get(EvalRun, run_id)
             if not run:
@@ -122,7 +134,11 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
             # Detect regression vs previous run
             prev_runs = session.exec(
                 select(EvalRun)
-                .where(EvalRun.table_id == table_id, EvalRun.status == EvalStatus.completed, EvalRun.id != run_id)
+                .where(
+                    EvalRun.table_id == table_id,
+                    EvalRun.status == EvalStatus.completed,
+                    EvalRun.id != run_id,
+                )
                 .order_by(EvalRun.created_at.desc())
                 .limit(1)
             ).first()
@@ -135,20 +151,46 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
                 if delta > REGRESSION_BLOCK_DELTA:
                     regression_detected = True
                     regression_delta = round(delta, 4)
-                    _create_alert(session, run_id, table_id, "regression", AlertSeverity.critical,
-                                  f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
-                                  {"previous_score": prev_runs.score, "current_score": score, "delta": delta})
+                    _create_alert(
+                        session,
+                        run_id,
+                        table_id,
+                        "regression",
+                        AlertSeverity.critical,
+                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                        {
+                            "previous_score": prev_runs.score,
+                            "current_score": score,
+                            "delta": delta,
+                        },
+                    )
                 elif delta > REGRESSION_WARNING_DELTA:
                     regression_detected = True
                     regression_delta = round(delta, 4)
-                    _create_alert(session, run_id, table_id, "regression", AlertSeverity.warning,
-                                  f"Score warning: {delta:.1%} drop detected",
-                                  {"previous_score": prev_runs.score, "current_score": score, "delta": delta})
+                    _create_alert(
+                        session,
+                        run_id,
+                        table_id,
+                        "regression",
+                        AlertSeverity.warning,
+                        f"Score warning: {delta:.1%} drop detected",
+                        {
+                            "previous_score": prev_runs.score,
+                            "current_score": score,
+                            "delta": delta,
+                        },
+                    )
 
             # Low score alert
             if score < LOW_SCORE_THRESHOLD:
-                 _create_alert(session, run_id, table_id, "low_score", AlertSeverity.warning,
-                               f"Table performance is low ({score:.1%})")
+                _create_alert(
+                    session,
+                    run_id,
+                    table_id,
+                    "low_score",
+                    AlertSeverity.warning,
+                    f"Table performance is low ({score:.1%})",
+                )
 
             # Finalize run orchestration fields
             run.regression_detected = regression_detected
@@ -161,24 +203,33 @@ def _run_full_pipeline(table_ids: list[str], run_ids: list[str], triggered_by: s
             ]
             if run.dimension_averages:
                 for dim_name, dim_val in run.dimension_averages.items():
-                    metrics_to_save.append((dim_name, dim_val if dim_val is not None else 0.0))
+                    metrics_to_save.append(
+                        (dim_name, dim_val if dim_val is not None else 0.0)
+                    )
             if run.failure_breakdown:
                 for fail_type, count in run.failure_breakdown.items():
-                    metrics_to_save.append((fail_type, float(count) if count is not None else 0.0))
+                    metrics_to_save.append(
+                        (fail_type, float(count) if count is not None else 0.0)
+                    )
 
             for metric_name, m_val in metrics_to_save:
                 metric = EvaluationHistoryMetric(
-                    run_id=run_id,
-                    metric_name=metric_name,
-                    metric_value=m_val
+                    run_id=run_id, metric_name=metric_name, metric_value=m_val
                 )
                 session.add(metric)
 
             session.commit()
 
 
-def _create_alert(session: Session, run_id: Optional[str], table_id: Optional[str],
-                  alert_type: str, severity: AlertSeverity, message: str, details: Optional[dict] = None):
+def _create_alert(
+    session: Session,
+    run_id: str | None,
+    table_id: str | None,
+    alert_type: str,
+    severity: AlertSeverity,
+    message: str,
+    details: dict | None = None,
+):
     alert = EvaluationAlert(
         run_id=run_id,
         table_id=table_id,
@@ -192,6 +243,7 @@ def _create_alert(session: Session, run_id: Optional[str], table_id: Optional[st
 
 
 # ── Runs ──────────────────────────────────────────────────────────────────────
+
 
 @router.post("/run", response_model=list[EvalRunRead], status_code=202)
 def trigger_evaluation_run(
@@ -255,7 +307,11 @@ def trigger_evaluation_run(
     read_runs = []
     for r in runs:
         t = session.get(Table, r.table_id)
-        read_runs.append(EvalRunRead.model_validate(r, update={"table_name": t.name if t else r.table_id}))
+        read_runs.append(
+            EvalRunRead.model_validate(
+                r, update={"table_name": t.name if t else r.table_id}
+            )
+        )
     return read_runs
 
 
@@ -263,11 +319,17 @@ def trigger_evaluation_run(
 def list_runs(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
-    status: Optional[str] = Query(default=None),
-    table_id: Optional[str] = Query(default=None),
+    status: str | None = Query(default=None),
+    table_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    query = select(EvalRun, Table.name).join(Table, EvalRun.table_id == Table.id, isouter=True).order_by(EvalRun.created_at.desc()).limit(limit).offset(offset)
+    query = (
+        select(EvalRun, Table.name)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
+        .order_by(EvalRun.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if status:
         query = query.where(EvalRun.status == status)
     if table_id:
@@ -308,7 +370,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
 
     # fetch questions text for each question
     q_ids = [r.question_id for r in results]
-    questions = session.exec(select(GoldenQuestion).where(GoldenQuestion.id.in_(q_ids))).all()
+    questions = session.exec(
+        select(GoldenQuestion).where(GoldenQuestion.id.in_(q_ids))
+    ).all()
     question_map = {q.id: q.question for q in questions}
 
     return {
@@ -344,13 +408,18 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
 
 # ── Schedules ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/schedules", response_model=list[EvaluationScheduleRead])
 def list_schedules(session: Session = Depends(get_session)):
-    return session.exec(select(EvaluationSchedule).order_by(EvaluationSchedule.created_at.desc())).all()
+    return session.exec(
+        select(EvaluationSchedule).order_by(EvaluationSchedule.created_at.desc())
+    ).all()
 
 
 @router.post("/schedules", response_model=EvaluationScheduleRead, status_code=201)
-def create_schedule(payload: EvaluationScheduleCreate, session: Session = Depends(get_session)):
+def create_schedule(
+    payload: EvaluationScheduleCreate, session: Session = Depends(get_session)
+):
     schedule = EvaluationSchedule(**payload.model_dump())
     session.add(schedule)
     session.commit()
@@ -359,7 +428,11 @@ def create_schedule(payload: EvaluationScheduleCreate, session: Session = Depend
 
 
 @router.put("/schedules/{schedule_id}", response_model=EvaluationScheduleRead)
-def update_schedule(schedule_id: str, payload: EvaluationScheduleUpdate, session: Session = Depends(get_session)):
+def update_schedule(
+    schedule_id: str,
+    payload: EvaluationScheduleUpdate,
+    session: Session = Depends(get_session),
+):
     schedule = session.get(EvaluationSchedule, schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
@@ -383,10 +456,11 @@ def delete_schedule(schedule_id: str, session: Session = Depends(get_session)):
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/analytics/trends")
 def get_trends(
     days: int = Query(default=30),
-    table_id: Optional[str] = Query(default=None),
+    table_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """Score and pass_rate over time. Returns one data point per completed run."""
@@ -406,17 +480,19 @@ def get_trends(
     for r in runs:
         # Get table name for each run (could be optimized with a join above)
         table = session.get(Table, r.table_id)
-        points.append({
-            "run_id": r.id,
-            "table_id": r.table_id,
-            "table_name": table.name if table else r.table_id,
-            "date": r.created_at.strftime("%Y-%m-%d"),
-            "timestamp": r.created_at.isoformat(),
-            "score": round(r.score, 3),
-            "pass_rate": round(r.pass_rate, 3),
-            "fail_rate": round(r.fail_rate, 3),
-            "regression_detected": r.regression_detected,
-        })
+        points.append(
+            {
+                "run_id": r.id,
+                "table_id": r.table_id,
+                "table_name": table.name if table else r.table_id,
+                "date": r.created_at.strftime("%Y-%m-%d"),
+                "timestamp": r.created_at.isoformat(),
+                "score": round(r.score, 3),
+                "pass_rate": round(r.pass_rate, 3),
+                "fail_rate": round(r.fail_rate, 3),
+                "regression_detected": r.regression_detected,
+            }
+        )
 
     # Aggregate by date
     by_date: dict = {}
@@ -430,12 +506,14 @@ def get_trends(
 
     daily = []
     for d, v in sorted(by_date.items()):
-        daily.append({
-            "date": d,
-            "avg_score": round(sum(v["scores"]) / len(v["scores"]), 3),
-            "avg_pass_rate": round(sum(v["pass_rates"]) / len(v["pass_rates"]), 3),
-            "run_count": v["run_count"],
-        })
+        daily.append(
+            {
+                "date": d,
+                "avg_score": round(sum(v["scores"]) / len(v["scores"]), 3),
+                "avg_pass_rate": round(sum(v["pass_rates"]) / len(v["pass_rates"]), 3),
+                "run_count": v["run_count"],
+            }
+        )
 
     return {"runs": points, "daily": daily, "total_runs": len(runs)}
 
@@ -454,17 +532,19 @@ def get_table_analytics(session: Session = Depends(get_session)):
         ).all()
 
         if not runs:
-            result.append({
-                "table_id": t.id,
-                "table_name": t.name,
-                "status": t.status,
-                "latest_score": None,
-                "avg_score": None,
-                "pass_rate": None,
-                "run_count": 0,
-                "trend": "stable",
-                "failure_breakdown": {},
-            })
+            result.append(
+                {
+                    "table_id": t.id,
+                    "table_name": t.name,
+                    "status": t.status,
+                    "latest_score": None,
+                    "avg_score": None,
+                    "pass_rate": None,
+                    "run_count": 0,
+                    "trend": "stable",
+                    "failure_breakdown": {},
+                }
+            )
             continue
 
         latest = runs[0]
@@ -481,18 +561,20 @@ def get_table_analytics(session: Session = Depends(get_session)):
             elif recent_avg > older_avg + 0.05:
                 trend = "improving"
 
-        result.append({
-            "table_id": t.id,
-            "table_name": t.name,
-            "status": t.status,
-            "latest_score": round(latest.score, 3),
-            "avg_score": avg,
-            "pass_rate": round(latest.pass_rate, 3),
-            "run_count": len(runs),
-            "trend": trend,
-            "last_run_at": latest.created_at.isoformat(),
-            "failure_breakdown": latest.failure_breakdown or {},
-        })
+        result.append(
+            {
+                "table_id": t.id,
+                "table_name": t.name,
+                "status": t.status,
+                "latest_score": round(latest.score, 3),
+                "avg_score": avg,
+                "pass_rate": round(latest.pass_rate, 3),
+                "run_count": len(runs),
+                "trend": trend,
+                "last_run_at": latest.created_at.isoformat(),
+                "failure_breakdown": latest.failure_breakdown or {},
+            }
+        )
 
     result.sort(key=lambda x: (x["latest_score"] is None, x["latest_score"] or 0))
     return result
@@ -510,8 +592,14 @@ def compare_runs(
     if not r1 or not r2:
         raise HTTPException(status_code=404, detail="One or both runs not found")
 
-    res1 = {r.question_id: r for r in session.exec(select(EvalResult).where(EvalResult.run_id == run1)).all()}
-    res2 = {r.question_id: r for r in session.exec(select(EvalResult).where(EvalResult.run_id == run2)).all()}
+    res1 = {
+        r.question_id: r
+        for r in session.exec(select(EvalResult).where(EvalResult.run_id == run1)).all()
+    }
+    res2 = {
+        r.question_id: r
+        for r in session.exec(select(EvalResult).where(EvalResult.run_id == run2)).all()
+    }
 
     all_qids = set(res1) | set(res2)
     regressions = []
@@ -523,34 +611,67 @@ def compare_runs(
         if s1 is not None and s2 is not None:
             delta = s2 - s1
             if delta < -0.1:
-                regressions.append({"question_id": qid, "run1_score": s1, "run2_score": s2, "delta": round(delta, 3)})
+                regressions.append(
+                    {
+                        "question_id": qid,
+                        "run1_score": s1,
+                        "run2_score": s2,
+                        "delta": round(delta, 3),
+                    }
+                )
             elif delta > 0.1:
-                improvements.append({"question_id": qid, "run1_score": s1, "run2_score": s2, "delta": round(delta, 3)})
+                improvements.append(
+                    {
+                        "question_id": qid,
+                        "run1_score": s1,
+                        "run2_score": s2,
+                        "delta": round(delta, 3),
+                    }
+                )
 
     score_delta = round(r2.score - r1.score, 4)
 
     return {
-        "run1": {"id": r1.id, "score": r1.score, "pass_rate": r1.pass_rate, "created_at": r1.created_at.isoformat(), "table_id": r1.table_id},
-        "run2": {"id": r2.id, "score": r2.score, "pass_rate": r2.pass_rate, "created_at": r2.created_at.isoformat(), "table_id": r2.table_id},
+        "run1": {
+            "id": r1.id,
+            "score": r1.score,
+            "pass_rate": r1.pass_rate,
+            "created_at": r1.created_at.isoformat(),
+            "table_id": r1.table_id,
+        },
+        "run2": {
+            "id": r2.id,
+            "score": r2.score,
+            "pass_rate": r2.pass_rate,
+            "created_at": r2.created_at.isoformat(),
+            "table_id": r2.table_id,
+        },
         "score_delta": score_delta,
         "pass_rate_delta": round(r2.pass_rate - r1.pass_rate, 4),
         "regression_count": len(regressions),
         "improvement_count": len(improvements),
         "regressions": sorted(regressions, key=lambda x: x["delta"]),
         "improvements": sorted(improvements, key=lambda x: x["delta"], reverse=True),
-        "verdict": "regression" if score_delta < -0.05 else "improvement" if score_delta > 0.05 else "stable",
+        "verdict": "regression"
+        if score_delta < -0.05
+        else "improvement"
+        if score_delta > 0.05
+        else "stable",
     }
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
+
 @router.get("/alerts", response_model=list[EvaluationAlertRead])
 def list_alerts(
-    acknowledged: Optional[bool] = Query(default=None),
+    acknowledged: bool | None = Query(default=None),
     limit: int = Query(default=50),
     session: Session = Depends(get_session),
 ):
-    query = select(EvaluationAlert).order_by(EvaluationAlert.created_at.desc()).limit(limit)
+    query = (
+        select(EvaluationAlert).order_by(EvaluationAlert.created_at.desc()).limit(limit)
+    )
     if acknowledged is not None:
         query = query.where(EvaluationAlert.acknowledged == acknowledged)
     return session.exec(query).all()
@@ -570,6 +691,7 @@ def acknowledge_alert(alert_id: str, session: Session = Depends(get_session)):
 
 # ── System Health ──────────────────────────────────────────────────────────────
 
+
 @router.get("/system-health")
 def system_health(session: Session = Depends(get_session)):
     """Aggregate system health for the control center dashboard."""
@@ -581,7 +703,7 @@ def system_health(session: Session = Depends(get_session)):
     ).all()
 
     unacked_alerts = session.exec(
-        select(EvaluationAlert).where(EvaluationAlert.acknowledged == False)
+        select(EvaluationAlert).where(not EvaluationAlert.acknowledged)
     ).all()
 
     total_tables = session.exec(select(Table)).all()
@@ -606,14 +728,16 @@ def system_health(session: Session = Depends(get_session)):
         avg = sum(scores) / len(scores)
         if avg < LOW_SCORE_THRESHOLD:
             table = session.get(Table, tid)
-            failing_tables.append({
-                "table_id": tid,
-                "table_name": table.name if table else tid[:8],
-                "avg_score": round(avg, 3),
-                "failure_rate": round(1 - avg, 3),
-            })
+            failing_tables.append(
+                {
+                    "table_id": tid,
+                    "table_name": table.name if table else tid[:8],
+                    "avg_score": round(avg, 3),
+                    "failure_rate": round(1 - avg, 3),
+                }
+            )
 
-    failing_tables.sort(key=lambda x: x["avg_score"])
+    failing_tables.sort(key=lambda x: x["avg_score"])  # type: ignore[return-value]
 
     # Recent runs (last 10)
     recent_runs = [
@@ -634,13 +758,20 @@ def system_health(session: Session = Depends(get_session)):
         "global_score": global_score,
         "global_pass_rate": global_pass_rate,
         "active_alerts": len(unacked_alerts),
-        "critical_alerts": sum(1 for a in unacked_alerts if a.severity == AlertSeverity.critical),
+        "critical_alerts": sum(
+            1 for a in unacked_alerts if a.severity == AlertSeverity.critical
+        ),
         "last_evaluation": latest_run.created_at.isoformat() if latest_run else None,
         "total_tables": len(total_tables),
         "production_tables": len(production_tables),
-        "total_runs_today": sum(1 for r in all_runs if r.created_at.date() == datetime.utcnow().date()),
+        "total_runs_today": sum(
+            1 for r in all_runs if r.created_at.date() == datetime.utcnow().date()
+        ),
         "top_failing_tables": failing_tables[:5],
         "recent_runs": recent_runs,
-        "system_status": "critical" if any(a.severity == AlertSeverity.critical for a in unacked_alerts)
-                        else "warning" if unacked_alerts else "healthy",
+        "system_status": "critical"
+        if any(a.severity == AlertSeverity.critical for a in unacked_alerts)
+        else "warning"
+        if unacked_alerts
+        else "healthy",
     }

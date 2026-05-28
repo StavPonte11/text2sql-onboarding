@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime
-from typing import List
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -53,7 +52,9 @@ def _sync_questions_to_production_dataset(session: Session):
     dataset always reflects the live production question set.
     """
     if not langfuse_client.enabled:
-        logger.info("[AdminApproval] Langfuse disabled — skipping production dataset sync")
+        logger.info(
+            "[AdminApproval] Langfuse disabled — skipping production dataset sync"
+        )
         return
 
     # Gather ALL production tables and their questions
@@ -75,23 +76,25 @@ def _sync_questions_to_production_dataset(session: Session):
             select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
         ).all()
         for q in questions:
-            all_questions_payload.append({
-                "question_id": q.id,
-                "question_text": q.question,
-                "expected_sql": q.expected_sql or "",
-                "table_id": q.table_id,
-                "schema_name": table.schema_name,
-                "question_type": (
-                    q.question_type.value
-                    if hasattr(q.question_type, "value")
-                    else str(q.question_type)
-                ),
-                "difficulty": (
-                    q.difficulty.value
-                    if hasattr(q.difficulty, "value")
-                    else str(q.difficulty)
-                ),
-            })
+            all_questions_payload.append(
+                {
+                    "question_id": q.id,
+                    "question_text": q.question,
+                    "expected_sql": q.expected_sql or "",
+                    "table_id": q.table_id,
+                    "schema_name": table.schema_name,
+                    "question_type": (
+                        q.question_type.value
+                        if hasattr(q.question_type, "value")
+                        else str(q.question_type)
+                    ),
+                    "difficulty": (
+                        q.difficulty.value
+                        if hasattr(q.difficulty, "value")
+                        else str(q.difficulty)
+                    ),
+                }
+            )
 
     logger.info(
         f"[AdminApproval] Syncing {len(all_questions_payload)} questions "
@@ -108,14 +111,15 @@ def _sync_questions_to_production_dataset(session: Session):
         logger.error(f"[AdminApproval] Failed to sync production dataset: {e}")
 
 
-
-@router.get("/pending", response_model=List[dict])
+@router.get("/pending", response_model=list[dict])
 def get_pending_tables(
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """Get all tables in 'verified' status (awaiting admin approval)."""
-    tables = session.exec(select(Table).where(Table.status == TableStatus.verified)).all()
+    tables = session.exec(
+        select(Table).where(Table.status == TableStatus.verified)
+    ).all()
 
     result = []
     for table in tables:
@@ -125,19 +129,27 @@ def get_pending_tables(
             .order_by(desc(EvalRun.created_at))
         ).first()
 
-        result.append({
-            "id": table.id,
-            "name": table.name,
-            "schema_name": table.schema_name,
-            "status": table.status,
-            "latest_run": {
-                "score": latest_run.score if latest_run else None,
-                "pass_rate": latest_run.pass_rate if latest_run else None,
-                "regression_detected": latest_run.regression_detected if latest_run else None,
-                "regression_delta": latest_run.regression_delta if latest_run else None,
-                "created_at": latest_run.created_at if latest_run else None,
-            } if latest_run else None,
-        })
+        result.append(
+            {
+                "id": table.id,
+                "name": table.name,
+                "schema_name": table.schema_name,
+                "status": table.status,
+                "latest_run": {
+                    "score": latest_run.score if latest_run else None,
+                    "pass_rate": latest_run.pass_rate if latest_run else None,
+                    "regression_detected": latest_run.regression_detected
+                    if latest_run
+                    else None,
+                    "regression_delta": latest_run.regression_delta
+                    if latest_run
+                    else None,
+                    "created_at": latest_run.created_at if latest_run else None,
+                }
+                if latest_run
+                else None,
+            }
+        )
     return result
 
 
@@ -145,7 +157,7 @@ def get_pending_tables(
 def approve_table(
     table_id: str,
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
     Approve a verified table for production.
@@ -161,7 +173,7 @@ def approve_table(
     if table.status != TableStatus.verified:
         raise HTTPException(
             status_code=400,
-            detail=f"Table must be in 'verified' status to be approved. Current: {table.status}"
+            detail=f"Table must be in 'verified' status to be approved. Current: {table.status}",
         )
 
     # 1. Promote status
@@ -188,7 +200,7 @@ def reject_table(
     table_id: str,
     rejection: RejectionNote,
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
     Reject a verified table, returning it to sandbox.
@@ -200,7 +212,7 @@ def reject_table(
     if table.status != TableStatus.verified:
         raise HTTPException(
             status_code=400,
-            detail=f"Table must be in 'verified' status to be rejected. Current: {table.status}"
+            detail=f"Table must be in 'verified' status to be rejected. Current: {table.status}",
         )
 
     table.status = TableStatus.sandbox

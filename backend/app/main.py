@@ -28,7 +28,6 @@ from app.services.scheduler import start_scheduler, stop_scheduler
 logger = logging.getLogger(__name__)
 
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -55,6 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def audit_middleware(request: Request, call_next):
     start_time = time.time()
@@ -62,10 +62,17 @@ async def audit_middleware(request: Request, call_next):
     process_time_ms = int((time.time() - start_time) * 1000)
 
     # Only log table-related routes to avoid spamming
-    if request.url.path.startswith("/tables") and request.method in ["POST", "PUT", "DELETE", "GET"]:
+    if request.url.path.startswith("/tables") and request.method in [
+        "POST",
+        "PUT",
+        "DELETE",
+        "GET",
+    ]:
         # Extract table_id if present in path (e.g. /tables/{table_id}/...)
         path_parts = request.url.path.split("/")
-        table_id = path_parts[2] if len(path_parts) > 2 and path_parts[2] != "eval" else None
+        table_id = (
+            path_parts[2] if len(path_parts) > 2 and path_parts[2] != "eval" else None
+        )
 
         # In a real app, user_id comes from auth token
         user_id = "user-1"
@@ -74,11 +81,13 @@ async def audit_middleware(request: Request, call_next):
         try:
             with Session(engine) as session:
                 audit = AuditQuery(
-                    table_id=table_id if table_id and len(table_id) == 36 else None, # quick check for uuid
+                    table_id=table_id
+                    if table_id and len(table_id) == 36
+                    else None,  # quick check for uuid
                     user_id=user_id,
                     raw_question=query_desc,
                     execution_time_ms=process_time_ms,
-                    status="success" if response.status_code < 400 else "error"
+                    status="success" if response.status_code < 400 else "error",
                 )
                 session.add(audit)
                 session.commit()
@@ -86,7 +95,6 @@ async def audit_middleware(request: Request, call_next):
             logger.error(f"Failed to log audit: {e}")
 
     return response
-
 
 
 app.include_router(tables.router)
@@ -105,5 +113,5 @@ app.include_router(admin_approval.router)
 
 
 @app.get("/health")
-def health():
+def health_check():
     return {"status": "ok"}

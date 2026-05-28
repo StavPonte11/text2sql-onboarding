@@ -22,10 +22,7 @@ def seed():
     with Session(engine) as session:
         # Check if already seeded
         if session.exec(select(Table)).first():
-            print("Database already seeded.")
             return
-
-        print("Seeding database...")
 
         # 0. Security Users (Admins)
         admin1 = SecurityUser(
@@ -84,15 +81,69 @@ def seed():
                     "Ideal for single-table queries."
                 ),
                 "columns": [
-                    {"name": "order_id",       "description": "Unique order identifier",        "dataType": "VARCHAR", "is_geo": False, "is_time": False},
-                    {"name": "customer_name",  "description": "Full name of the customer",       "dataType": "VARCHAR", "is_geo": False, "is_time": False},
-                    {"name": "customer_email", "description": "Customer email address",           "dataType": "VARCHAR", "is_geo": False, "is_time": False},
-                    {"name": "product_name",   "description": "Name of the product ordered",     "dataType": "VARCHAR", "is_geo": False, "is_time": False},
-                    {"name": "quantity",       "description": "Number of units ordered",          "dataType": "INT",     "is_geo": False, "is_time": False},
-                    {"name": "unit_price",     "description": "Price per unit (USD)",             "dataType": "DOUBLE",  "is_geo": False, "is_time": False},
-                    {"name": "total_amount",   "description": "Total order value (USD)",          "dataType": "DOUBLE",  "is_geo": False, "is_time": False},
-                    {"name": "status",         "description": "Order status",                     "dataType": "VARCHAR", "is_geo": False, "is_time": False},
-                    {"name": "order_date",     "description": "Date the order was placed",        "dataType": "DATE",    "is_geo": False, "is_time": True},
+                    {
+                        "name": "order_id",
+                        "description": "Unique order identifier",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "customer_name",
+                        "description": "Full name of the customer",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "customer_email",
+                        "description": "Customer email address",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "product_name",
+                        "description": "Name of the product ordered",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "quantity",
+                        "description": "Number of units ordered",
+                        "dataType": "INT",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "unit_price",
+                        "description": "Price per unit (USD)",
+                        "dataType": "DOUBLE",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "total_amount",
+                        "description": "Total order value (USD)",
+                        "dataType": "DOUBLE",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "status",
+                        "description": "Order status",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "order_date",
+                        "description": "Date the order was placed",
+                        "dataType": "DATE",
+                        "is_geo": False,
+                        "is_time": True,
+                    },
                 ],
             },
         )
@@ -102,13 +153,55 @@ def seed():
             data={
                 "table_description": "Customer master table in the complex_retail schema.",
                 "columns": [
-                    {"name": "customer_id", "description": "Unique customer ID",           "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "first_name",  "description": "Customer first name",           "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "last_name",   "description": "Customer last name",            "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "email",       "description": "Customer email",                "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "country",     "description": "Country",                       "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "city",        "description": "City",                          "dataType": "VARCHAR",   "is_geo": False, "is_time": False},
-                    {"name": "created_at",  "description": "Account creation timestamp",   "dataType": "TIMESTAMP", "is_geo": False, "is_time": True},
+                    {
+                        "name": "customer_id",
+                        "description": "Unique customer ID",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "first_name",
+                        "description": "Customer first name",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "last_name",
+                        "description": "Customer last name",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "email",
+                        "description": "Customer email",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "country",
+                        "description": "Country",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "city",
+                        "description": "City",
+                        "dataType": "VARCHAR",
+                        "is_geo": False,
+                        "is_time": False,
+                    },
+                    {
+                        "name": "created_at",
+                        "description": "Account creation timestamp",
+                        "dataType": "TIMESTAMP",
+                        "is_geo": False,
+                        "is_time": True,
+                    },
                 ],
             },
         )
@@ -190,7 +283,6 @@ def seed():
         session.add_all([res1, res2, res3])
 
         session.commit()
-        print("Database seeded successfully.")
 
 
 if __name__ == "__main__":

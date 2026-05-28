@@ -20,19 +20,19 @@ from __future__ import annotations
 import logging
 import random
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any
 
 from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session
 
 from app.models.models import EvalResult, GoldenQuestion
-from app.services.langfuse_client import Evaluation
-from app.services.langfuse_client import langfuse_client as _lf_client
+from app.services.langfuse_client import Evaluation, langfuse_client as _lf_client
 
 logger = logging.getLogger(__name__)
 
 
 # ─── Abstract base — keep for merge compatibility with main app ────────────────
+
 
 class BaseLangfuseEvaluator(ABC):
     """
@@ -46,12 +46,12 @@ class BaseLangfuseEvaluator(ABC):
 
     @abstractmethod
     @observe(name="eval-question")
-    def task(self, item) -> Dict[str, Any]:
+    def task(self, item) -> dict[str, Any]:
         """Evaluate a single Langfuse dataset item. Return dict with 'response' key."""
         ...
 
     @abstractmethod
-    def get_all_evaluations(self) -> List:
+    def get_all_evaluations(self) -> list:
         """Return the list of all evaluator callables: (item, result) -> Evaluation."""
         ...
 
@@ -66,11 +66,15 @@ class BaseLangfuseEvaluator(ABC):
                 evaluators=self.get_all_evaluations(),
             )
         except Exception as e:
-            logger.error(f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}", exc_info=True)
+            logger.error(
+                f"[Evaluator] run_single_dataset failed for '{dataset_name}': {e}",
+                exc_info=True,
+            )
             return None
 
 
 # ─── Concrete implementation ────────────────────────────────────────────────────
+
 
 class TextToSQLEvaluator(BaseLangfuseEvaluator):
     """
@@ -86,7 +90,9 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         session: Session,
         table_id: str,
         run_id: str,
-        question_scores: List[float],  # list of contains_execution_accuracy scores (0.0–1.0)
+        question_scores: list[
+            float
+        ],  # list of contains_execution_accuracy scores (0.0-1.0)
     ):
         super().__init__(run_name=run_name)
         self.session = session
@@ -97,7 +103,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
     # ── Task ───────────────────────────────────────────────────────────────────
 
     @observe(name="eval-question")
-    def task(self, item) -> Dict[str, Any]:
+    def task(self, item) -> dict[str, Any]:
         """
         Evaluate a single question via the Text2SQL MCP tool.
 
@@ -121,7 +127,11 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         question_obj = self.session.get(GoldenQuestion, q_id)
         if not question_obj:
             logger.error(f"[Evaluator] Question {q_id} not found in DB")
-            return {"trace_id": trace_id, "observation_id": observation_id, "response": None}
+            return {
+                "trace_id": trace_id,
+                "observation_id": observation_id,
+                "response": None,
+            }
 
         # Link trace to Langfuse dataset run
         self.lf.link_trace_to_dataset_run(
@@ -133,7 +143,10 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         )
 
         langfuse_context.update_current_trace(
-            input={"query": question_obj.question, "databases": [question_obj.table_id]},
+            input={
+                "query": question_obj.question,
+                "databases": [question_obj.table_id],
+            },
         )
 
         # ── STUB: call TextToSQL MCP tool ──────────────────────────────────────
@@ -151,12 +164,12 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         result_db = EvalResult(
             run_id=self.run_id,
             question_id=question_obj.id,
-            score=0.0,      # updated below after evaluators run
+            score=0.0,  # updated below after evaluators run
             status="pending",
             error_type=None,
         )
         self.session.add(result_db)
-        self.session.flush()    # get the ID without full commit
+        self.session.flush()  # get the ID without full commit
 
         return {
             "trace_id": trace_id,
@@ -245,9 +258,11 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
                 self.session.add(result_db)
                 self.session.commit()
 
-        return Evaluation(value=value, comment="contains_execution_accuracy (stub — primary metric)")
+        return Evaluation(
+            value=value, comment="contains_execution_accuracy (stub — primary metric)"
+        )
 
-    def get_all_evaluations(self) -> List:
+    def get_all_evaluations(self) -> list:
         """Return the 3 standard evaluator functions in order."""
         return [
             self.exact_match,
@@ -257,7 +272,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
 
     # ── SQL execution via Trino MCP tool ───────────────────────────────────────
 
-    def _execute_sql_query(self, sql: str, schema_name: str) -> Dict[str, Any]:
+    def _execute_sql_query(self, sql: str, schema_name: str) -> dict[str, Any]:
         """
         Execute a SQL query via the Trino MCP tool.
 
