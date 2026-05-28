@@ -21,7 +21,7 @@ router = APIRouter(prefix="/tables", tags=["tables"])
 def get_fqn_from_source_id(oasis_source_id: str, default_fqn: str = None) -> str:
     if settings.TRINO_SERVICE_URL:
         try:
-            url = f"{settings.TRINO_SERVICE_URL.rstrip('/')}/source-db/get_trino_full_names_by_ids"
+            url = f"{settings.TRINO_SERVICE_URL.rstrip('/')}/stages/get_stage_trino_full_name_by_ids?stage_name=pipeline&get_valid_table=true"
             response = httpx.post(url, json=[oasis_source_id], timeout=10.0, verify=False)
             response.raise_for_status()
             data = response.json()
