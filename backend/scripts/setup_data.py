@@ -236,7 +236,7 @@ def create_trino_schemas(container: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 OM_BASE = "http://localhost:8585/api/v1"
-OM_SERVICE_NAME = "trino_local"
+OM_SERVICE_NAME = "local_trino"
 
 SIMPLE_TABLES = [
     {

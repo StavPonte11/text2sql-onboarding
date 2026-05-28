@@ -6,11 +6,234 @@ import { enrichmentApi, tablesApi } from "../../api/client";
 import type { EnrichmentData } from "../../types";
 import { SkeletonCard } from "../common/Skeleton";
 import { App } from "antd";
-import type { ColumnDef } from "../../types";
+import { Popover, Tooltip, Select } from "antd";
+import type { ColumnDef, Table, ForeignKeyMapping } from "../../types";
+import { foreignKeysApi } from "../../api/client";
+import { Link2, Unlink, ArrowRight, Database } from "lucide-react";
 
-const ColumnRow = ({ col, depth = 0 }: { col: ColumnDef, depth?: number }) => {
+const ForeignKeySelector = ({ 
+  tableId, 
+  sourceColumn, 
+  currentMapping, 
+  allTables,
+}: { 
+  tableId: string; 
+  sourceColumn: string; 
+  currentMapping?: ForeignKeyMapping; 
+  allTables: Table[];
+}) => {
+  const [targetTableId, setTargetTableId] = useState(currentMapping?.target_table_id || "");
+  const [targetColumn, setTargetColumn] = useState(currentMapping?.target_column || "");
+  const [isOpen, setIsOpen] = useState(false);
+  
+  const qc = useQueryClient();
+  const { message } = App.useApp();
+
+  const { data: targetEnrichment } = useQuery({
+    queryKey: ["enrichment", targetTableId],
+    queryFn: () => enrichmentApi.getLatest(targetTableId),
+    enabled: !!targetTableId,
+  });
+  
+  const createMutation = useMutation({
+    mutationFn: (payload: any) => foreignKeysApi.create(tableId, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["foreignKeys", tableId] });
+      message.success("Foreign key saved");
+    },
+    onError: () => message.error("Failed to save foreign key")
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => foreignKeysApi.delete(tableId, currentMapping!.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["foreignKeys", tableId] });
+      message.success("Foreign key removed");
+      setTargetTableId("");
+      setTargetColumn("");
+    },
+    onError: () => message.error("Failed to remove foreign key")
+  });
+
+  // Sync state if currentMapping changes from outside
+  useEffect(() => {
+    setTargetTableId(currentMapping?.target_table_id || "");
+    setTargetColumn(currentMapping?.target_column || "");
+  }, [currentMapping]);
+
+  const columns = targetEnrichment?.data?.columns || [];
+  const flattenCols = (cols: ColumnDef[]): ColumnDef[] => {
+    return cols.flatMap(c => [c, ...(c.children ? flattenCols(c.children) : [])]);
+  };
+  const allTargetColumns = flattenCols(columns);
+
+  const handleSave = (tTable: string, tCol: string) => {
+    if (tTable && tCol) {
+       createMutation.mutate({ source_column: sourceColumn, target_table_id: tTable, target_column: tCol });
+       setIsOpen(false);
+    }
+  };
+
+  const popoverContent = (
+    <div style={{ padding: "4px", display: "flex", flexDirection: "column", gap: 12, width: 220 }}>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+          Target Table
+        </div>
+        <Select 
+          size="middle" 
+          style={{ width: "100%" }} 
+          placeholder="Select table..."
+          value={targetTableId || undefined}
+          onChange={(val) => {
+             setTargetTableId(val);
+             setTargetColumn("");
+          }}
+          allowClear
+          options={allTables.map(t => ({ label: t.name, value: t.id }))}
+        />
+      </div>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+          Target Column
+        </div>
+        <Select 
+          size="middle" 
+          style={{ width: "100%" }} 
+          placeholder="Select column..."
+          value={targetColumn || undefined}
+          disabled={!targetTableId}
+          onChange={(val) => {
+             setTargetColumn(val);
+             handleSave(targetTableId, val);
+          }}
+          options={allTargetColumns.map(c => ({ label: c.name, value: c.name }))}
+        />
+      </div>
+    </div>
+  );
+
+  if (currentMapping) {
+    const targetTableName = allTables.find(t => t.id === currentMapping.target_table_id)?.name || currentMapping.target_table_id;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <Popover
+          content={popoverContent}
+          trigger="click"
+          open={isOpen}
+          onOpenChange={setIsOpen}
+          placement="bottomLeft"
+          overlayInnerStyle={{ borderRadius: 8, padding: 12, boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)" }}
+        >
+          <div 
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 6, 
+              padding: "4px 10px", 
+              background: "var(--primary-light, rgba(59, 130, 246, 0.1))", 
+              color: "var(--primary, #3b82f6)", 
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              border: "1px solid var(--primary-border, rgba(59, 130, 246, 0.2))"
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "var(--primary-light-hover, rgba(59, 130, 246, 0.15))"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "var(--primary-light, rgba(59, 130, 246, 0.1))"; }}
+          >
+            <Database size={12} />
+            <span>{targetTableName}</span>
+            <ArrowRight size={10} style={{ opacity: 0.6 }} />
+            <span>{currentMapping.target_column}</span>
+          </div>
+        </Popover>
+        <Tooltip title="Remove Relation">
+          <button
+            onClick={() => deleteMutation.mutate()}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              height: 24,
+              borderRadius: 4,
+              border: "none",
+              background: "transparent",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              transition: "all 0.2s ease"
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = "var(--danger, #ef4444)"; e.currentTarget.style.background = "var(--danger-light, rgba(239, 68, 68, 0.1))"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+          >
+            <Unlink size={13} />
+          </button>
+        </Tooltip>
+      </div>
+    );
+  }
+
+  return (
+    <Popover
+      content={popoverContent}
+      trigger="click"
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      placement="bottomLeft"
+      overlayInnerStyle={{ borderRadius: 8, padding: 12, boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)" }}
+    >
+      <button 
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          background: "transparent",
+          border: "1px dashed var(--border)",
+          borderRadius: 6,
+          color: "var(--text-muted)",
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: "pointer",
+          transition: "all 0.2s ease",
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.borderColor = "var(--primary, #3b82f6)";
+          e.currentTarget.style.color = "var(--primary, #3b82f6)";
+          e.currentTarget.style.background = "var(--primary-light, rgba(59, 130, 246, 0.05))";
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.borderColor = "var(--border)";
+          e.currentTarget.style.color = "var(--text-muted)";
+          e.currentTarget.style.background = "transparent";
+        }}
+      >
+        <Link2 size={12} />
+        Add Relation
+      </button>
+    </Popover>
+  );
+};
+
+const ColumnRow = ({ 
+  col, 
+  depth = 0,
+  tableId,
+  foreignKeys,
+  allTables
+}: { 
+  col: ColumnDef; 
+  depth?: number;
+  tableId: string;
+  foreignKeys: ForeignKeyMapping[];
+  allTables: Table[];
+}) => {
   const [expanded, setExpanded] = useState(false);
   const hasChildren = col.children && col.children.length > 0;
+  
+  const currentMapping = foreignKeys.find(fk => fk.source_column === col.name);
 
   return (
     <>
@@ -49,6 +272,14 @@ const ColumnRow = ({ col, depth = 0 }: { col: ColumnDef, depth?: number }) => {
           {col.description || "No description"}
         </td>
         <td>
+          <ForeignKeySelector 
+            tableId={tableId}
+            sourceColumn={col.name}
+            currentMapping={currentMapping}
+            allTables={allTables}
+          />
+        </td>
+        <td>
           <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
             {col.is_geo && (
               <span className="badge badge--neutral" style={{
@@ -73,7 +304,14 @@ const ColumnRow = ({ col, depth = 0 }: { col: ColumnDef, depth?: number }) => {
         </td>
       </tr>
       {expanded && hasChildren && col.children!.map((child, idx) => (
-        <ColumnRow key={`${child.name}-${idx}`} col={child} depth={depth + 1} />
+        <ColumnRow 
+          key={`${child.name}-${idx}`} 
+          col={child} 
+          depth={depth + 1} 
+          tableId={tableId}
+          foreignKeys={foreignKeys}
+          allTables={allTables}
+        />
       ))}
     </>
   );
@@ -90,6 +328,16 @@ export function EnrichmentEditor({ tableId }: Props) {
     queryKey: ["enrichment", tableId],
     queryFn: () => enrichmentApi.getLatest(tableId),
     retry: false,
+  });
+
+  const { data: allTablesData } = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tablesApi.list(),
+  });
+  
+  const { data: foreignKeysData } = useQuery({
+    queryKey: ["foreignKeys", tableId],
+    queryFn: () => foreignKeysApi.list(tableId),
   });
 
   const syncMutation = useMutation({
@@ -109,6 +357,9 @@ export function EnrichmentEditor({ tableId }: Props) {
   useEffect(() => {
     if (data?.data) setSchema(data.data);
   }, [data]);
+
+  const allTables = allTablesData || [];
+  const foreignKeys = foreignKeysData || [];
 
   if (isLoading) return <SkeletonCard />;
 
@@ -192,12 +443,19 @@ export function EnrichmentEditor({ tableId }: Props) {
                 <tr>
                   <th style={{ width: 180 }}>Column</th>
                   <th>Description</th>
+                  <th style={{ width: 300 }}>Foreign Key</th>
                   <th style={{ width: 100, textAlign: "center" }}>Tags</th>
                 </tr>
               </thead>
               <tbody>
                 {schema.columns.map((col, i) => (
-                  <ColumnRow key={i} col={col} />
+                  <ColumnRow 
+                    key={i} 
+                    col={col} 
+                    tableId={tableId}
+                    foreignKeys={foreignKeys}
+                    allTables={allTables}
+                  />
                 ))}
               </tbody>
             </table>

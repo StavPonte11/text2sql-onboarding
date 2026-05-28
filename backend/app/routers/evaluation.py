@@ -207,11 +207,11 @@ def _run_production_dataset_eval(session: Session, run_name_prefix: str, promoti
 
         if all_questions_payload:
             logger.info(
-                f"[Promotion/Phase-A] Syncing {len(all_questions_payload)} questions "
-                f"to '{PRODUCTION_DATASET_NAME}' (idempotent — new questions only)"
+                f"[Promotion/Phase-A] Full sync of {len(all_questions_payload)} questions "
+                f"to '{PRODUCTION_DATASET_NAME}' (adds new, removes stale, updates changed)"
             )
             try:
-                langfuse_client.ensure_dataset_synced(PRODUCTION_DATASET_NAME, all_questions_payload)
+                langfuse_client.sync_dataset(PRODUCTION_DATASET_NAME, all_questions_payload)
             except Exception as e:
                 logger.warning(f"[Promotion/Phase-A] Dataset sync failed: {e}")
         else:

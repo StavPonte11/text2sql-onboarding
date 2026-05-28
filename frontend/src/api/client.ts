@@ -8,6 +8,7 @@ import type {
   TableProfile, ColumnProfile, CrossTableProfile,
   QueryFeedback, QueryFeedbackCreate,
   TableHealth,
+  ForeignKeyMapping, ForeignKeyMappingCreate,
 } from "../types";
 
 const api = axios.create({
@@ -129,6 +130,16 @@ export const healthApi = {
     api.post<TableHealth>(`/tables/${tableId}/health/recompute`).then((r) => r.data),
   getAll: () =>
     api.get<TableHealth[]>("/health/all").then((r) => r.data),
+};
+
+// ── Foreign Keys ──────────────────────────────────────────────────────────────
+export const foreignKeysApi = {
+  list: (tableId: string) =>
+    api.get<ForeignKeyMapping[]>(`/tables/${tableId}/foreign-keys`).then((r) => r.data),
+  create: (tableId: string, payload: ForeignKeyMappingCreate) =>
+    api.post<ForeignKeyMapping>(`/tables/${tableId}/foreign-keys`, payload).then((r) => r.data),
+  delete: (tableId: string, fkId: string) =>
+    api.delete(`/tables/${tableId}/foreign-keys/${fkId}`),
 };
 
 export default api;

@@ -602,3 +602,35 @@ class SecurityUserRead(SQLModel):
     is_admin: bool
     created_at: datetime
     updated_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOM FOREIGN KEY MODELS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ForeignKeyMapping(SQLModel, table=True):
+    __tablename__ = "foreign_key_mappings"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")], index=True)
+    source_column: str
+    target_table_id: str = Field(sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")])
+    target_column: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ForeignKeyMappingCreate(SQLModel):
+    source_column: str
+    target_table_id: str
+    target_column: str
+
+
+class ForeignKeyMappingRead(SQLModel):
+    id: str
+    table_id: str
+    source_column: str
+    target_table_id: str
+    target_column: str
+    created_at: datetime
+    updated_at: datetime

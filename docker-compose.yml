@@ -11,6 +11,11 @@ services:
     volumes:
     - pg_data:/var/lib/postgresql/data
     - ./backend/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d text2sql"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   minio:
     image: minio/minio:RELEASE.2023-11-20T22-40-07Z
     ports:
@@ -29,7 +34,16 @@ services:
     volumes:
     - ./infra/trino/etc/catalog:/etc/trino/catalog
     depends_on:
-    - minio
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
   mysql:
     container_name: openmetadata_mysql
     image: docker.getcollate.io/openmetadata/db:1.6.1
@@ -384,7 +398,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: sh -c "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - ./backend/.env
     ports:
@@ -396,7 +410,7 @@ services:
       - TRINO_USER=trino
       - TRINO_PASSWORD=
       - TRINO_CATALOG=minio
-      - TRINO_SCHEMA=ecommerce
+      - TRINO_SCHEMA=simple_retail
       - TRINO_HTTP_SCHEME=http
       - TRINO_REQUEST_TIMEOUT=30.0
       - TRINO_ENABLED=true
@@ -409,9 +423,9 @@ services:
       - LANGFUSE_HOST=https://cloud.langfuse.com
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       trino:
-        condition: service_started
+        condition: service_healthy
       openmetadata-server:
         condition: service_healthy
     healthcheck:

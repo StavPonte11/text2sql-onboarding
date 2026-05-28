@@ -15,6 +15,9 @@ from app.models.models import (
     TableRead,
     TableStatus,
     UserScope,
+    ForeignKeyMapping,
+    ForeignKeyMappingCreate,
+    ForeignKeyMappingRead,
 )
 
 logger = logging.getLogger(__name__)
@@ -273,3 +276,73 @@ def update_table_status(
         langfuse_client.remove_table_questions_from_dataset(PRODUCTION_DATASET_NAME, table.id)
 
     return table
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FOREIGN KEY MAPPINGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{table_id}/foreign-keys", response_model=List[ForeignKeyMappingRead])
+def get_foreign_keys(table_id: str, session: Session = Depends(get_session)):
+    """
+    Get all custom foreign key mappings for a table.
+    """
+    table = session.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+    
+    return session.exec(select(ForeignKeyMapping).where(ForeignKeyMapping.table_id == table_id)).all()
+
+
+@router.post("/{table_id}/foreign-keys", response_model=ForeignKeyMappingRead)
+def create_foreign_key(table_id: str, payload: ForeignKeyMappingCreate, session: Session = Depends(get_session)):
+    """
+    Create or update a foreign key mapping for a specific column in the table.
+    """
+    table = session.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Source table not found")
+        
+    target_table = session.get(Table, payload.target_table_id)
+    if not target_table:
+        raise HTTPException(status_code=404, detail="Target table not found")
+        
+    # Default to 1-to-1 mapping for a given source column (Upsert behavior)
+    existing = session.exec(
+        select(ForeignKeyMapping)
+        .where(ForeignKeyMapping.table_id == table_id)
+        .where(ForeignKeyMapping.source_column == payload.source_column)
+    ).first()
+    
+    if existing:
+        existing.target_table_id = payload.target_table_id
+        existing.target_column = payload.target_column
+        existing.updated_at = datetime.utcnow()
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+    mapping = ForeignKeyMapping(
+        table_id=table_id,
+        source_column=payload.source_column,
+        target_table_id=payload.target_table_id,
+        target_column=payload.target_column
+    )
+    session.add(mapping)
+    session.commit()
+    session.refresh(mapping)
+    return mapping
+
+
+@router.delete("/{table_id}/foreign-keys/{fk_id}", status_code=204)
+def delete_foreign_key(table_id: str, fk_id: str, session: Session = Depends(get_session)):
+    """
+    Delete a specific foreign key mapping.
+    """
+    mapping = session.get(ForeignKeyMapping, fk_id)
+    if not mapping or mapping.table_id != table_id:
+        raise HTTPException(status_code=404, detail="Foreign key mapping not found")
+        
+    session.delete(mapping)
+    session.commit()

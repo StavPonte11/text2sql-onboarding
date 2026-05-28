@@ -72,6 +72,26 @@ export interface PublishError {
   message: string;
 }
 
+
+
+export interface ForeignKeyMappingRead {
+  id: string;
+  table_id: string;
+  source_column: string;
+  target_table_id: string;
+  target_column: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ForeignKeyMappingCreate {
+  source_column: string;
+  target_table_id: string;
+  target_column: string;
+}
+
+export type ForeignKeyMapping = ForeignKeyMappingRead;
+
 // Profiling-specific nested schemas not fully typed by OpenAPI ref (json columns)
 export interface RowFieldStats {
   type?: string;

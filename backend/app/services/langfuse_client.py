@@ -248,41 +248,139 @@ class LangfuseDatasetService:
         except Exception:
             return False
 
-    def ensure_dataset_synced(self, dataset_name: str, questions: list) -> object:
+    def sync_dataset(self, dataset_name: str, questions: list) -> object:
         """
-        Build a Langfuse dataset containing all given questions.
-        Creates the dataset if it does not exist.
-        Uses the question_id as the item ID so re-syncing the same question
-        is an upsert (no duplicates).
-        Returns the dataset object.
+        Perform a true bidirectional sync of ``dataset_name`` with ``questions``.
+
+        The dataset will ALWAYS exactly reflect the provided question list after
+        this call returns:
+
+        * New questions   → added as new dataset items.
+        * Changed items   → deleted and re-created (Langfuse has no update API).
+        * Stale items     → deleted (they no longer belong to any production table).
+
+        Uses ``metadata.question_id`` as the stable identity key.
+
+        Args:
+            dataset_name: Target Langfuse dataset name (created if absent).
+            questions:    Desired list of question dicts with keys:
+                              question_id, question_text, expected_sql,
+                              table_id, schema_name, split, difficulty,
+                              question_type.
+
+        Returns:
+            The Langfuse dataset object, or None if Langfuse is disabled.
         """
         if not self.enabled:
+            self.logger.info(
+                f"[LangfuseDatasetService] Langfuse disabled — skipping sync of '{dataset_name}'"
+            )
             return None
+
+        # Ensure the dataset exists (no-op if it already does).
         try:
             self._tracer.client.create_dataset(name=dataset_name)
         except Exception as exc:
             self.logger.warning(f"[LangfuseDatasetService] create_dataset warning: {exc}")
 
+        # ── Fetch current state from Langfuse ──────────────────────────────────
+        pub = self._tracer.public_key
+        sec = self._tracer.private_key
+        host = self._tracer.host
+
+        existing_items: list[dict] = []  # raw Langfuse item dicts
+        try:
+            page = 1
+            while True:
+                res = requests.get(
+                    f"{host}/api/public/dataset-items"
+                    f"?datasetName={dataset_name}&limit=100&page={page}",
+                    auth=(pub, sec),
+                )
+                if res.status_code != 200:
+                    self.logger.warning(
+                        f"[LangfuseDatasetService] Could not fetch existing items "
+                        f"(status {res.status_code}) — aborting sync."
+                    )
+                    return None
+                batch = res.json().get("data", [])
+                existing_items.extend(batch)
+                # Langfuse paginates; stop when a partial page is returned.
+                if len(batch) < 100:
+                    break
+                page += 1
+        except Exception as exc:
+            self.logger.error(
+                f"[LangfuseDatasetService] Error fetching dataset items: {exc}"
+            )
+            return None
+
+        # Build lookup: question_id → {langfuse_item_id, question_text, expected_sql}
+        existing_by_qid: dict[str, dict] = {}
+        for item in existing_items:
+            qid = (item.get("metadata") or {}).get("question_id")
+            if qid:
+                existing_by_qid[qid] = {
+                    "langfuse_id": item["id"],
+                    "question_text": (item.get("input") or {}).get("query", ""),
+                    "expected_sql": (item.get("expectedOutput") or {}).get("response", ""),
+                }
+
+        # Build lookup for desired state: question_id → question dict
+        desired_by_qid: dict[str, dict] = {q["question_id"]: q for q in questions}
+
+        desired_qids  = set(desired_by_qid.keys())
+        existing_qids = set(existing_by_qid.keys())
+
+        to_add    = desired_qids - existing_qids          # new questions
+        to_remove = existing_qids - desired_qids          # stale questions
+        to_check  = desired_qids & existing_qids          # may need update
+
+        # Identify changed questions (text or SQL differs)
+        to_update: set[str] = set()
+        for qid in to_check:
+            desired = desired_by_qid[qid]
+            existing = existing_by_qid[qid]
+            if (
+                desired["question_text"] != existing["question_text"]
+                or desired["expected_sql"] != existing["expected_sql"]
+            ):
+                to_update.add(qid)
+
         self.logger.info(
-            f"[LangfuseDatasetService] Syncing {len(questions)} questions to '{dataset_name}'"
+            f"[LangfuseDatasetService] Syncing '{dataset_name}': "
+            f"+{len(to_add)} new, ~{len(to_update)} updated, "
+            f"-{len(to_remove)} stale  (total desired={len(desired_qids)})"
         )
 
-        existing_qids = set()
-        if self._tracer.public_key:
-            res = requests.get(
-                f"{self._tracer.host}/api/public/dataset-items?datasetName={dataset_name}",
-                auth=(self._tracer.public_key, self._tracer.private_key)
-            )
-            if res.status_code == 200:
-                data = res.json().get("data", [])
-                for item in data:
-                    qid = item.get("metadata", {}).get("question_id")
-                    if qid:
-                        existing_qids.add(qid)
+        # ── Delete stale + changed items ───────────────────────────────────────
+        items_to_delete = to_remove | to_update
+        for qid in items_to_delete:
+            lf_id = existing_by_qid[qid]["langfuse_id"]
+            try:
+                del_res = requests.delete(
+                    f"{host}/api/public/dataset-items/{lf_id}",
+                    auth=(pub, sec),
+                )
+                if del_res.status_code not in (200, 204):
+                    self.logger.error(
+                        f"[LangfuseDatasetService] Failed to delete item {lf_id} "
+                        f"(qid={qid}): {del_res.status_code} {del_res.text}"
+                    )
+                else:
+                    action = "stale" if qid in to_remove else "changed"
+                    self.logger.debug(
+                        f"[LangfuseDatasetService] Deleted {action} item {lf_id} (qid={qid})"
+                    )
+            except Exception as exc:
+                self.logger.error(
+                    f"[LangfuseDatasetService] Error deleting item {lf_id}: {exc}"
+                )
 
-        for q in questions:
-            if q["question_id"] in existing_qids:
-                continue
+        # ── Create new + re-create updated items ───────────────────────────────
+        items_to_create = to_add | to_update
+        for qid in items_to_create:
+            q = desired_by_qid[qid]
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
@@ -301,11 +399,16 @@ class LangfuseDatasetService:
                 )
             except Exception as exc:
                 self.logger.error(
-                    f"[LangfuseDatasetService] Failed to upsert question "
-                    f"{q.get('question_id')}: {exc}"
+                    f"[LangfuseDatasetService] Failed to create item for qid={qid}: {exc}"
                 )
 
         self.flush()
+
+        self.logger.info(
+            f"[LangfuseDatasetService] Sync complete for '{dataset_name}': "
+            f"{len(desired_qids)} items now in dataset."
+        )
+
         try:
             return self._tracer.client.get_dataset(dataset_name)
         except Exception as exc:
@@ -313,6 +416,12 @@ class LangfuseDatasetService:
                 f"[LangfuseDatasetService] Could not retrieve dataset after sync: {exc}"
             )
             return None
+
+    # Keep ensure_dataset_synced as a thin alias so any callers that were not
+    # yet updated continue to work.  New code should call sync_dataset instead.
+    def ensure_dataset_synced(self, dataset_name: str, questions: list) -> object:
+        """Deprecated alias for sync_dataset. Use sync_dataset for new code."""
+        return self.sync_dataset(dataset_name, questions)
 
     def clear_dataset(self, dataset_name: str) -> None:
         """
@@ -395,73 +504,20 @@ class LangfuseDatasetService:
 
     def append_questions_to_dataset(self, dataset_name: str, questions: list) -> bool:
         """
-        Append new questions to an existing dataset without rebuilding it.
-        Uses question_id as the item ID so this is safe to call multiple times
-        (idempotent — already-present questions will be upserted in place).
+        Deprecated — kept for backward compatibility.
 
-        Args:
-            dataset_name: Target Langfuse dataset name.
-            questions:    List of question dicts (same shape as ensure_dataset_synced).
+        New callers should use sync_dataset() which performs a true bidirectional
+        sync (adds new items, removes stale ones, updates changed items).
 
-        Returns:
-            True if all items were written successfully, False if any failed.
+        This wrapper delegates to sync_dataset and always returns True unless
+        Langfuse is disabled.
         """
-        if not self.enabled:
-            self.logger.info(f"[LangfuseDatasetService] Langfuse disabled — skipping append to '{dataset_name}'")
-            return False
-
-        # Ensure the dataset exists (no-op if it already does)
-        try:
-            self._tracer.client.create_dataset(name=dataset_name)
-        except Exception as exc:
-            self.logger.warning(f"[LangfuseDatasetService] create_dataset warning (append): {exc}")
-
-        self.logger.info(
-            f"[LangfuseDatasetService] Appending {len(questions)} questions to '{dataset_name}'"
+        self.logger.warning(
+            "[LangfuseDatasetService] append_questions_to_dataset is deprecated; "
+            "use sync_dataset instead."
         )
-
-        existing_qids = set()
-        if self._tracer.public_key:
-            res = requests.get(
-                f"{self._tracer.host}/api/public/dataset-items?datasetName={dataset_name}",
-                auth=(self._tracer.public_key, self._tracer.private_key)
-            )
-            if res.status_code == 200:
-                data = res.json().get("data", [])
-                for item in data:
-                    qid = item.get("metadata", {}).get("question_id")
-                    if qid:
-                        existing_qids.add(qid)
-
-        all_ok = True
-        for q in questions:
-            if q["question_id"] in existing_qids:
-                continue
-            try:
-                self._tracer.client.create_dataset_item(
-                    dataset_name=dataset_name,
-                    input={
-                        "query": q["question_text"],
-                        "databases": [q.get("schema_name", q["table_id"])],
-                    },
-                    expected_output={"response": q["expected_sql"]},
-                    metadata={
-                        "split": q.get("split", ""),
-                        "difficulty": str(q.get("difficulty", "")).lower().strip(),
-                        "question_id": q["question_id"],
-                        "question_type": str(q.get("question_type", "")).lower().strip(),
-                        "table_id": q.get("table_id", ""),
-                    },
-                )
-            except Exception as exc:
-                self.logger.error(
-                    f"[LangfuseDatasetService] Failed to append question "
-                    f"{q.get('question_id')} to '{dataset_name}': {exc}"
-                )
-                all_ok = False
-
-        self.flush()
-        return all_ok
+        result = self.sync_dataset(dataset_name, questions)
+        return result is not None
 
     def link_trace_to_dataset_run(self, **kwargs) -> None:
         if not self.enabled:
