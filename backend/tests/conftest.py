@@ -16,6 +16,7 @@ parsed = urllib.parse.urlparse(settings.DATABASE_URL)
 # Construct the text2sql_test PostgreSQL URL
 test_db_url = f"{parsed.scheme}://{parsed.netloc}/text2sql_test"
 
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Programmatically creates the postgres test database before testing, and drops it afterwards."""
@@ -25,7 +26,7 @@ def setup_test_db():
         port=parsed.port or 5432,
         user=parsed.username or "postgres",
         password=parsed.password or "postgres",
-        database="postgres"
+        database="postgres",
     )
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     cursor = conn.cursor()
@@ -49,7 +50,7 @@ def setup_test_db():
         port=parsed.port or 5432,
         user=parsed.username or "postgres",
         password=parsed.password or "postgres",
-        database="postgres"
+        database="postgres",
     )
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     cursor = conn.cursor()
@@ -75,6 +76,7 @@ def test_engine(setup_test_db):
 
     # Create required PostgreSQL schemas
     from sqlalchemy import text
+
     with engine.connect() as conn:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS security"))
         conn.commit()
@@ -104,6 +106,7 @@ def db_session(test_engine):
 @pytest.fixture
 def client(test_engine):
     """FastAPI TestClient with isolated session dependency overrides."""
+
     def override_get_session():
         with Session(test_engine) as session:
             yield session

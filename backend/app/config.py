@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     )
     TRINO_SERVICE_URL: str | None = None
 
+    PROFILER_MAX_CONCURRENT_QUERIES: int = 10
+
     # JWT Config
     JWT_SECRET: str = "dev-secret-change-in-production"
     JWT_ALGORITHM: str = "HS256"
