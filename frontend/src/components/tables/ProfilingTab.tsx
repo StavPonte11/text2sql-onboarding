@@ -310,7 +310,7 @@ function MiniMetric({ col, totalRows }: { col: ColumnProfile, totalRows?: number
 
   // Numeric: mini histogram bins
   const NUMERIC_DTYPES = ['integer', 'bigint', 'double', 'real', 'float', 'decimal', 'numeric', 'smallint', 'tinyint'];
-  if (col.semantic_type === 'continuous' || NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '')) {
+  if (col.semantic_type === 'continuous' && NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '')) {
     const bins = col.stats_json?.histogram 
       ? col.stats_json.histogram.map(b => ({
           label: b.label,
@@ -440,7 +440,7 @@ function ColumnReportRow({ col, isNested = false, totalRows }: { col: ColumnProf
             <div style={{ marginTop: 24 }}>
               {(() => {
                 const NUMERIC_DTYPES = ['integer', 'bigint', 'double', 'real', 'float', 'decimal', 'numeric', 'smallint', 'tinyint'];
-                const isNumeric = col.semantic_type === 'continuous' || NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '');
+                const isNumeric = col.semantic_type === 'continuous' && NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '');
                 const isTime = col.semantic_type === 'time' || col.is_time;
                 const isCat = col.semantic_type === 'categorical' || (col.top_values && col.top_values.length > 0 && !isNumeric && !isTime);
 
