@@ -1,6 +1,5 @@
+import { API_BASE_URL } from '../config/constants';
 import { useAdminStore } from '../store/adminStore';
-
-const API_BASE = 'http://localhost:8000';
 
 const fetchWithAdminEmail = async (url: string, options: RequestInit = {}) => {
   const user = useAdminStore.getState().user;
@@ -12,7 +11,7 @@ const fetchWithAdminEmail = async (url: string, options: RequestInit = {}) => {
   const headers = new Headers(options.headers || {});
   headers.set('X-Admin-Email', user.email);
 
-  const response = await fetch(`${API_BASE}${url}`, {
+  const response = await fetch(`${API_BASE_URL}${url}`, {
     ...options,
     headers,
   });
@@ -33,7 +32,7 @@ const fetchWithAdminEmail = async (url: string, options: RequestInit = {}) => {
 
 export const adminApi = {
   login: async (email: string) => {
-    const response = await fetch(`${API_BASE}/admin/login`, {
+    const response = await fetch(`${API_BASE_URL}/admin/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),

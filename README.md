@@ -2,14 +2,28 @@
 
 A comprehensive, self-service governance platform for managing, enriching, and testing database tables utilized by natural language processing and TextToSQL agents.
 
+## ⚙️ Prerequisites
+
+Before starting, ensure you have `uv` and `pnpm` installed:
+
+- **uv** (Python Package Manager):
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  # If 'uv' is not found immediately, restart your terminal or run:
+  source $HOME/.local/bin/env
+  ```
+- **pnpm** (Node Package Manager):
+  ```bash
+  npm install -g pnpm
+  ```
+
 ## 🚀 Quick Start
 
 ### Backend (Python/FastAPI)
 ```bash
 cd backend
-python -m venv .venv
+uv sync
 source .venv/bin/activate
-pip install -r requirements.txt
 python -m app.seed
 uvicorn app.main:app --port 8000 --reload
 ```
@@ -17,11 +31,14 @@ uvicorn app.main:app --port 8000 --reload
 ### Frontend (React/Vite)
 ```bash
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 ## 📖 Documentation Index
+
+### Developer & Code Quality Standards
+- [Linting, Formatting & Code Quality Guide](./docs/LINTING.md)
 
 ### Platform & Architecture
 - [Project Description & Mission](./docs/project_description.md)

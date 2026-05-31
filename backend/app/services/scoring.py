@@ -9,35 +9,36 @@ Reference: docs/prompts/scoring_mechanism.md
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional
 
+from dataclasses import dataclass, field
+
+from langfuse.decorators import observe
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-PASS_THRESHOLD    = 0.85
+PASS_THRESHOLD = 0.85
 PARTIAL_THRESHOLD = 0.60
-BLOCK_THRESHOLD   = 0.50     # dataset-level
-REGRESSION_BLOCK  = 0.10
-REGRESSION_WARN   = 0.05
-MAX_ITERATIONS    = 4
+BLOCK_THRESHOLD = 0.50  # dataset-level
+REGRESSION_BLOCK = 0.10
+REGRESSION_WARN = 0.05
+MAX_ITERATIONS = 4
 
 QUESTION_WEIGHTS = {
-    "simple":     1.0,
-    "medium":     1.5,
-    "complex":    2.0,
-    "join":       2.5,
-    "geo":        2.0,
-    "aggregate":  1.5,
+    "simple": 1.0,
+    "medium": 1.5,
+    "complex": 2.0,
+    "join": 2.5,
+    "geo": 2.0,
+    "aggregate": 1.5,
     "time_series": 1.5,
 }
 
 FAILURE_SCORE_CAPS = {
-    "wrong_table":      0.20,
-    "wrong_join":       0.40,
-    "wrong_filter":     0.60,
-    "hallucination":    0.30,
-    "execution_error":  0.00,
+    "wrong_table": 0.20,
+    "wrong_join": 0.40,
+    "wrong_filter": 0.60,
+    "hallucination": 0.30,
+    "execution_error": 0.00,
     "empty_result_bug": 0.50,
 }
 
@@ -54,32 +55,36 @@ FAILURE_TYPES = [
 
 # ─── Dimension inputs ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class JudgeOutput:
     """Structured output from the LLM-as-Judge."""
-    table_selection_correctness: float = 0.0    # 0–1
-    sql_semantic_equivalence: float    = 0.0    # 0–1
-    result_correctness: float          = 0.0    # 0–1
-    hallucination_detected: bool       = False
-    failure_type: Optional[str]        = None
-    reasoning: dict                    = field(default_factory=dict)
-    confidence_in_judgment: float      = 0.8
+
+    table_selection_correctness: float = 0.0  # 0-1
+    sql_semantic_equivalence: float = 0.0  # 0-1
+    result_correctness: float = 0.0  # 0-1
+    hallucination_detected: bool = False
+    failure_type: str | None = None
+    reasoning: dict = field(default_factory=dict)
+    confidence_in_judgment: float = 0.8
 
 
 @dataclass
 class ExecutionResult:
     """Raw output from Trino execution."""
+
     success: bool
     rows: list = field(default_factory=list)
     columns: list[str] = field(default_factory=list)
     row_count: int = 0
     execution_time_ms: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 @dataclass
 class ExpectedShape:
     """Expected result shape defined in the dataset question."""
+
     row_count_min: int = 0
     row_count_max: int = 999_999
     expected_columns: list[str] = field(default_factory=list)
@@ -88,29 +93,30 @@ class ExpectedShape:
 @dataclass
 class ScoreBreakdown:
     # Hard gate
-    hard_gate_triggered: bool        = False
-    hard_gate_reason: Optional[str]  = None
+    hard_gate_triggered: bool = False
+    hard_gate_reason: str | None = None
 
     # Core dimensions
-    result_correctness: float        = 0.0
+    result_correctness: float = 0.0
     table_selection_correctness: float = 0.0
-    sql_semantic_equivalence: float  = 0.0
-    result_shape_accuracy: float     = 0.0
+    sql_semantic_equivalence: float = 0.0
+    result_shape_accuracy: float = 0.0
 
     # Penalties
-    hallucination_penalty: float     = 0.0
-    refinement_penalty: float        = 0.0
-    latency_penalty: float           = 0.0
+    hallucination_penalty: float = 0.0
+    refinement_penalty: float = 0.0
+    latency_penalty: float = 0.0
 
     # Result
-    base_score: float                = 0.0
-    total_penalties: float           = 0.0
-    final_score: float               = 0.0
-    question_status: str             = "fail"  # pass | partial | fail
-    failure_type: Optional[str]      = None
+    base_score: float = 0.0
+    total_penalties: float = 0.0
+    final_score: float = 0.0
+    question_status: str = "fail"  # pass | partial | fail
+    failure_type: str | None = None
 
 
 # ─── Layer 1: Hard Gates ───────────────────────────────────────────────────────
+
 
 def apply_hard_gates(
     execution: ExecutionResult,
@@ -118,7 +124,7 @@ def apply_hard_gates(
     expected_tables: list[str],
     generated_columns: list[str],
     schema_columns: list[str],
-) -> tuple[bool, Optional[str], float]:
+) -> tuple[bool, str | None, float]:
     """
     Returns: (gate_triggered, reason, capped_score)
     """
@@ -135,7 +141,11 @@ def apply_hard_gates(
     if expected_tables and tables_used:
         primary_expected = expected_tables[0] if expected_tables else None
         primary_used = tables_used[0] if tables_used else None
-        if primary_expected and primary_used and primary_expected.lower() != primary_used.lower():
+        if (
+            primary_expected
+            and primary_used
+            and primary_expected.lower() != primary_used.lower()
+        ):
             # Allow if it's a known alias or the table name is a substring
             if primary_expected.lower() not in primary_used.lower():
                 return True, "wrong_primary_table", 0.2
@@ -145,6 +155,7 @@ def apply_hard_gates(
 
 # ─── Layer 2: Core Dimension Scoring ──────────────────────────────────────────
 
+
 def score_result_shape(execution: ExecutionResult, expected: ExpectedShape) -> float:
     """
     Score: 1.0 if row count in range AND all expected columns present.
@@ -152,19 +163,27 @@ def score_result_shape(execution: ExecutionResult, expected: ExpectedShape) -> f
     if not execution.success:
         return 0.0
 
-    row_match = 1.0 if expected.row_count_min <= execution.row_count <= expected.row_count_max else 0.3
+    row_match = (
+        1.0
+        if expected.row_count_min <= execution.row_count <= expected.row_count_max
+        else 0.3
+    )
 
     if expected.expected_columns:
         returned = set(c.lower() for c in execution.columns)
         expected_set = set(c.lower() for c in expected.expected_columns)
-        col_overlap = len(returned & expected_set) / len(expected_set) if expected_set else 1.0
+        col_overlap = (
+            len(returned & expected_set) / len(expected_set) if expected_set else 1.0
+        )
     else:
         col_overlap = 1.0
 
     return round(0.5 * row_match + 0.5 * col_overlap, 3)
 
 
-def score_result_correctness_from_shape(execution: ExecutionResult, expected: ExpectedShape) -> float:
+def score_result_correctness_from_shape(
+    execution: ExecutionResult, expected: ExpectedShape
+) -> float:
     """
     Deterministic result correctness when exact result comparison is not possible.
     Uses shape + zero-result penalty as proxy.
@@ -181,14 +200,15 @@ def score_result_correctness_from_shape(execution: ExecutionResult, expected: Ex
 
 # ─── Layer 3: Penalties ────────────────────────────────────────────────────────
 
+
 def compute_penalties(
     hallucination_detected: bool,
     refiner_iterations: int,
     execution_time_ms: int,
 ) -> dict[str, float]:
     hallucination_penalty = 0.30 if hallucination_detected else 0.0
-    refinement_penalty    = 0.05 * max(0, refiner_iterations - 1)   # no penalty for 1 retry
-    latency_penalty       = 0.05 if execution_time_ms > 30_000 else 0.0
+    refinement_penalty = 0.05 * max(0, refiner_iterations - 1)  # no penalty for 1 retry
+    latency_penalty = 0.05 if execution_time_ms > 30_000 else 0.0
     return {
         "hallucination_penalty": hallucination_penalty,
         "refinement_penalty": min(refinement_penalty, 0.15),  # cap at 0.15
@@ -198,11 +218,12 @@ def compute_penalties(
 
 # ─── Failure Classification ────────────────────────────────────────────────────
 
+
 def classify_failure(
     execution: ExecutionResult,
     judge: JudgeOutput,
     expected: ExpectedShape,
-) -> Optional[str]:
+) -> str | None:
     if not execution.success:
         return "execution_error"
     if execution.row_count == 0 and expected.row_count_min > 0:
@@ -215,7 +236,10 @@ def classify_failure(
     # Infer from dimension scores
     if judge.table_selection_correctness < 0.3:
         return "wrong_table"
-    if judge.sql_semantic_equivalence < 0.4 and judge.table_selection_correctness >= 0.7:
+    if (
+        judge.sql_semantic_equivalence < 0.4
+        and judge.table_selection_correctness >= 0.7
+    ):
         return "wrong_filter"
     if judge.result_correctness < 0.6:
         return "partial_correct"
@@ -225,7 +249,6 @@ def classify_failure(
 
 # ─── Main Scoring Function ─────────────────────────────────────────────────────
 
-from langfuse.decorators import observe
 
 @observe()
 def compute_score(
@@ -255,21 +278,21 @@ def compute_score(
 
     # --- Layer 2: Core Dimensions ---
     result_correctness = score_result_correctness_from_shape(execution, expected_shape)
-    result_shape       = score_result_shape(execution, expected_shape)
+    result_shape = score_result_shape(execution, expected_shape)
 
     base_score = (
-        0.45 * result_correctness +
-        0.20 * judge.table_selection_correctness +
-        0.15 * judge.sql_semantic_equivalence +
-        0.10 * result_shape +
-        0.10 * judge.result_correctness          # was missing — weights now sum to 1.0
+        0.45 * result_correctness
+        + 0.20 * judge.table_selection_correctness
+        + 0.15 * judge.sql_semantic_equivalence
+        + 0.10 * result_shape
+        + 0.10 * judge.result_correctness  # was missing — weights now sum to 1.0
     )
 
-    bd.result_correctness           = round(result_correctness, 3)
-    bd.table_selection_correctness  = round(judge.table_selection_correctness, 3)
-    bd.sql_semantic_equivalence     = round(judge.sql_semantic_equivalence, 3)
-    bd.result_shape_accuracy        = round(result_shape, 3)
-    bd.base_score                   = round(base_score, 3)
+    bd.result_correctness = round(result_correctness, 3)
+    bd.table_selection_correctness = round(judge.table_selection_correctness, 3)
+    bd.sql_semantic_equivalence = round(judge.sql_semantic_equivalence, 3)
+    bd.result_shape_accuracy = round(result_shape, 3)
+    bd.base_score = round(base_score, 3)
 
     # --- Layer 3: Penalties ---
     penalties = compute_penalties(
@@ -278,9 +301,9 @@ def compute_score(
         execution.execution_time_ms,
     )
     bd.hallucination_penalty = penalties["hallucination_penalty"]
-    bd.refinement_penalty    = penalties["refinement_penalty"]
-    bd.latency_penalty       = penalties["latency_penalty"]
-    bd.total_penalties       = sum(penalties.values())
+    bd.refinement_penalty = penalties["refinement_penalty"]
+    bd.latency_penalty = penalties["latency_penalty"]
+    bd.total_penalties = sum(penalties.values())
 
     raw_score = max(0.0, base_score - bd.total_penalties)
 
@@ -304,6 +327,7 @@ def compute_score(
 
 
 # ─── Dataset Aggregation ───────────────────────────────────────────────────────
+
 
 @observe()
 def compute_dataset_score(question_scores: list[tuple[float, str]]) -> dict:
@@ -347,11 +371,12 @@ def compute_dataset_score(question_scores: list[tuple[float, str]]) -> dict:
 
 # ─── Confidence Scoring (Runtime) ─────────────────────────────────────────────
 
+
 def compute_confidence_score(
     retrieval_confidence: float,
     schema_match_score: float,
     execution_success: bool,
-    historical_success_rate: Optional[float],
+    historical_success_rate: float | None,
     validation_checks_passed: float,
 ) -> dict:
     """
@@ -364,21 +389,21 @@ def compute_confidence_score(
     hist = historical_success_rate if historical_success_rate is not None else 0.5
 
     score = (
-        0.30 * retrieval_confidence +
-        0.20 * schema_match_score +
-        0.20 * float(execution_success) +
-        0.20 * hist +
-        0.10 * validation_checks_passed
+        0.30 * retrieval_confidence
+        + 0.20 * schema_match_score
+        + 0.20 * float(execution_success)
+        + 0.20 * hist
+        + 0.10 * validation_checks_passed
     )
     score = round(min(1.0, max(0.0, score)), 3)
 
     return {
         "confidence_score": score,
         "breakdown": {
-            "retrieval_confidence":    round(retrieval_confidence, 3),
-            "schema_match":            round(schema_match_score, 3),
-            "execution_success":       1.0,
+            "retrieval_confidence": round(retrieval_confidence, 3),
+            "schema_match": round(schema_match_score, 3),
+            "execution_success": 1.0,
             "historical_success_rate": round(hist, 3),
-            "validation_checks":       round(validation_checks_passed, 3),
-        }
+            "validation_checks": round(validation_checks_passed, 3),
+        },
     }

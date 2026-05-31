@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List
-
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import UserScope, UserScopeCreate, UserScopeRead
 
 router = APIRouter(prefix="/scopes", tags=["scopes"])
 
 
-@router.get("", response_model=List[UserScopeRead])
-
+@router.get("", response_model=list[UserScopeRead])
 def list_scopes(session: Session = Depends(get_session)):
     return session.exec(select(UserScope)).all()
 

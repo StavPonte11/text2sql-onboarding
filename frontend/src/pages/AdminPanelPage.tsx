@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminApi } from '../api/admin';
-import { useAdminStore } from '../store/adminStore';
-import { ShieldCheck, CheckCircle2, XCircle, LogOut } from 'lucide-react';
-import { message, Modal, Input } from 'antd';
 import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Input, message, Modal } from 'antd';
+import { CheckCircle2, LogOut, ShieldCheck, XCircle } from 'lucide-react';
+
+import { adminApi } from '../api/admin';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { QUERY_KEYS } from '../config/constants';
+import { useAdminStore } from '../store/adminStore';
 
 export function AdminPanelPage() {
   const { user, logout } = useAdminStore();
@@ -15,8 +17,12 @@ export function AdminPanelPage() {
   const [rejectNote, setRejectNote] = useState('');
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
 
-  const { data: pendingTables = [], isLoading, error } = useQuery({
-    queryKey: ['admin', 'pendingTables'],
+  const {
+    data: pendingTables = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: [QUERY_KEYS.PENDING_TABLES],
     queryFn: () => adminApi.getPendingTables(),
     refetchInterval: 10000,
     retry: false,
@@ -26,8 +32,8 @@ export function AdminPanelPage() {
     mutationFn: adminApi.approveTable,
     onSuccess: () => {
       message.success('Table approved for production!');
-      queryClient.invalidateQueries({ queryKey: ['admin', 'pendingTables'] });
-      queryClient.invalidateQueries({ queryKey: ['tables'] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.PENDING_TABLES] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
     },
     onError: (error: any) => {
       message.error(error.message || 'Failed to approve table');
@@ -41,8 +47,8 @@ export function AdminPanelPage() {
       setRejectModalOpen(false);
       setRejectNote('');
       setSelectedTableId(null);
-      queryClient.invalidateQueries({ queryKey: ['admin', 'pendingTables'] });
-      queryClient.invalidateQueries({ queryKey: ['tables'] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.PENDING_TABLES] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
     },
     onError: (error: any) => {
       message.error(error.message || 'Failed to reject table');
@@ -78,17 +84,15 @@ export function AdminPanelPage() {
           </div>
           <p className="page__subtitle">Review verified tables before production promotion</p>
         </div>
-        
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ textAlign: 'right' }}>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Logged in as</p>
-            <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.name || user?.email}</p>
+            <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {user?.name || user?.email}
+            </p>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="btn btn--ghost btn--sm"
-            title="Sign out"
-          >
+          <button onClick={handleLogout} className="btn btn--ghost btn--sm" title="Sign out">
             <LogOut size={14} />
             Sign out
           </button>
@@ -104,13 +108,17 @@ export function AdminPanelPage() {
           <div className="empty-state">
             <CheckCircle2 size={48} className="empty-state__icon" />
             <div className="empty-state__text">No pending tables right now</div>
-            <div className="empty-state__sub">There are no tables waiting for approval at the moment.</div>
+            <div className="empty-state__sub">
+              There are no tables waiting for approval at the moment.
+            </div>
           </div>
         ) : pendingTables.length === 0 ? (
           <div className="empty-state">
             <CheckCircle2 size={48} className="empty-state__icon" />
             <div className="empty-state__text">All caught up!</div>
-            <div className="empty-state__sub">There are no tables waiting for approval right now.</div>
+            <div className="empty-state__sub">
+              There are no tables waiting for approval right now.
+            </div>
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -131,23 +139,47 @@ export function AdminPanelPage() {
                   <tr key={table.id}>
                     <td style={{ fontWeight: 600 }}>{table.name}</td>
                     <td>{table.schema_name}</td>
-                    <td><StatusBadge status={table.status} /></td>
+                    <td>
+                      <StatusBadge status={table.status} />
+                    </td>
                     <td>
                       {table.latest_run ? (
-                        <span style={{ color: table.latest_run.score >= 0.5 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
+                        <span
+                          style={{
+                            color:
+                              table.latest_run.score >= 0.5
+                                ? 'var(--status-production)'
+                                : 'var(--status-degraded)',
+                            fontWeight: 600,
+                          }}
+                        >
                           {(table.latest_run.score * 100).toFixed(0)}%
                         </span>
-                      ) : '-'}
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td>
                       {table.latest_run ? (
-                        <span style={{ color: table.latest_run.pass_rate >= 0.5 ? 'var(--status-production)' : 'var(--status-degraded)', fontWeight: 600 }}>
+                        <span
+                          style={{
+                            color:
+                              table.latest_run.pass_rate >= 0.5
+                                ? 'var(--status-production)'
+                                : 'var(--status-degraded)',
+                            fontWeight: 600,
+                          }}
+                        >
                           {(table.latest_run.pass_rate * 100).toFixed(0)}%
                         </span>
-                      ) : '-'}
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td>
-                      {table.latest_run ? new Date(table.latest_run.created_at).toLocaleDateString() : '-'}
+                      {table.latest_run
+                        ? new Date(table.latest_run.created_at).toLocaleDateString()
+                        : '-'}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
@@ -185,7 +217,8 @@ export function AdminPanelPage() {
         okButtonProps={{ danger: true }}
       >
         <div style={{ marginBottom: '16px' }}>
-          Please provide a reason for rejecting this promotion. The table will be moved back to the sandbox.
+          Please provide a reason for rejecting this promotion. The table will be moved back to the
+          sandbox.
         </div>
         <Input.TextArea
           rows={4}

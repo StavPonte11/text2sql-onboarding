@@ -1,6 +1,4 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional, Union
-
 
 
 class Settings(BaseSettings):
@@ -10,7 +8,7 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    CORS_ORIGINS: List[str] = ["http://localhost:5173"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
     OPENMETADATA_TOKEN: str = ""
 
@@ -27,10 +25,16 @@ class Settings(BaseSettings):
     TRINO_HTTP_SCHEME: str = "http"
     TRINO_REQUEST_TIMEOUT: float = 30.0
     TRINO_ENABLED: bool = True  # Set False to disable real Trino calls
-    TRINO_VERIFY: Union[bool, str] = False  # True to verify standard SSL, False to ignore, or path to cabundle.crt
-    TRINO_CERT_PATH: Optional[str] = None  # Path to client certificate for mTLS (.crt / .pem)
-    TRINO_KEY_PATH: Optional[str] = None   # Path to client private key for mTLS (.key / .pem)
-    TRINO_SERVICE_URL: Optional[str] = None
+    TRINO_VERIFY: bool | str = (
+        False  # True to verify standard SSL, False to ignore, or path to cabundle.crt
+    )
+    TRINO_CERT_PATH: str | None = (
+        None  # Path to client certificate for mTLS (.crt / .pem)
+    )
+    TRINO_KEY_PATH: str | None = (
+        None  # Path to client private key for mTLS (.key / .pem)
+    )
+    TRINO_SERVICE_URL: str | None = None
 
     # JWT Config
     JWT_SECRET: str = "dev-secret-change-in-production"

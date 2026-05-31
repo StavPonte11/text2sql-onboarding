@@ -1,20 +1,24 @@
 import io
 import json
-import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from typing import List
 
+import pandas as pd
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    GoldenQuestion, GoldenQuestionCreate, GoldenQuestionRead, Table, QuestionType, DifficultyLevel
+    DifficultyLevel,
+    GoldenQuestion,
+    GoldenQuestionCreate,
+    GoldenQuestionRead,
+    QuestionType,
+    Table,
 )
-from app.services.langfuse_client import langfuse_client
 
 router = APIRouter(prefix="/tables", tags=["golden-questions"])
 
 
-@router.get("/{table_id}/questions", response_model=List[GoldenQuestionRead])
+@router.get("/{table_id}/questions", response_model=list[GoldenQuestionRead])
 def list_questions(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
     if not table:
@@ -24,7 +28,9 @@ def list_questions(table_id: str, session: Session = Depends(get_session)):
     ).all()
 
 
-@router.post("/{table_id}/questions", response_model=GoldenQuestionRead, status_code=201)
+@router.post(
+    "/{table_id}/questions", response_model=GoldenQuestionRead, status_code=201
+)
 def create_question(
     table_id: str,
     payload: GoldenQuestionCreate,
@@ -63,24 +69,26 @@ async def upload_questions(
             df.columns = [c.lower().replace(" ", "_") for c in df.columns]
             questions_data = df.where(pd.notnull(df), None).to_dict(orient="records")
         else:
-            raise HTTPException(status_code=400, detail="Unsupported file format. Use JSON or Excel.")
+            raise HTTPException(
+                status_code=400, detail="Unsupported file format. Use JSON or Excel."
+            )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error parsing file: {e!s}")
 
     created_count = 0
     for q_item in questions_data:
         # Validate required fields
         question_text = q_item.get("question") or q_item.get("question_text")
         expected_sql = q_item.get("expected_sql") or q_item.get("sql")
-        
+
         if not question_text or not expected_sql:
             continue
-            
+
         # Parse enums with defaults
         difficulty = q_item.get("difficulty", "simple")
         if difficulty not in [d.value for d in DifficultyLevel]:
             difficulty = "simple"
-            
+
         q_type = q_item.get("question_type", "simple")
         if q_type not in [t.value for t in QuestionType]:
             q_type = "simple"
@@ -90,11 +98,11 @@ async def upload_questions(
             question=question_text,
             expected_sql=expected_sql,
             difficulty=DifficultyLevel(difficulty),
-            question_type=QuestionType(q_type)
+            question_type=QuestionType(q_type),
         )
         session.add(q)
-        session.flush() # get ID without commit
-        
+        session.flush()  # get ID without commit
+
         created_count += 1
 
     session.commit()

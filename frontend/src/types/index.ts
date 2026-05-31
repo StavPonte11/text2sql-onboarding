@@ -1,48 +1,51 @@
-import type { components } from "../api/schema";
+import type { components } from '../api/schema';
 
-type Schemas = components["schemas"];
+type Schemas = components['schemas'];
 
 // Domain types matching the strict schema
-export type TableStatus = Schemas["TableStatus"];
-export type DifficultyLevel = Schemas["DifficultyLevel"];
-export type EvalStatus = Schemas["EvalStatus"];
-export type QuestionType = Schemas["QuestionType"];
-export type ProfilingStatus = Schemas["ProfilingStatus"];
-export type FeedbackRating = Schemas["FeedbackRating"];
-export type HealthStatus = Schemas["HealthStatus"];
+export type TableStatus = Schemas['TableStatus'];
+export type DifficultyLevel = Schemas['DifficultyLevel'];
+export type EvalStatus = Schemas['EvalStatus'];
+export type QuestionType = Schemas['QuestionType'];
+export type ProfilingStatus = Schemas['ProfilingStatus'];
+export type FeedbackRating = Schemas['FeedbackRating'];
+export type HealthStatus = Schemas['HealthStatus'];
 
 // Interfaces
-export type Table = Schemas["TableRead"];
-export type TableCreate = Schemas["TableCreate"];
+export type Table = Schemas['TableRead'];
+export type TableCreate = Schemas['TableCreate'];
 
-export type GoldenQuestion = Schemas["GoldenQuestionRead"];
-export type GoldenQuestionCreate = Schemas["GoldenQuestionCreate"];
+export type GoldenQuestion = Schemas['GoldenQuestionRead'];
+export type GoldenQuestionCreate = Schemas['GoldenQuestionCreate'];
 
-export type EvalRun = Schemas["EvalRunRead"];
-export type EvalResult = Schemas["EvalResultRead"];
+export type EvalRun = Schemas['EvalRunRead'];
+export type EvalResult = Schemas['EvalResultRead'];
 
-export type UserScope = Schemas["UserScopeRead"];
-export type UserScopeCreate = Schemas["UserScopeCreate"];
+export type UserScope = Schemas['UserScopeRead'];
+export type UserScopeCreate = Schemas['UserScopeCreate'];
 
-export type AuditQuery = Schemas["AuditQueryRead"];
+export type AuditQuery = Schemas['AuditQueryRead'];
 
-export type TableProfile = Omit<Schemas["TableProfileRead"], "sample_data" | "profile_json" | "auto_insights"> & {
+export type TableProfile = Omit<
+  Schemas['TableProfileRead'],
+  'sample_data' | 'profile_json' | 'auto_insights'
+> & {
   sample_data?: any[];
   profile_json?: any;
   auto_insights?: any[];
 };
 
-export type ColumnProfile = Omit<Schemas["ColumnProfileRead"], "stats_json" | "top_values"> & {
+export type ColumnProfile = Omit<Schemas['ColumnProfileRead'], 'stats_json' | 'top_values'> & {
   stats_json?: any;
   top_values?: any[];
 };
 
-export type CrossTableProfile = Schemas["CrossTableProfileRead"];
+export type CrossTableProfile = Schemas['CrossTableProfileRead'];
 
-export type QueryFeedback = Schemas["QueryFeedbackRead"];
-export type QueryFeedbackCreate = Schemas["QueryFeedbackCreate"];
+export type QueryFeedback = Schemas['QueryFeedbackRead'];
+export type QueryFeedbackCreate = Schemas['QueryFeedbackCreate'];
 
-export type TableHealth = Schemas["TableHealthRead"];
+export type TableHealth = Schemas['TableHealthRead'];
 
 // Extra frontend-only definitions not mapped 1:1 in openapi
 export interface ColumnDef {
@@ -71,6 +74,24 @@ export interface PublishError {
   code: string;
   message: string;
 }
+
+export interface ForeignKeyMappingRead {
+  id: string;
+  table_id: string;
+  source_column: string;
+  target_table_id: string;
+  target_column: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ForeignKeyMappingCreate {
+  source_column: string;
+  target_table_id: string;
+  target_column: string;
+}
+
+export type ForeignKeyMapping = ForeignKeyMappingRead;
 
 // Profiling-specific nested schemas not fully typed by OpenAPI ref (json columns)
 export interface RowFieldStats {

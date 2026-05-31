@@ -5,36 +5,67 @@ Runs full scan queries against Trino, computes column statistics,
 detects categorical vs continuous columns, and produces structured output
 ready for PostgreSQL persistence and LLM context injection.
 """
-import logging
-from datetime import datetime, date
-from dataclasses import dataclass, field
-from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.trino_client import execute_query_sync
+import concurrent.futures
+import logging
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
+
+from app.services.trino_client import TrinoExecutionResult, execute_query_sync
 
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 CATEGORICAL_DISTINCT_THRESHOLD = 50
-CATEGORICAL_COVERAGE_THRESHOLD = 0.90   # top-N values cover ≥90% → categorical
-SAMPLE_PERCENT = 10                      # TABLESAMPLE BERNOULLI(10)
+CATEGORICAL_COVERAGE_THRESHOLD = 0.90  # top-N values cover ≥90% → categorical
+SAMPLE_PERCENT = 10  # TABLESAMPLE BERNOULLI(10)
 SAMPLE_LIMIT = 10_000
 TOP_VALUES_LIMIT = 50
-QUERY_TIMEOUT_SECONDS = 25              # Hard per-query timeout in seconds
+QUERY_TIMEOUT_SECONDS = 25  # Hard per-query timeout in seconds
 
 NUMERIC_TYPES = {
-    "bigint", "integer", "smallint", "tinyint",
-    "double", "real", "decimal", "float", "number",
+    "bigint",
+    "integer",
+    "smallint",
+    "tinyint",
+    "double",
+    "real",
+    "decimal",
+    "float",
+    "number",
 }
 TIME_TYPES = {
-    "date", "timestamp", "timestamp with time zone",
-    "timestamp(3) with time zone", "time",
+    "date",
+    "timestamp",
+    "timestamp with time zone",
+    "timestamp(3) with time zone",
+    "time",
 }
-GEO_HINTS = {"lat", "lon", "latitude", "longitude", "geometry", "geom", "location", "coordinates"}
+GEO_HINTS = {
+    "lat",
+    "lon",
+    "latitude",
+    "longitude",
+    "geometry",
+    "geom",
+    "location",
+    "coordinates",
+}
 TIME_HINTS = {
-    "date", "time", "timestamp", "created_at", "updated_at",
-    "event_at", "occurred_at", "dt", "day", "month", "year", "week",
+    "date",
+    "time",
+    "timestamp",
+    "created_at",
+    "updated_at",
+    "event_at",
+    "occurred_at",
+    "dt",
+    "day",
+    "month",
+    "year",
+    "week",
 }
 # These types cannot be used with DISTINCT/GROUP BY in Trino (excludes row which we handle)
 COMPLEX_TYPE_PREFIXES = ("array(", "map(", "json", "varbinary")
@@ -52,20 +83,20 @@ class ColumnStats:
     is_categorical: bool = False
     is_geo: bool = False
     is_time: bool = False
-    semantic_type: str = "continuous"   # categorical | continuous | time | geo
-    top_values: List[Dict] = field(default_factory=list)
-    value_frequencies: Dict[str, int] = field(default_factory=dict)
-    min_value: Optional[str] = None
-    max_value: Optional[str] = None
-    avg_value: Optional[float] = None
-    median_value: Optional[float] = None
-    q25_value: Optional[float] = None
-    q75_value: Optional[float] = None
-    stddev_value: Optional[float] = None
-    sample_values: List[Any] = field(default_factory=list)
-    histogram: Optional[List[Dict]] = None
-    stats_json: Dict = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    semantic_type: str = "continuous"  # categorical | continuous | time | geo
+    top_values: list[dict] = field(default_factory=list)
+    value_frequencies: dict[str, int] = field(default_factory=dict)
+    min_value: str | None = None
+    max_value: str | None = None
+    avg_value: float | None = None
+    median_value: float | None = None
+    q25_value: float | None = None
+    q75_value: float | None = None
+    stddev_value: float | None = None
+    sample_values: list[Any] = field(default_factory=list)
+    histogram: list[dict] | None = None
+    stats_json: dict = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -78,11 +109,11 @@ class TableProfilingResult:
     sample_size: int = 0
     column_count: int = 0
     null_rate_avg: float = 0.0
-    auto_insights: List[str] = field(default_factory=list)
-    sample_data: List[Dict] = field(default_factory=list)
-    column_stats: List[ColumnStats] = field(default_factory=list)
-    profile_json: Dict = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    auto_insights: list[str] = field(default_factory=list)
+    sample_data: list[dict] = field(default_factory=list)
+    column_stats: list[ColumnStats] = field(default_factory=list)
+    profile_json: dict = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
     success: bool = True
 
 
@@ -121,7 +152,7 @@ def build_top_values_query(fqn: str, col: str, limit: int = TOP_VALUES_LIMIT) ->
 
 def build_numeric_stats_query(fqn: str, col: str) -> str:
     return (
-        f'SELECT '
+        f"SELECT "
         f'  MIN("{col}") AS min_val, '
         f'  MAX("{col}") AS max_val, '
         f'  AVG(CAST("{col}" AS DOUBLE)) AS avg_val, '
@@ -130,13 +161,21 @@ def build_numeric_stats_query(fqn: str, col: str) -> str:
         f'FROM {fqn} WHERE "{col}" IS NOT NULL'
     )
 
-def build_generic_histogram_query(fqn: str, field_path: str, cast_expr: str, min_val: float, max_val: float, buckets: int = 8) -> str:
+
+def build_generic_histogram_query(
+    fqn: str,
+    field_path: str,
+    cast_expr: str,
+    min_val: float,
+    max_val: float,
+    buckets: int = 8,
+) -> str:
     if min_val == max_val:
-        return f'SELECT 1 AS bucket, COUNT(*) AS cnt FROM {fqn} GROUP BY 1 ORDER BY 1'
+        return f"SELECT 1 AS bucket, COUNT(*) AS cnt FROM {fqn} GROUP BY 1 ORDER BY 1"
     return f"""
 WITH raw_buckets AS (
-    SELECT 
-        CASE 
+    SELECT
+        CASE
             WHEN {field_path} IS NULL THEN null
             WHEN {cast_expr} >= {max_val} THEN {buckets}
             WHEN {cast_expr} <= {min_val} THEN 1
@@ -144,7 +183,7 @@ WITH raw_buckets AS (
         END as bucket
     FROM {fqn}
 )
-SELECT 
+SELECT
     bucket,
     COUNT(*) as cnt
 FROM raw_buckets
@@ -152,10 +191,11 @@ GROUP BY bucket
 ORDER BY bucket ASC NULLS LAST
 """
 
+
 def build_time_stats_query(fqn: str, col: str) -> str:
     # Safely extract unix epoch stats for temporal fields
     return (
-        f'SELECT '
+        f"SELECT "
         f'  MIN("{col}") AS min_val, '
         f'  MAX("{col}") AS max_val, '
         f'  APPROX_PERCENTILE(to_unixtime(CAST("{col}" AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]) AS quants, '
@@ -192,7 +232,7 @@ def _make_json_safe(obj: Any) -> Any:
     return obj
 
 
-def _safe_float(val) -> Optional[float]:
+def _safe_float(val) -> float | None:
     try:
         return float(val) if val is not None else None
     except (TypeError, ValueError):
@@ -210,7 +250,7 @@ def _is_row_type(dtype: str) -> bool:
     return dtype.lower().strip().startswith("row(")
 
 
-def _parse_row_fields(row_type: str) -> List[Tuple[str, str]]:
+def _parse_row_fields(row_type: str) -> list[tuple[str, str]]:
     """Parse Trino row(field_name type, ...) into [(field_name, type), ...].
 
     Handles nested parentheses correctly.
@@ -224,7 +264,7 @@ def _parse_row_fields(row_type: str) -> List[Tuple[str, str]]:
     else:
         return []
 
-    fields: List[Tuple[str, str]] = []
+    fields: list[tuple[str, str]] = []
     depth = 0
     current = ""
     for ch in inner:
@@ -259,23 +299,21 @@ def _parse_row_fields(row_type: str) -> List[Tuple[str, str]]:
 
 def execute_with_timeout(query: str, table_id: str):
     """Runs execute_query_sync in a thread and enforces a hard wall-clock timeout."""
-    import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(execute_query_sync, query, table_id)
         try:
             return future.result(timeout=QUERY_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
-            logger.warning(f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}")
-            from app.services.trino_client import TrinoExecutionResult
+            logger.warning(
+                f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}"
+            )
             return TrinoExecutionResult(
                 success=False,
                 error_message=f"Query timed out after {QUERY_TIMEOUT_SECONDS}s",
             )
 
 
-def _detect_semantic_type(
-    is_categorical: bool, is_geo: bool, is_time: bool
-) -> str:
+def _detect_semantic_type(is_categorical: bool, is_geo: bool, is_time: bool) -> str:
     if is_geo:
         return "geo"
     if is_time:
@@ -287,23 +325,33 @@ def _detect_semantic_type(
 
 # ── Row-type recursive analysis ────────────────────────────────────────────────
 def _analyze_row_column(
-    fqn: str, table_id: str, col_path: str, row_type: str, row_count: int, depth: int = 0
-) -> Dict:
+    fqn: str,
+    table_id: str,
+    col_path: str,
+    row_type: str,
+    row_count: int,
+    depth: int = 0,
+) -> dict:
     """Recursively profile the fields of a Trino ROW column.
 
     col_path: SQL expression to access the parent column, e.g. '"my_col"' or '"my_col"."addr"'
     Returns a stats_json-compatible dict with a 'children' list.
     """
     if depth >= ROW_MAX_DEPTH:
-        return {"type": "row", "data_type": row_type, "note": "Max depth reached", "children": []}
+        return {
+            "type": "row",
+            "data_type": row_type,
+            "note": "Max depth reached",
+            "children": [],
+        }
 
     fields = _parse_row_fields(row_type)
-    children: List[Dict] = []
+    children: list[dict] = []
 
     for field_name, field_type in fields:
         field_path = f'{col_path}."{field_name}"'
         field_lower = field_type.lower().strip()
-        child: Dict = {"name": field_name, "data_type": field_type}
+        child: dict = {"name": field_name, "data_type": field_type}
 
         if _is_row_type(field_type):
             # Recurse into nested ROW
@@ -317,14 +365,16 @@ def _analyze_row_column(
             child["stats"] = {"type": "complex", "note": "Skipped (array/map/json)"}
         else:
             # Normal field — run null ratio + top values
-            child_stats: Dict = {"type": field_lower}
-            is_time = field_lower in TIME_TYPES or any(h in field_name.lower() for h in TIME_HINTS)
+            child_stats: dict = {"type": field_lower}
+            is_time = field_lower in TIME_TYPES or any(
+                h in field_name.lower() for h in TIME_HINTS
+            )
             is_geo = field_name.lower() in GEO_HINTS or "geo" in field_name.lower()
             child["is_time"] = is_time
             child["is_geo"] = is_geo
 
             # Null ratio via IS NULL count
-            null_q = f'SELECT COUNT(*) AS total, SUM(CASE WHEN {field_path} IS NULL THEN 1 ELSE 0 END) AS nulls FROM {fqn}'
+            null_q = f"SELECT COUNT(*) AS total, SUM(CASE WHEN {field_path} IS NULL THEN 1 ELSE 0 END) AS nulls FROM {fqn}"
             r = execute_with_timeout(null_q, table_id)
             if r.success and r.rows:
                 total = int(r.rows[0][0] or 1)
@@ -336,10 +386,13 @@ def _analyze_row_column(
 
             # Top values (non-time, non-numeric)
             if not is_time and field_lower not in NUMERIC_TYPES:
-                top_q = f'SELECT {field_path}, COUNT(*) AS cnt FROM {fqn} WHERE {field_path} IS NOT NULL GROUP BY {field_path} ORDER BY cnt DESC LIMIT {TOP_VALUES_LIMIT}'
+                top_q = f"SELECT {field_path}, COUNT(*) AS cnt FROM {fqn} WHERE {field_path} IS NOT NULL GROUP BY {field_path} ORDER BY cnt DESC LIMIT {TOP_VALUES_LIMIT}"
                 r = execute_with_timeout(top_q, table_id)
                 if r.success and r.rows:
-                    top_vals = [{"value": _make_json_safe(row[0]), "count": int(row[1])} for row in r.rows]
+                    top_vals = [
+                        {"value": _make_json_safe(row[0]), "count": int(row[1])}
+                        for row in r.rows
+                    ]
                     child_stats["top_values"] = top_vals
                     child_stats["distinct_count"] = len(top_vals)
                     child["distinct_count"] = len(top_vals)
@@ -348,11 +401,11 @@ def _analyze_row_column(
             # Full numeric stats (min/max/percentiles/stddev)
             if field_lower in NUMERIC_TYPES:
                 num_q = (
-                    f'SELECT MIN({field_path}), MAX({field_path}), '
-                    f'AVG(CAST({field_path} AS DOUBLE)), '
-                    f'APPROX_PERCENTILE(CAST({field_path} AS DOUBLE), ARRAY[0.25, 0.5, 0.75]), '
-                    f'STDDEV_POP(CAST({field_path} AS DOUBLE)) '
-                    f'FROM {fqn} WHERE {field_path} IS NOT NULL'
+                    f"SELECT MIN({field_path}), MAX({field_path}), "
+                    f"AVG(CAST({field_path} AS DOUBLE)), "
+                    f"APPROX_PERCENTILE(CAST({field_path} AS DOUBLE), ARRAY[0.25, 0.5, 0.75]), "
+                    f"STDDEV_POP(CAST({field_path} AS DOUBLE)) "
+                    f"FROM {fqn} WHERE {field_path} IS NOT NULL"
                 )
                 r = execute_with_timeout(num_q, table_id)
                 if r.success and r.rows and r.rows[0][0] is not None:
@@ -368,39 +421,68 @@ def _analyze_row_column(
                     child_stats["stddev"] = _safe_float(row[4])
                     child["min_value"] = str(child_stats["min"])
                     child["max_value"] = str(child_stats["max"])
-                    
+
                     min_f = _safe_float(child_stats["min"])
                     max_f = _safe_float(child_stats["max"])
                     if min_f is not None and max_f is not None:
-                        cast_expr = f'CAST({field_path} AS DOUBLE)'
-                        hist_r = execute_with_timeout(build_generic_histogram_query(fqn, field_path, cast_expr, min_f, max_f, 8), table_id)
+                        cast_expr = f"CAST({field_path} AS DOUBLE)"
+                        hist_r = execute_with_timeout(
+                            build_generic_histogram_query(
+                                fqn, field_path, cast_expr, min_f, max_f, 8
+                            ),
+                            table_id,
+                        )
                         if hist_r.success and hist_r.rows:
                             hist_data = []
                             step = (max_f - min_f) / 8 if max_f > min_f else 0
-                            bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
+                            bucket_counts = {
+                                int(r[0]) if r[0] is not None else "null": int(r[1])
+                                for r in hist_r.rows
+                            }
                             if max_f > min_f:
                                 for i in range(1, 9):
                                     cnt = bucket_counts.get(i, 0)
                                     lo = min_f + (i - 1) * step
                                     hi = min_f + i * step
-                                    hist_data.append({"lo": lo, "hi": hi, "count": cnt, "label": f"{lo:g}"})
+                                    hist_data.append(
+                                        {
+                                            "lo": lo,
+                                            "hi": hi,
+                                            "count": cnt,
+                                            "label": f"{lo:g}",
+                                        }
+                                    )
                             else:
-                                hist_data.append({"lo": min_f, "hi": max_f, "count": bucket_counts.get(1, 0), "label": f"{min_f:g}"})
-                            null_cnt = bucket_counts.get('null', 0)
+                                hist_data.append(
+                                    {
+                                        "lo": min_f,
+                                        "hi": max_f,
+                                        "count": bucket_counts.get(1, 0),
+                                        "label": f"{min_f:g}",
+                                    }
+                                )
+                            null_cnt = bucket_counts.get("null", 0)
                             if null_cnt > 0:
-                                hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
+                                hist_data.append(
+                                    {
+                                        "lo": None,
+                                        "hi": None,
+                                        "count": null_cnt,
+                                        "label": "Null / Unknown",
+                                    }
+                                )
                             child_stats["histogram"] = hist_data
                             child["histogram"] = hist_data
 
             # Full time stats (min/max/percentiles as unix epoch)
             elif is_time:
                 time_q = (
-                    f'SELECT MIN({field_path}), MAX({field_path}), '
-                    f'APPROX_PERCENTILE(to_unixtime(CAST({field_path} AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]), '
-                    f'STDDEV_POP(to_unixtime(CAST({field_path} AS TIMESTAMP))), '
-                    f'MIN(to_unixtime(CAST({field_path} AS TIMESTAMP))), '
-                    f'MAX(to_unixtime(CAST({field_path} AS TIMESTAMP))) '
-                    f'FROM {fqn} WHERE {field_path} IS NOT NULL'
+                    f"SELECT MIN({field_path}), MAX({field_path}), "
+                    f"APPROX_PERCENTILE(to_unixtime(CAST({field_path} AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]), "
+                    f"STDDEV_POP(to_unixtime(CAST({field_path} AS TIMESTAMP))), "
+                    f"MIN(to_unixtime(CAST({field_path} AS TIMESTAMP))), "
+                    f"MAX(to_unixtime(CAST({field_path} AS TIMESTAMP))) "
+                    f"FROM {fqn} WHERE {field_path} IS NOT NULL"
                 )
                 r = execute_with_timeout(time_q, table_id)
                 if r.success and r.rows and r.rows[0][0] is not None:
@@ -417,26 +499,68 @@ def _analyze_row_column(
                     child["max_value"] = str(child_stats["max"])
                     min_unix = _safe_float(row[4])
                     max_unix = _safe_float(row[5])
-                    
+
                     if min_unix is not None and max_unix is not None:
-                        from datetime import datetime
-                        cast_expr = f'to_unixtime(CAST({field_path} AS TIMESTAMP))'
-                        hist_r = execute_with_timeout(build_generic_histogram_query(fqn, field_path, cast_expr, min_unix, max_unix, 8), table_id)
+                        cast_expr = f"to_unixtime(CAST({field_path} AS TIMESTAMP))"
+                        hist_r = execute_with_timeout(
+                            build_generic_histogram_query(
+                                fqn, field_path, cast_expr, min_unix, max_unix, 8
+                            ),
+                            table_id,
+                        )
                         if hist_r.success and hist_r.rows:
                             hist_data = []
-                            step = (max_unix - min_unix) / 8 if max_unix > min_unix else 0
-                            bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
+                            step = (
+                                (max_unix - min_unix) / 8 if max_unix > min_unix else 0
+                            )
+                            bucket_counts = {
+                                int(r[0]) if r[0] is not None else "null": int(r[1])
+                                for r in hist_r.rows
+                            }
                             if max_unix > min_unix:
                                 for i in range(1, 9):
                                     cnt = bucket_counts.get(i, 0)
                                     lo = min_unix + (i - 1) * step
                                     hi = min_unix + i * step
-                                    hist_data.append({"lo": datetime.fromtimestamp(lo).isoformat(), "hi": datetime.fromtimestamp(hi).isoformat(), "count": cnt, "label": datetime.fromtimestamp(lo).strftime('%Y-%m-%d')})
+                                    hist_data.append(
+                                        {
+                                            "lo": datetime.fromtimestamp(
+                                                lo
+                                            ).isoformat(),
+                                            "hi": datetime.fromtimestamp(
+                                                hi
+                                            ).isoformat(),
+                                            "count": cnt,
+                                            "label": datetime.fromtimestamp(
+                                                lo
+                                            ).strftime("%Y-%m-%d"),
+                                        }
+                                    )
                             else:
-                                hist_data.append({"lo": datetime.fromtimestamp(min_unix).isoformat(), "hi": datetime.fromtimestamp(max_unix).isoformat(), "count": bucket_counts.get(1, 0), "label": datetime.fromtimestamp(min_unix).strftime('%Y-%m-%d')})
-                            null_cnt = bucket_counts.get('null', 0)
+                                hist_data.append(
+                                    {
+                                        "lo": datetime.fromtimestamp(
+                                            min_unix
+                                        ).isoformat(),
+                                        "hi": datetime.fromtimestamp(
+                                            max_unix
+                                        ).isoformat(),
+                                        "count": bucket_counts.get(1, 0),
+                                        "label": datetime.fromtimestamp(
+                                            min_unix
+                                        ).strftime("%Y-%m-%d"),
+                                    }
+                                )
+                            null_cnt = bucket_counts.get("null", 0)
                             if null_cnt > 0:
-                                hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
+                                hist_data.append(
+                                    {
+                                        "lo": None,
+                                        "hi": None,
+                                        "count": null_cnt,
+                                        "label": "Null / Unknown",
+                                    }
+                                )
                             child_stats["histogram"] = hist_data
                             child["histogram"] = hist_data
 
@@ -508,14 +632,18 @@ def _analyze_column(
 
     # 3. Top values + categorical detection
     low_cardinality = 0 < stats.distinct_count < CATEGORICAL_DISTINCT_THRESHOLD
-    top_values: List[Dict] = []
+    top_values: list[dict] = []
 
     if low_cardinality or not stats.is_time:
         r = execute_with_timeout(build_top_values_query(fqn, col_name), table_id)
         if r.success and r.rows:
-            top_values = [{"value": str(row[0]), "count": int(row[1])} for row in r.rows]
+            top_values = [
+                {"value": str(row[0]), "count": int(row[1])} for row in r.rows
+            ]
             top_coverage = sum(v["count"] for v in top_values) / max(row_count, 1)
-            stats.is_categorical = low_cardinality or top_coverage >= CATEGORICAL_COVERAGE_THRESHOLD
+            stats.is_categorical = (
+                low_cardinality or top_coverage >= CATEGORICAL_COVERAGE_THRESHOLD
+            )
             stats.top_values = top_values
             stats.value_frequencies = {v["value"]: v["count"] for v in top_values}
         else:
@@ -535,31 +663,55 @@ def _analyze_column(
                 stats.median_value = _safe_float(quants[1])
                 stats.q75_value = _safe_float(quants[2])
             stats.stddev_value = _safe_float(row[4])
-            
+
             # Build actual histogram
             if stats.min_value is not None and stats.max_value is not None:
                 min_f = float(stats.min_value)
                 max_f = float(stats.max_value)
                 cast_expr = f'CAST("{col_name}" AS DOUBLE)'
-                hist_r = execute_with_timeout(build_generic_histogram_query(fqn, f'"{col_name}"', cast_expr, min_f, max_f, 8), table_id)
+                hist_r = execute_with_timeout(
+                    build_generic_histogram_query(
+                        fqn, f'"{col_name}"', cast_expr, min_f, max_f, 8
+                    ),
+                    table_id,
+                )
                 if hist_r.success and hist_r.rows:
                     hist_data = []
                     step = (max_f - min_f) / 8 if max_f > min_f else 0
-                    bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
-                    
+                    bucket_counts = {
+                        int(r[0]) if r[0] is not None else "null": int(r[1])
+                        for r in hist_r.rows
+                    }
+
                     if max_f > min_f:
                         for i in range(1, 9):
                             cnt = bucket_counts.get(i, 0)
                             lo = min_f + (i - 1) * step
                             hi = min_f + i * step
-                            hist_data.append({"lo": lo, "hi": hi, "count": cnt, "label": f"{lo:g}"})
+                            hist_data.append(
+                                {"lo": lo, "hi": hi, "count": cnt, "label": f"{lo:g}"}
+                            )
                     else:
-                        hist_data.append({"lo": min_f, "hi": max_f, "count": bucket_counts.get(1, 0), "label": f"{min_f:g}"})
-                        
-                    null_cnt = bucket_counts.get('null', 0)
+                        hist_data.append(
+                            {
+                                "lo": min_f,
+                                "hi": max_f,
+                                "count": bucket_counts.get(1, 0),
+                                "label": f"{min_f:g}",
+                            }
+                        )
+
+                    null_cnt = bucket_counts.get("null", 0)
                     if null_cnt > 0:
-                        hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
-                        
+                        hist_data.append(
+                            {
+                                "lo": None,
+                                "hi": None,
+                                "count": null_cnt,
+                                "label": "Null / Unknown",
+                            }
+                        )
+
                     stats.histogram = hist_data
                 else:
                     stats.errors.append(f"numeric_histogram: {hist_r.error_message}")
@@ -581,30 +733,64 @@ def _analyze_column(
             stats.stddev_value = _safe_float(row[3])
             min_unix = _safe_float(row[4])
             max_unix = _safe_float(row[5])
-            
+
             # Build actual histogram for time
             if min_unix is not None and max_unix is not None:
                 from datetime import datetime
+
                 cast_expr = f'to_unixtime(CAST("{col_name}" AS TIMESTAMP))'
-                hist_r = execute_with_timeout(build_generic_histogram_query(fqn, f'"{col_name}"', cast_expr, min_unix, max_unix, 8), table_id)
+                hist_r = execute_with_timeout(
+                    build_generic_histogram_query(
+                        fqn, f'"{col_name}"', cast_expr, min_unix, max_unix, 8
+                    ),
+                    table_id,
+                )
                 if hist_r.success and hist_r.rows:
                     hist_data = []
                     step = (max_unix - min_unix) / 8 if max_unix > min_unix else 0
-                    bucket_counts = {int(r[0]) if r[0] is not None else 'null': int(r[1]) for r in hist_r.rows}
-                    
+                    bucket_counts = {
+                        int(r[0]) if r[0] is not None else "null": int(r[1])
+                        for r in hist_r.rows
+                    }
+
                     if max_unix > min_unix:
                         for i in range(1, 9):
                             cnt = bucket_counts.get(i, 0)
                             lo = min_unix + (i - 1) * step
                             hi = min_unix + i * step
-                            hist_data.append({"lo": datetime.fromtimestamp(lo).isoformat(), "hi": datetime.fromtimestamp(hi).isoformat(), "count": cnt, "label": datetime.fromtimestamp(lo).strftime('%Y-%m-%d')})
+                            hist_data.append(
+                                {
+                                    "lo": datetime.fromtimestamp(lo).isoformat(),
+                                    "hi": datetime.fromtimestamp(hi).isoformat(),
+                                    "count": cnt,
+                                    "label": datetime.fromtimestamp(lo).strftime(
+                                        "%Y-%m-%d"
+                                    ),
+                                }
+                            )
                     else:
-                        hist_data.append({"lo": datetime.fromtimestamp(min_unix).isoformat(), "hi": datetime.fromtimestamp(max_unix).isoformat(), "count": bucket_counts.get(1, 0), "label": datetime.fromtimestamp(min_unix).strftime('%Y-%m-%d')})
-                        
-                    null_cnt = bucket_counts.get('null', 0)
+                        hist_data.append(
+                            {
+                                "lo": datetime.fromtimestamp(min_unix).isoformat(),
+                                "hi": datetime.fromtimestamp(max_unix).isoformat(),
+                                "count": bucket_counts.get(1, 0),
+                                "label": datetime.fromtimestamp(min_unix).strftime(
+                                    "%Y-%m-%d"
+                                ),
+                            }
+                        )
+
+                    null_cnt = bucket_counts.get("null", 0)
                     if null_cnt > 0:
-                        hist_data.append({"lo": None, "hi": None, "count": null_cnt, "label": "Null / Unknown"})
-                        
+                        hist_data.append(
+                            {
+                                "lo": None,
+                                "hi": None,
+                                "count": null_cnt,
+                                "label": "Null / Unknown",
+                            }
+                        )
+
                     stats.histogram = hist_data
                 else:
                     stats.errors.append(f"time_histogram: {hist_r.error_message}")
@@ -675,21 +861,23 @@ def run_table_profiling(
         result.errors.append(f"row_count: {r.error_message}")
 
     # Step 2: Sample
-    sample_cols: List[str] = []
+    sample_cols: list[str] = []
     r = execute_query_sync(build_sample_query(fqn), table_id)
     if r.success and r.rows:
         result.sample_size = len(r.rows)
         sample_cols = r.columns
         result.sample_data = [
-            _make_json_safe(dict(zip(sample_cols, row)))
+            _make_json_safe(dict(zip(sample_cols, row, strict=False)))
             for row in r.rows[:50]
         ]
     else:
         result.errors.append(f"sample: {r.error_message}")
 
     # Step 3: Column metadata via information_schema
-    columns_meta: List[Tuple[str, str]] = []
-    r = execute_query_sync(build_column_metadata_query(catalog, schema, table), table_id)
+    columns_meta: list[tuple[str, str]] = []
+    r = execute_query_sync(
+        build_column_metadata_query(catalog, schema, table), table_id
+    )
     if r.success and r.rows:
         columns_meta = [(row[0], row[1]) for row in r.rows]
         result.column_count = len(columns_meta)
@@ -701,7 +889,7 @@ def run_table_profiling(
             result.column_count = len(columns_meta)
 
     # Step 4: Per-column analysis
-    col_stats: List[ColumnStats] = []
+    col_stats: list[ColumnStats] = []
     for col_name, data_type in columns_meta:
         logger.info("[ProfilingEngine]   → %s (%s)", col_name, data_type)
         try:
@@ -709,61 +897,83 @@ def run_table_profiling(
             col_stats.append(cs)
         except Exception as exc:
             logger.error("[ProfilingEngine] Column %s failed: %s", col_name, exc)
-            col_stats.append(ColumnStats(column_name=col_name, data_type=data_type, errors=[str(exc)]))
+            col_stats.append(
+                ColumnStats(
+                    column_name=col_name, data_type=data_type, errors=[str(exc)]
+                )
+            )
     result.column_stats = col_stats
 
     # Step 5: Aggregate null rate
     if col_stats:
-        result.null_rate_avg = round(sum(c.null_rate for c in col_stats) / len(col_stats), 4)
+        result.null_rate_avg = round(
+            sum(c.null_rate for c in col_stats) / len(col_stats), 4
+        )
 
     # Step 6: Auto insights
     insights = []
     if result.row_count:
         insights.append(f"~{result.row_count:,} rows (COUNT(*)).")
     if result.sample_size:
-        insights.append(f"{result.sample_size:,} rows sampled via LIMIT {SAMPLE_LIMIT}.")
+        insights.append(
+            f"{result.sample_size:,} rows sampled via LIMIT {SAMPLE_LIMIT}."
+        )
     cat_cols = [c for c in col_stats if c.is_categorical]
     if cat_cols:
-        insights.append(f"{len(cat_cols)} categorical column(s): {', '.join(c.column_name for c in cat_cols[:5])}.")
+        insights.append(
+            f"{len(cat_cols)} categorical column(s): {', '.join(c.column_name for c in cat_cols[:5])}."
+        )
     time_cols = [c for c in col_stats if c.is_time]
     if time_cols:
-        insights.append(f"Time columns: {', '.join(c.column_name for c in time_cols[:3])} — suitable for range filters.")
+        insights.append(
+            f"Time columns: {', '.join(c.column_name for c in time_cols[:3])} — suitable for range filters."
+        )
     geo_cols = [c for c in col_stats if c.is_geo]
     if geo_cols:
-        insights.append(f"Geographic columns: {', '.join(c.column_name for c in geo_cols)}.")
+        insights.append(
+            f"Geographic columns: {', '.join(c.column_name for c in geo_cols)}."
+        )
     high_null = [c for c in col_stats if c.null_rate > 0.20]
     if high_null:
-        insights.append(f"High null rate (>20%): {', '.join(c.column_name for c in high_null[:5])}.")
+        insights.append(
+            f"High null rate (>20%): {', '.join(c.column_name for c in high_null[:5])}."
+        )
     if result.row_count > 0:
-        pk_candidates = [c for c in col_stats if c.distinct_count >= result.row_count * 0.95]
+        pk_candidates = [
+            c for c in col_stats if c.distinct_count >= result.row_count * 0.95
+        ]
         if pk_candidates:
-            insights.append(f"PK candidates: {', '.join(c.column_name for c in pk_candidates[:3])}.")
+            insights.append(
+                f"PK candidates: {', '.join(c.column_name for c in pk_candidates[:3])}."
+            )
     result.auto_insights = insights
 
     # Step 7: Full profile_json — sanitize all values before DB commit
-    result.profile_json = _make_json_safe({
-        "table": fqn,
-        "version": version,
-        "computed_at": computed_at.isoformat(),
-        "row_count": result.row_count,
-        "sample_size": result.sample_size,
-        "column_count": result.column_count,
-        "null_rate_avg": result.null_rate_avg,
-        "columns": [
-            {
-                "name": c.column_name,
-                "data_type": c.data_type,
-                "semantic_type": c.semantic_type,
-                "is_categorical": c.is_categorical,
-                "distinct_count": c.distinct_count,
-                "null_rate": c.null_rate,
-                "stats": c.stats_json,
-            }
-            for c in col_stats
-        ],
-        "insights": insights,
-        "errors": result.errors,
-    })
+    result.profile_json = _make_json_safe(
+        {
+            "table": fqn,
+            "version": version,
+            "computed_at": computed_at.isoformat(),
+            "row_count": result.row_count,
+            "sample_size": result.sample_size,
+            "column_count": result.column_count,
+            "null_rate_avg": result.null_rate_avg,
+            "columns": [
+                {
+                    "name": c.column_name,
+                    "data_type": c.data_type,
+                    "semantic_type": c.semantic_type,
+                    "is_categorical": c.is_categorical,
+                    "distinct_count": c.distinct_count,
+                    "null_rate": c.null_rate,
+                    "stats": c.stats_json,
+                }
+                for c in col_stats
+            ],
+            "insights": insights,
+            "errors": result.errors,
+        }
+    )
     # Also sanitize sample_data and per-column stats_json
     result.sample_data = _make_json_safe(result.sample_data)
     for c in col_stats:
@@ -772,13 +982,18 @@ def run_table_profiling(
     result.success = result.row_count > 0 or not result.errors
     logger.info(
         "[ProfilingEngine] Done: %s — %d cols, %s rows, %d error(s)",
-        fqn, len(col_stats), format(result.row_count, ","), len(result.errors)
+        fqn,
+        len(col_stats),
+        format(result.row_count, ","),
+        len(result.errors),
     )
     return result
 
 
 # ── LLM Context Builder ────────────────────────────────────────────────────────
-def build_context_for_llm(table_name: str, profile_json: Dict, column_profiles: List) -> Dict:
+def build_context_for_llm(
+    table_name: str, profile_json: dict, column_profiles: list
+) -> dict:
     """
     Produces a compact, LLM-ready context blob from persisted profiling data.
     Used by the TextToSQL context builder for system-prompt injection.
@@ -786,7 +1001,7 @@ def build_context_for_llm(table_name: str, profile_json: Dict, column_profiles: 
     context_columns = []
     for cp in column_profiles:
         stats = cp.stats_json or {}
-        col_ctx: Dict = {
+        col_ctx: dict = {
             "column": cp.column_name,
             "data_type": cp.data_type,
             "semantic_type": getattr(cp, "semantic_type", "continuous"),

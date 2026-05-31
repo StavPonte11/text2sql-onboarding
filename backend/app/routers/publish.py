@@ -6,18 +6,25 @@ Publish triggers an asynchronous promotion workflow that:
 2. Runs regression tests on all production tables.
 3. Only promotes if all pass.
 """
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+
+import uuid
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    Table, TableStatus, EvalRun, EvalStatus,
-    EnrichmentVersion, GoldenQuestion,
+    EnrichmentVersion,
+    EvalRun,
+    EvalStatus,
+    GoldenQuestion,
+    Table,
 )
-from app.services.scoring import BLOCK_THRESHOLD, REGRESSION_BLOCK
 from app.routers.evaluation import promote_table_to_production_workflow
+from app.services.scoring import REGRESSION_BLOCK
 
 router = APIRouter(prefix="/tables", tags=["publish"])
+
 
 def _check_regression(table_id: str, new_score: float, session: Session) -> list[dict]:
     """
@@ -35,18 +42,21 @@ def _check_regression(table_id: str, new_score: float, session: Session) -> list
         prev_score = all_runs[1].score
         delta = prev_score - new_score
         if delta > REGRESSION_BLOCK:
-            warnings.append({
-                "code": "REGRESSION_BLOCK",
-                "message": f"Score dropped {delta:.0%} from previous run. Threshold: {REGRESSION_BLOCK:.0%}",
-                "severity": "blocking",
-            })
+            warnings.append(
+                {
+                    "code": "REGRESSION_BLOCK",
+                    "message": f"Score dropped {delta:.0%} from previous run. Threshold: {REGRESSION_BLOCK:.0%}",
+                    "severity": "blocking",
+                }
+            )
     return warnings
+
 
 @router.post("/{table_id}/publish")
 def publish_table(
-    table_id: str, 
+    table_id: str,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     table = session.get(Table, table_id)
     if not table:
@@ -62,18 +72,29 @@ def publish_table(
         .order_by(EnrichmentVersion.version.desc())
     ).first()
     if not enrichment:
-        blocking_errors.append({"code": "MISSING_ENRICHMENT", "message": "Enrichment required."})
+        blocking_errors.append(
+            {"code": "MISSING_ENRICHMENT", "message": "Enrichment required."}
+        )
 
     # ── Gate 2: Golden Questions ───────────────────────────────────────────────
-    questions = session.exec(select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)).all()
+    questions = session.exec(
+        select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+    ).all()
     if len(questions) < 3:
-        blocking_errors.append({"code": "INSUFFICIENT_QUESTIONS", "message": "At least 3 golden questions required."})
+        blocking_errors.append(
+            {
+                "code": "INSUFFICIENT_QUESTIONS",
+                "message": "At least 3 golden questions required.",
+            }
+        )
 
     if blocking_errors:
-        raise HTTPException(status_code=422, detail={"blocking_errors": blocking_errors, "warnings": warnings})
+        raise HTTPException(
+            status_code=422,
+            detail={"blocking_errors": blocking_errors, "warnings": warnings},
+        )
 
     # ── Trigger Promotion Workflow (Async) ────────────────────────────────────
-    import uuid
     run_id = str(uuid.uuid4())
 
     background_tasks.add_task(promote_table_to_production_workflow, table_id, run_id)

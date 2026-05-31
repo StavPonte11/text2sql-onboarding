@@ -1,61 +1,63 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PlayCircle, Database, CalendarClock, History, Check } from "lucide-react";
-import { App } from "antd";
-import { tablesApi } from "../api/client";
-import { orchestrationApi } from "../api/orchestration";
-import { RunHistoryTable } from "../components/monitoring/RunHistoryTable";
-import { ScheduleManager } from "../components/monitoring/ScheduleManager";
-import { Spinner, SectionHeader, EmptySlate } from "../components/common/EvalUI";
-import type { Table } from "../types";
-import "./EvaluationsPage.css";
+import { useState } from 'react';
+import { App } from 'antd';
+import { CalendarClock, Check, Database, History, PlayCircle } from 'lucide-react';
 
-type Tab = "history" | "schedules" | "run";
+import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
+import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
+import { ScheduleManager } from '../components/monitoring/ScheduleManager';
+import { useEvalReadiness, useTriggerOrchestrationRun } from '../hooks/useEvaluations';
+import { useTables } from '../hooks/useTables';
+
+import type { Table } from '../types';
+
+import './EvaluationsPage.css';
+
+type Tab = 'history' | 'schedules' | 'run';
 
 // ── Run trigger panel ──────────────────────────────────────────────────────────
 function RunTriggerPanel() {
-  const qc = useQueryClient();
   const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
-  const [triggeredBy] = useState("user");
+  const [triggeredBy] = useState('user');
   const [launched, setLaunched] = useState(false);
   const { message } = App.useApp();
 
-  const { data: tables = [], isLoading: tablesLoading } = useQuery({
-    queryKey: ["tables-all"],
-    queryFn: () => tablesApi.list(),
-  });
+  const { data: tables = [], isLoading: tablesLoading } = useTables();
 
-  const { data: readiness = {} } = useQuery({
-    queryKey: ["eval-readiness"],
-    queryFn: () => orchestrationApi.getReadiness(),
-    staleTime: 30_000,
-  });
+  const { data: readiness = {} } = useEvalReadiness();
 
-  const triggerMut = useMutation({
-    mutationFn: () => orchestrationApi.triggerRun(selectedTableIds, triggeredBy),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["eval-runs"] });
-      qc.invalidateQueries({ queryKey: ["system-health"] });
-      setLaunched(true);
-      setTimeout(() => setLaunched(false), 4000);
-    },
-    onError: (err: any) => {
-      const detail = err?.response?.data?.detail;
-      message.error(detail || "Evaluation failed. Please check table descriptions in Oasis platform.", 10);
-    }
-  });
+  const triggerMut = useTriggerOrchestrationRun();
+
+  const handleLaunch = () => {
+    triggerMut.mutate(
+      { tableIds: selectedTableIds, triggeredBy },
+      {
+        onSuccess: () => {
+          setLaunched(true);
+          setTimeout(() => setLaunched(false), 4000);
+        },
+        onError: (err: any) => {
+          const detail = err?.response?.data?.detail;
+          message.error(
+            detail || 'Evaluation failed. Please check table descriptions in Oasis platform.',
+            10,
+          );
+        },
+      },
+    );
+  };
 
   const toggleTable = (id: string) => {
     // Prevent selecting incomplete tables
     if (!readiness[id]?.ready && readiness[id] !== undefined) return;
-    setSelectedTableIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    setSelectedTableIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   };
 
-  const selectAll = () => setSelectedTableIds(
-    tables.filter((t: Table) => readiness[t.id]?.ready !== false).map((t: Table) => t.id)
-  );
+  const selectAll = () =>
+    setSelectedTableIds(
+      tables.filter((t: Table) => readiness[t.id]?.ready !== false).map((t: Table) => t.id),
+    );
 
   const clearAll = () => setSelectedTableIds([]);
 
@@ -66,16 +68,26 @@ function RunTriggerPanel() {
         sub="Select tables then launch an evaluation"
         action={
           <div className="run-trigger-panel__actions">
-            <button className="btn btn--ghost btn--sm" onClick={selectAll}>Select All</button>
-            <button className="btn btn--ghost btn--sm" onClick={clearAll}>Clear</button>
+            <button className="btn btn--ghost btn--sm" onClick={selectAll}>
+              Select All
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={clearAll}>
+              Clear
+            </button>
           </div>
         }
       />
 
       {tablesLoading ? (
-        <div className="run-trigger-panel__loading"><Spinner /></div>
+        <div className="run-trigger-panel__loading">
+          <Spinner />
+        </div>
       ) : !tables.length ? (
-        <EmptySlate icon={<Database size={28} />} title="No tables found" sub="Add tables first via the Tables section" />
+        <EmptySlate
+          icon={<Database size={28} />}
+          title="No tables found"
+          sub="Add tables first via the Tables section"
+        />
       ) : (
         <div className="run-trigger-panel__grid">
           {tables.map((t: Table) => {
@@ -83,24 +95,32 @@ function RunTriggerPanel() {
             const tableReadiness = readiness[t.id];
             const isIncomplete = tableReadiness !== undefined && !tableReadiness.ready;
             const statusColor: Record<string, string> = {
-              production: "#10b981", sandbox: "#f59e0b", verified: "#3b82f6",
-              draft: "#64748b", degraded: "#ef4444",
+              production: '#10b981',
+              sandbox: '#f59e0b',
+              verified: '#3b82f6',
+              draft: '#64748b',
+              degraded: '#ef4444',
             };
-            const sc = statusColor[t.status] ?? "#64748b";
+            const sc = statusColor[t.status] ?? '#64748b';
             return (
               <div
                 key={t.id}
                 onClick={() => toggleTable(t.id)}
-                className={`table-card${selected ? " table-card--selected" : ""}${isIncomplete ? " table-card--incomplete" : ""}`}
-                title={isIncomplete ? `Missing: ${tableReadiness.missing.join(", ")}` : undefined}
+                className={`table-card${selected ? ' table-card--selected' : ''}${isIncomplete ? ' table-card--incomplete' : ''}`}
+                title={isIncomplete ? `Missing: ${tableReadiness.missing.join(', ')}` : undefined}
               >
                 <div className="table-card__header">
                   <div className="table-card__status-dot" style={{ background: sc }} />
-                  <span className={`table-card__name${selected ? " table-card__name--selected" : ""}`}>
+                  <span
+                    className={`table-card__name${selected ? ' table-card__name--selected' : ''}`}
+                  >
                     {t.name}
                   </span>
                   {isIncomplete && (
-                    <span className="table-card__incomplete-badge" title={`Missing: ${tableReadiness.missing.join(", ")}`}>
+                    <span
+                      className="table-card__incomplete-badge"
+                      title={`Missing: ${tableReadiness.missing.join(', ')}`}
+                    >
                       ⚠ Incomplete
                     </span>
                   )}
@@ -110,7 +130,7 @@ function RunTriggerPanel() {
                 </div>
                 {isIncomplete && (
                   <div className="table-card__missing">
-                    Missing: {tableReadiness.missing.join(", ")}
+                    Missing: {tableReadiness.missing.join(', ')}
                   </div>
                 )}
               </div>
@@ -121,18 +141,26 @@ function RunTriggerPanel() {
 
       {launched && (
         <div className="launch-success-banner">
-          <Check size={16} /> Evaluation run launched for {selectedTableIds.length} table{selectedTableIds.length > 1 ? "s" : ""} — results will appear in History below.
+          <Check size={16} /> Evaluation run launched for {selectedTableIds.length} table
+          {selectedTableIds.length > 1 ? 's' : ''} — results will appear in History below.
         </div>
       )}
 
       <button
         className="btn btn--primary launch-btn-full"
         disabled={selectedTableIds.length === 0 || triggerMut.isPending}
-        onClick={() => triggerMut.mutate()}
+        onClick={handleLaunch}
       >
-        {triggerMut.isPending
-          ? <><Spinner size={15} color="#fff" /> Running…</>
-          : <><PlayCircle size={16} /> Launch Evaluation ({selectedTableIds.length} table{selectedTableIds.length !== 1 ? "s" : ""})</>}
+        {triggerMut.isPending ? (
+          <>
+            <Spinner size={15} color="#fff" /> Running…
+          </>
+        ) : (
+          <>
+            <PlayCircle size={16} /> Launch Evaluation ({selectedTableIds.length} table
+            {selectedTableIds.length !== 1 ? 's' : ''})
+          </>
+        )}
       </button>
     </div>
   );
@@ -140,12 +168,12 @@ function RunTriggerPanel() {
 
 // ── EvaluationsPage ────────────────────────────────────────────────────────────
 export function EvaluationsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("history");
+  const [activeTab, setActiveTab] = useState<Tab>('history');
 
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: "history",   label: "Execution History", icon: <History size={14} /> },
-    { key: "schedules", label: "Scheduled Runs",    icon: <CalendarClock size={14} /> },
-    { key: "run",       label: "Run Controls",       icon: <PlayCircle size={14} /> },
+    { key: 'history', label: 'Execution History', icon: <History size={14} /> },
+    { key: 'schedules', label: 'Scheduled Runs', icon: <CalendarClock size={14} /> },
+    { key: 'run', label: 'Run Controls', icon: <PlayCircle size={14} /> },
   ];
 
   return (
@@ -159,10 +187,10 @@ export function EvaluationsPage() {
 
       {/* Tab bar */}
       <div className="tabs evaluations-page__tabs">
-        {TABS.map(tab => (
+        {TABS.map((tab) => (
           <button
             key={tab.key}
-            className={`tab-item evaluations-page__tab-item${activeTab === tab.key ? " tab-item--active" : ""}`}
+            className={`tab-item evaluations-page__tab-item${activeTab === tab.key ? ' tab-item--active' : ''}`}
             onClick={() => setActiveTab(tab.key)}
           >
             {tab.icon}
@@ -172,7 +200,7 @@ export function EvaluationsPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "history" && (
+      {activeTab === 'history' && (
         <div>
           <SectionHeader
             title="Execution History"
@@ -182,9 +210,9 @@ export function EvaluationsPage() {
         </div>
       )}
 
-      {activeTab === "schedules" && <ScheduleManager />}
+      {activeTab === 'schedules' && <ScheduleManager />}
 
-      {activeTab === "run" && <RunTriggerPanel />}
+      {activeTab === 'run' && <RunTriggerPanel />}
     </div>
   );
 }

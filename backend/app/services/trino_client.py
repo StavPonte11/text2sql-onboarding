@@ -5,35 +5,30 @@ Connects to the production Trino cluster using the trino-python-client.
 Falls back gracefully with a structured error if the cluster is unreachable.
 All queries are logged with execution time for observability.
 """
-import time
-import logging
-from typing import Any, List, Optional
 
+import logging
+import time
+from typing import Any
+
+import trino
 from pydantic import BaseModel
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class TrinoExecutionResult(BaseModel):
     success: bool
-    rows: List[List[Any]] = []
-    columns: List[str] = []
+    rows: list[list[Any]] = []
+    columns: list[str] = []
     row_count: int = 0
     execution_time_ms: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 def get_trino_connection():
     """Create a real Trino DBAPI connection from settings."""
-    try:
-        import trino
-    except ImportError:
-        raise RuntimeError(
-            "trino package not installed. Run: pip install trino"
-        )
-
-    from app.config import settings
-
     auth = None
     if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
         auth = trino.auth.CertificateAuthentication(
@@ -64,8 +59,6 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
     Returns a structured TrinoExecutionResult with rows, columns, and timing.
     Never raises — all errors are captured in error_message.
     """
-    from app.config import settings
-
     start_time = time.time()
     log_sql = sql.strip().replace("\n", " ")[:300]
     logger.info(f"[TrinoClient] table_id={table_id} | {log_sql}")
@@ -85,9 +78,7 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description] if cur.description else []
         execution_time_ms = int((time.time() - start_time) * 1000)
-        logger.info(
-            f"[TrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms"
-        )
+        logger.info(f"[TrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms")
         return TrinoExecutionResult(
             success=True,
             rows=[list(r) for r in rows],

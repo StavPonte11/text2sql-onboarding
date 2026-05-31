@@ -1,7 +1,7 @@
 """
 Table Health router — computes and stores a composite health score per table.
 
-Score formula (all normalized 0–1):
+Score formula (all normalized 0-1):
   health_score = 0.4 * eval_success_rate
                + 0.3 * feedback_ratio
                + 0.2 * data_quality_score
@@ -12,15 +12,25 @@ health_status:
   >= 0.45 → warning
   <  0.45 → critical
 """
+
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import (
-    Table, TableHealth, TableHealthRead, HealthStatus,
-    EvalRun, EvalStatus, EvalResult,
-    QueryFeedback, FeedbackRating,
-    TableProfile, ProfilingStatus,
+    EvalResult,
+    EvalRun,
+    EvalStatus,
+    FeedbackRating,
+    HealthStatus,
+    ProfilingStatus,
+    QueryFeedback,
+    Table,
+    TableHealth,
+    TableHealthRead,
+    TableProfile,
 )
 
 router = APIRouter(tags=["health"])
@@ -38,23 +48,30 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
     eval_success_rate = latest_run.score if latest_run else None
 
     # 2. Failure breakdown — from EvalResults linked to this table's runs
-    all_runs = session.exec(
-        select(EvalRun).where(EvalRun.table_id == table_id)
-    ).all()
+    all_runs = session.exec(select(EvalRun).where(EvalRun.table_id == table_id)).all()
     run_ids = [r.id for r in all_runs]
 
-    failure_wrong_table = failure_wrong_sql = failure_empty_result = failure_exec_error = 0
+    failure_wrong_table = failure_wrong_sql = failure_empty_result = (
+        failure_exec_error
+    ) = 0
     if run_ids:
         results = session.exec(
-            select(EvalResult).where(EvalResult.run_id.in_(run_ids), EvalResult.status == "fail")
+            select(EvalResult).where(
+                EvalResult.run_id.in_(run_ids), EvalResult.status == "fail"
+            )
         ).all()
         for r in results:
             et = r.error_type or ""
-            if et == "wrong_table":          failure_wrong_table += 1
-            elif et == "syntax_error":       failure_wrong_sql += 1
-            elif et == "empty_result":       failure_empty_result += 1
-            elif et == "execution_error":    failure_exec_error += 1
-            else:                            failure_wrong_sql += 1  # default bucket
+            if et == "wrong_table":
+                failure_wrong_table += 1
+            elif et == "syntax_error":
+                failure_wrong_sql += 1
+            elif et == "empty_result":
+                failure_empty_result += 1
+            elif et == "execution_error":
+                failure_exec_error += 1
+            else:
+                failure_wrong_sql += 1  # default bucket
 
     # 3. Feedback ratio
     feedback_all = session.exec(
@@ -68,7 +85,10 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
     # 4. Data quality score — from latest completed profile null_rate_avg (inverted)
     latest_profile = session.exec(
         select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.completed,
+        )
         .order_by(TableProfile.created_at.desc())
     ).first()
     data_quality_score: float | None = None
@@ -90,8 +110,10 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
         health_score = 0.0
 
     health_status = (
-        HealthStatus.good if health_score >= 0.75
-        else HealthStatus.warning if health_score >= 0.45
+        HealthStatus.good
+        if health_score >= 0.75
+        else HealthStatus.warning
+        if health_score >= 0.45
         else HealthStatus.critical
     )
 
@@ -152,4 +174,6 @@ def recompute_health(table_id: str, session: Session = Depends(get_session)):
 @router.get("/health/all", response_model=list[TableHealthRead])
 def get_all_health(session: Session = Depends(get_session)):
     """Returns the latest health record for every table (used in the table list view)."""
-    return session.exec(select(TableHealth).order_by(TableHealth.health_score.asc())).all()
+    return session.exec(
+        select(TableHealth).order_by(TableHealth.health_score.asc())
+    ).all()

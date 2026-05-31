@@ -11,6 +11,11 @@ services:
     volumes:
     - pg_data:/var/lib/postgresql/data
     - ./backend/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d text2sql"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   minio:
     image: minio/minio:RELEASE.2023-11-20T22-40-07Z
     ports:
@@ -29,7 +34,16 @@ services:
     volumes:
     - ./infra/trino/etc/catalog:/etc/trino/catalog
     depends_on:
-    - minio
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
   mysql:
     container_name: openmetadata_mysql
     image: docker.getcollate.io/openmetadata/db:1.6.1
@@ -374,11 +388,63 @@ services:
     expose:
     - 8080
     ports:
-    - 8080:8080
+    - 8082:8080
     volumes:
     - ingestion-volume-dag-airflow:/opt/airflow/dag_generated_configs
     - ingestion-volume-dags:/opt/airflow/dags
     - ingestion-volume-tmp:/tmp
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
+      - TRINO_HOST=trino
+      - TRINO_PORT=8080
+      - TRINO_USER=trino
+      - TRINO_PASSWORD=
+      - TRINO_CATALOG=minio
+      - TRINO_SCHEMA=simple_retail
+      - TRINO_HTTP_SCHEME=http
+      - TRINO_REQUEST_TIMEOUT=30.0
+      - TRINO_ENABLED=true
+      - OPENMETADATA_URL=http://openmetadata-server:8585
+      - OPENMETADATA_SERVICE_NAME=local_trino
+      - APP_ENV=production
+      - JWT_SECRET=dev-secret-change-in-production
+      - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
+      - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
+      - LANGFUSE_HOST=https://cloud.langfuse.com
+    depends_on:
+      db:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      openmetadata-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   pg_data: null
   minio_data: null
@@ -387,3 +453,4 @@ volumes:
   ingestion-volume-tmp: null
   es-data: null
   db-data: null
+
