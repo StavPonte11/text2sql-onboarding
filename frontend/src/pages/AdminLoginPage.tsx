@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, AlertCircle, Mail } from 'lucide-react';
+import { AlertCircle, Mail, ShieldCheck } from 'lucide-react';
+
 import { adminApi } from '../api/admin';
 import { useAdminStore } from '../store/adminStore';
 
@@ -47,17 +48,31 @@ export function AdminLoginPage() {
 
   return (
     <div className="layout" style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div className="card card--elevated" style={{ width: '100%', maxWidth: '420px', padding: '40px' }}>
+      <div
+        className="card card--elevated"
+        style={{ width: '100%', maxWidth: '420px', padding: '40px' }}
+      >
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <div style={{
-            display: 'inline-flex', padding: '18px',
-            background: 'linear-gradient(135deg, rgba(14,165,233,0.15), rgba(139,92,246,0.15))',
-            borderRadius: '50%', marginBottom: '18px',
-            border: '1px solid rgba(14,165,233,0.2)',
-          }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              padding: '18px',
+              background: 'linear-gradient(135deg, rgba(14,165,233,0.15), rgba(139,92,246,0.15))',
+              borderRadius: '50%',
+              marginBottom: '18px',
+              border: '1px solid rgba(14,165,233,0.2)',
+            }}
+          >
             <ShieldCheck size={34} color="var(--accent)" />
           </div>
-          <h2 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+          <h2
+            style={{
+              fontSize: '22px',
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              marginBottom: '8px',
+            }}
+          >
             Admin Access
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
@@ -66,11 +81,18 @@ export function AdminLoginPage() {
         </div>
 
         {error && (
-          <div style={{
-            marginBottom: '20px', padding: '12px 14px',
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
-            borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: '8px',
-          }}>
+          <div
+            style={{
+              marginBottom: '20px',
+              padding: '12px 14px',
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.2)',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
             <AlertCircle size={15} color="#ef4444" style={{ flexShrink: 0 }} />
             <span style={{ fontSize: '13.5px', color: '#ef4444' }}>{error}</span>
           </div>
@@ -98,14 +120,26 @@ export function AdminLoginPage() {
             id="admin-login-submit"
             type="submit"
             className="btn btn--primary"
-            style={{ width: '100%', justifyContent: 'center', padding: '11px 16px', fontSize: '14px' }}
+            style={{
+              width: '100%',
+              justifyContent: 'center',
+              padding: '11px 16px',
+              fontSize: '14px',
+            }}
             disabled={loading}
           >
             {loading ? 'Verifying…' : 'Sign In'}
           </button>
         </form>
 
-        <p style={{ marginTop: '20px', textAlign: 'center', fontSize: '12.5px', color: 'var(--text-muted)' }}>
+        <p
+          style={{
+            marginTop: '20px',
+            textAlign: 'center',
+            fontSize: '12.5px',
+            color: 'var(--text-muted)',
+          }}
+        >
           Access is restricted to users with admin privileges.
         </p>
       </div>

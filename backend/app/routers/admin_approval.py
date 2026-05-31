@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime
-from typing import List
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -37,65 +36,90 @@ def _get_admin_from_header(
     return require_admin(x_admin_email, session)
 
 
-def _sync_questions_to_production_dataset(table: Table, session: Session):
+def _sync_questions_to_production_dataset(session: Session):
     """
-    Appends the newly approved table's golden questions to the shared
-    'text2sql_production' Langfuse dataset.
+    Perform a full, true sync of ALL production tables' golden questions
+    into the shared 'text2sql_production' Langfuse dataset.
 
-    Uses append_questions_to_dataset (keyed on question_id) so:
-      - This is idempotent — calling it twice won't create duplicates.
-      - Existing questions from other production tables are never touched.
-      - If the dataset doesn't exist yet it will be created automatically.
+    This means:
+      - Questions from every table whose status == production are the
+        DESIRED state.
+      - Any dataset item not matching a current production question is
+        removed (prevents stale accumulation from demoted/rejected tables).
+      - New or changed questions are added / re-created automatically.
+
+    Should be called after every admin approval or rejection so the
+    dataset always reflects the live production question set.
     """
     if not langfuse_client.enabled:
-        logger.info(f"[AdminApproval] Langfuse disabled — skipping dataset sync for '{table.name}'")
+        logger.info(
+            "[AdminApproval] Langfuse disabled — skipping production dataset sync"
+        )
         return
 
-    questions = session.exec(
-        select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+    # Gather ALL production tables and their questions
+    prod_tables = session.exec(
+        select(Table).where(Table.status == TableStatus.production)
     ).all()
 
-    if not questions:
-        logger.warning(f"[AdminApproval] No golden questions found for '{table.name}' — skipping sync")
+    if not prod_tables:
+        logger.info(
+            "[AdminApproval] No production tables found — "
+            "clearing the production dataset of any leftover items."
+        )
+        langfuse_client.sync_dataset(PRODUCTION_DATASET_NAME, [])
         return
 
-    payload = [
-        {
-            "question_id": q.id,
-            "question_text": q.question,
-            "expected_sql": q.expected_sql or "",
-            "table_id": q.table_id,
-            "schema_name": table.schema_name,
-            "question_type": q.question_type.value if hasattr(q.question_type, "value") else str(q.question_type),
-            "difficulty": q.difficulty.value if hasattr(q.difficulty, "value") else str(q.difficulty),
-        }
-        for q in questions
-    ]
+    all_questions_payload: list[dict] = []
+    for table in prod_tables:
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+        ).all()
+        for q in questions:
+            all_questions_payload.append(
+                {
+                    "question_id": q.id,
+                    "question_text": q.question,
+                    "expected_sql": q.expected_sql or "",
+                    "table_id": q.table_id,
+                    "schema_name": table.schema_name,
+                    "question_type": (
+                        q.question_type.value
+                        if hasattr(q.question_type, "value")
+                        else str(q.question_type)
+                    ),
+                    "difficulty": (
+                        q.difficulty.value
+                        if hasattr(q.difficulty, "value")
+                        else str(q.difficulty)
+                    ),
+                }
+            )
+
+    logger.info(
+        f"[AdminApproval] Syncing {len(all_questions_payload)} questions "
+        f"from {len(prod_tables)} production table(s) to '{PRODUCTION_DATASET_NAME}'"
+    )
 
     try:
-        ok = langfuse_client.append_questions_to_dataset(PRODUCTION_DATASET_NAME, payload)
-        if ok:
-            logger.info(
-                f"[AdminApproval] Appended {len(payload)} questions for '{table.name}' "
-                f"to '{PRODUCTION_DATASET_NAME}'"
-            )
-        else:
-            logger.warning(
-                f"[AdminApproval] Some questions for '{table.name}' could not be appended "
-                f"to '{PRODUCTION_DATASET_NAME}'"
-            )
+        langfuse_client.sync_dataset(PRODUCTION_DATASET_NAME, all_questions_payload)
+        logger.info(
+            f"[AdminApproval] Production dataset sync complete: "
+            f"{len(all_questions_payload)} items."
+        )
     except Exception as e:
-        logger.error(f"[AdminApproval] Failed to append questions to production dataset: {e}")
+        logger.error(f"[AdminApproval] Failed to sync production dataset: {e}")
 
 
-
-@router.get("/pending", response_model=List[dict])
+@router.get("/pending", response_model=list[dict])
 def get_pending_tables(
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """Get all tables in 'verified' status (awaiting admin approval)."""
-    tables = session.exec(select(Table).where(Table.status == TableStatus.verified)).all()
+    tables = session.exec(
+        select(Table).where(Table.status == TableStatus.verified)
+    ).all()
 
     result = []
     for table in tables:
@@ -105,19 +129,27 @@ def get_pending_tables(
             .order_by(desc(EvalRun.created_at))
         ).first()
 
-        result.append({
-            "id": table.id,
-            "name": table.name,
-            "schema_name": table.schema_name,
-            "status": table.status,
-            "latest_run": {
-                "score": latest_run.score if latest_run else None,
-                "pass_rate": latest_run.pass_rate if latest_run else None,
-                "regression_detected": latest_run.regression_detected if latest_run else None,
-                "regression_delta": latest_run.regression_delta if latest_run else None,
-                "created_at": latest_run.created_at if latest_run else None,
-            } if latest_run else None,
-        })
+        result.append(
+            {
+                "id": table.id,
+                "name": table.name,
+                "schema_name": table.schema_name,
+                "status": table.status,
+                "latest_run": {
+                    "score": latest_run.score if latest_run else None,
+                    "pass_rate": latest_run.pass_rate if latest_run else None,
+                    "regression_detected": latest_run.regression_detected
+                    if latest_run
+                    else None,
+                    "regression_delta": latest_run.regression_delta
+                    if latest_run
+                    else None,
+                    "created_at": latest_run.created_at if latest_run else None,
+                }
+                if latest_run
+                else None,
+            }
+        )
     return result
 
 
@@ -125,7 +157,7 @@ def get_pending_tables(
 def approve_table(
     table_id: str,
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
     Approve a verified table for production.
@@ -141,7 +173,7 @@ def approve_table(
     if table.status != TableStatus.verified:
         raise HTTPException(
             status_code=400,
-            detail=f"Table must be in 'verified' status to be approved. Current: {table.status}"
+            detail=f"Table must be in 'verified' status to be approved. Current: {table.status}",
         )
 
     # 1. Promote status
@@ -150,8 +182,8 @@ def approve_table(
     session.add(table)
     session.commit()
 
-    # 2. Sync questions to shared production Langfuse dataset
-    _sync_questions_to_production_dataset(table, session)
+    # 2. Full sync of ALL production questions to the shared Langfuse dataset
+    _sync_questions_to_production_dataset(session)
 
     logger.info(
         f"[AdminApproval] Admin '{current_admin.email}' approved table '{table.name}' → production"
@@ -168,7 +200,7 @@ def reject_table(
     table_id: str,
     rejection: RejectionNote,
     current_admin: SecurityUser = Depends(_get_admin_from_header),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
     Reject a verified table, returning it to sandbox.
@@ -180,13 +212,16 @@ def reject_table(
     if table.status != TableStatus.verified:
         raise HTTPException(
             status_code=400,
-            detail=f"Table must be in 'verified' status to be rejected. Current: {table.status}"
+            detail=f"Table must be in 'verified' status to be rejected. Current: {table.status}",
         )
 
     table.status = TableStatus.sandbox
     table.updated_at = datetime.utcnow()
     session.add(table)
     session.commit()
+
+    # Sync the production dataset so rejected table's questions are removed
+    _sync_questions_to_production_dataset(session)
 
     logger.info(
         f"[AdminApproval] Admin '{current_admin.email}' rejected table '{table.name}' "

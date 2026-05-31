@@ -18,8 +18,17 @@ if config.config_file_name is not None:
 from sqlmodel import SQLModel
 
 from app.config import settings
+from app.models.models import *  # Import all models so SQLModel.metadata is populated
 
 target_metadata = SQLModel.metadata
+
+
+def include_object(object, name, type_, reflected, compare_to):
+    # Ignore raw Postgres tables used by Trino Iceberg JDBC catalog
+    if type_ == "table" and name in ("iceberg_tables", "iceberg_namespace_properties"):
+        return False
+    return True
+
 
 # Set the sqlalchemy url from our app settings
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
@@ -48,6 +57,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -69,7 +79,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

@@ -1,6 +1,7 @@
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test, describe, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
 import { TableList } from '../components/tables/TableList';
 import { EvaluationsPage } from '../pages/EvaluationsPage';
 import { renderWithProviders } from './setup';
@@ -8,7 +9,7 @@ import { renderWithProviders } from './setup';
 // Mock useNavigate from react-router-dom
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal() as any;
+  const actual = (await importOriginal()) as any;
   return {
     ...actual,
     useNavigate: () => mockNavigate,

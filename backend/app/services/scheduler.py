@@ -2,6 +2,7 @@
 scheduler.py — APScheduler-based background cron runner for evaluation schedules.
 Reads EvaluationSchedule rows from the DB on startup and registers cron jobs.
 """
+
 import logging
 from datetime import datetime
 
@@ -40,7 +41,9 @@ def _run_scheduled_evaluation(schedule_id: str):
             table_ids = [t.id for t in tables]
 
         if not table_ids:
-            logger.warning(f"[Scheduler] Schedule {schedule_id} has no tables to evaluate")
+            logger.warning(
+                f"[Scheduler] Schedule {schedule_id} has no tables to evaluate"
+            )
             return
 
         # Create runs
@@ -70,7 +73,9 @@ def _run_scheduled_evaluation(schedule_id: str):
         session.commit()
 
     if valid_table_ids:
-        logger.info(f"[Scheduler] Running {len(valid_table_ids)} tables for schedule {schedule_id}")
+        logger.info(
+            f"[Scheduler] Running {len(valid_table_ids)} tables for schedule {schedule_id}"
+        )
         _run_full_pipeline(valid_table_ids, run_ids, triggered_by="scheduler")
 
 
@@ -81,12 +86,13 @@ def _register_schedule(schedule: EvaluationSchedule):
         if len(parts) == 5:
             minute, hour, day, month, day_of_week = parts
         else:
-            logger.warning(f"Invalid cron expression: {schedule.cron_expression} — falling back to daily 2am")
+            logger.warning(
+                f"Invalid cron expression: {schedule.cron_expression} — falling back to daily 2am"
+            )
             minute, hour, day, month, day_of_week = "0", "2", "*", "*", "*"
 
         trigger = CronTrigger(
-            minute=minute, hour=hour, day=day,
-            month=month, day_of_week=day_of_week
+            minute=minute, hour=hour, day=day, month=month, day_of_week=day_of_week
         )
         scheduler.add_job(
             _run_scheduled_evaluation,
@@ -95,7 +101,9 @@ def _register_schedule(schedule: EvaluationSchedule):
             id=f"eval_schedule_{schedule.id}",
             replace_existing=True,
         )
-        logger.info(f"[Scheduler] Registered schedule {schedule.id} [{schedule.cron_expression}]")
+        logger.info(
+            f"[Scheduler] Registered schedule {schedule.id} [{schedule.cron_expression}]"
+        )
     except Exception as e:
         logger.error(f"[Scheduler] Failed to register schedule {schedule.id}: {e}")
 
@@ -104,7 +112,7 @@ def start_scheduler():
     """Load all enabled schedules from DB and start the scheduler."""
     with Session(engine) as session:
         schedules = session.exec(
-            select(EvaluationSchedule).where(EvaluationSchedule.enabled == True)
+            select(EvaluationSchedule).where(EvaluationSchedule.enabled)
         ).all()
         for s in schedules:
             _register_schedule(s)

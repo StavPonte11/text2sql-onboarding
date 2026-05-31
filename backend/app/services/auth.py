@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, select
 
@@ -7,11 +5,9 @@ from app.db.engine import get_session
 from app.models.models import SecurityUser
 
 
-def get_user_by_email(email: str, session: Session) -> Optional[SecurityUser]:
+def get_user_by_email(email: str, session: Session) -> SecurityUser | None:
     """Fetch a user from security.users by email."""
-    return session.exec(
-        select(SecurityUser).where(SecurityUser.email == email)
-    ).first()
+    return session.exec(select(SecurityUser).where(SecurityUser.email == email)).first()
 
 
 def require_admin(email: str, session: Session = Depends(get_session)) -> SecurityUser:

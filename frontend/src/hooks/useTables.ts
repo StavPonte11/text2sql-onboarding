@@ -1,7 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { tablesApi, enrichmentApi, questionsApi } from "../api/client";
-import { QUERY_KEYS, QUERY_CONFIG } from "../config/constants";
-import type { TableCreate, GoldenQuestionCreate } from "../types";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { enrichmentApi, questionsApi, tablesApi } from '../api/client';
+import { QUERY_CONFIG, QUERY_KEYS } from '../config/constants';
+
+import type { GoldenQuestionCreate, TableCreate } from '../types';
 
 // ── Tables list ────────────────────────────────────────────────────────────────
 export function useTables(params?: { status?: string; owner_id?: string; search?: string }) {

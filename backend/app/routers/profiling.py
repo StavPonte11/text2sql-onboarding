@@ -4,10 +4,11 @@ profiling.py — Production-grade profiling router.
 Replaces all stubs with real Trino-backed execution via profiling_engine.
 New endpoint: GET /tables/{id}/profile/context — LLM-ready context blob.
 """
+
 import logging
 import traceback
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
@@ -43,7 +44,9 @@ def _run_profile_job(table_id: str, profile_id: str):
         profile = session.get(TableProfile, profile_id)
         table = session.get(Table, table_id)
         if not profile or not table:
-            logger.error(f"[Profiling] profile_id={profile_id} or table_id={table_id} not found")
+            logger.error(
+                f"[Profiling] profile_id={profile_id} or table_id={table_id} not found"
+            )
             return
 
         # Determine next version
@@ -93,7 +96,9 @@ def _run_profile_job(table_id: str, profile_id: str):
         if not profile:
             return
 
-        profile.status = ProfilingStatus.completed if result.success else ProfilingStatus.failed
+        profile.status = (
+            ProfilingStatus.completed if result.success else ProfilingStatus.failed
+        )
         profile.version = result.version
         profile.row_count = result.row_count
         profile.sample_size = result.sample_size
@@ -145,7 +150,10 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
 
     completed = session.exec(
         select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.completed,
+        )
         .order_by(TableProfile.created_at.desc())
     ).first()
 
@@ -156,7 +164,9 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     ).first()
 
     if not completed and not latest:
-        raise HTTPException(status_code=404, detail="No profile found. Run POST /profile/run first.")
+        raise HTTPException(
+            status_code=404, detail="No profile found. Run POST /profile/run first."
+        )
 
     # If a new profile is running, return the old data but indicate it's running
     if completed and latest and latest.status == ProfilingStatus.running:
@@ -171,10 +181,10 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
 def run_all_profiles(
     background_tasks: BackgroundTasks,
     force: bool = False,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
-    Triggers profiling for all registered tables. 
+    Triggers profiling for all registered tables.
     Ideal for Airflow DAGs to keep profiles up-to-date.
     """
     tables = session.exec(select(Table)).all()
@@ -183,13 +193,17 @@ def run_all_profiles(
         # If not force, check for running profile
         if not force:
             stale = session.exec(
-                select(TableProfile)
-                .where(TableProfile.table_id == str(table.id), TableProfile.status == ProfilingStatus.running)
+                select(TableProfile).where(
+                    TableProfile.table_id == str(table.id),
+                    TableProfile.status == ProfilingStatus.running,
+                )
             ).first()
             if stale:
                 continue
 
-        profile = TableProfile(table_id=str(table.id), status=ProfilingStatus.running, version=1)
+        profile = TableProfile(
+            table_id=str(table.id), status=ProfilingStatus.running, version=1
+        )
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -197,12 +211,20 @@ def run_all_profiles(
         background_tasks.add_task(_run_profile_job, str(table.id), profile.id)
         count += 1
 
-    logger.info(f"[Profiling] Queued profiling job for {count} out of {len(tables)} tables.")
-    return {"message": f"Queued profiling for {count} tables.", "total_tables": len(tables), "queued": count}
+    logger.info(
+        f"[Profiling] Queued profiling job for {count} out of {len(tables)} tables."
+    )
+    return {
+        "message": f"Queued profiling for {count} tables.",
+        "total_tables": len(tables),
+        "queued": count,
+    }
 
 
 # ── POST /tables/{id}/profile/run ─────────────────────────────────────────────
-@router.post("/tables/{table_id}/profile/run", response_model=TableProfileRead, status_code=202)
+@router.post(
+    "/tables/{table_id}/profile/run", response_model=TableProfileRead, status_code=202
+)
 def run_table_profile(
     table_id: str,
     background_tasks: BackgroundTasks,
@@ -220,8 +242,10 @@ def run_table_profile(
 
     # Reset any stale 'running' profiles (e.g. from a server restart)
     stale = session.exec(
-        select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.running)
+        select(TableProfile).where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.running,
+        )
     ).all()
     for s in stale:
         s.status = ProfilingStatus.failed
@@ -229,7 +253,9 @@ def run_table_profile(
         session.add(s)
     if stale:
         session.commit()
-        logger.info(f"[Profiling] Reset {len(stale)} stale running profile(s) for {table_id}")
+        logger.info(
+            f"[Profiling] Reset {len(stale)} stale running profile(s) for {table_id}"
+        )
 
     profile = TableProfile(table_id=table_id, status=ProfilingStatus.running, version=1)
     session.add(profile)
@@ -237,16 +263,23 @@ def run_table_profile(
     session.refresh(profile)
 
     background_tasks.add_task(_run_profile_job, table_id, profile.id)
-    logger.info(f"[Profiling] Queued profiling job: table={table_id}, profile={profile.id}")
+    logger.info(
+        f"[Profiling] Queued profiling job: table={table_id}, profile={profile.id}"
+    )
     return profile
 
 
 # ── GET /tables/{id}/profile/columns ──────────────────────────────────────────
-@router.get("/tables/{table_id}/profile/columns", response_model=list[ColumnProfileRead])
+@router.get(
+    "/tables/{table_id}/profile/columns", response_model=list[ColumnProfileRead]
+)
 def get_column_profiles(table_id: str, session: Session = Depends(get_session)):
     profile = session.exec(
         select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.completed,
+        )
         .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
@@ -257,18 +290,26 @@ def get_column_profiles(table_id: str, session: Session = Depends(get_session)):
 
 
 # ── GET /tables/{id}/columns/{col}/profile ────────────────────────────────────
-@router.get("/tables/{table_id}/columns/{column}/profile", response_model=ColumnProfileRead)
-def get_single_column_profile(table_id: str, column: str, session: Session = Depends(get_session)):
+@router.get(
+    "/tables/{table_id}/columns/{column}/profile", response_model=ColumnProfileRead
+)
+def get_single_column_profile(
+    table_id: str, column: str, session: Session = Depends(get_session)
+):
     profile = session.exec(
         select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.completed,
+        )
         .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="No completed profile found")
     cp = session.exec(
-        select(ColumnProfile)
-        .where(ColumnProfile.profile_id == profile.id, ColumnProfile.column_name == column)
+        select(ColumnProfile).where(
+            ColumnProfile.profile_id == profile.id, ColumnProfile.column_name == column
+        )
     ).first()
     if not cp:
         raise HTTPException(status_code=404, detail=f"Column '{column}' not profiled")
@@ -277,7 +318,9 @@ def get_single_column_profile(table_id: str, column: str, session: Session = Dep
 
 # ── GET /tables/{id}/profile/context (LLM context injection) ──────────────────
 @router.get("/tables/{table_id}/profile/context")
-def get_profile_context(table_id: str, session: Session = Depends(get_session)) -> Dict[str, Any]:
+def get_profile_context(
+    table_id: str, session: Session = Depends(get_session)
+) -> dict[str, Any]:
     """
     Returns a compact, LLM-ready context blob built from the latest
     completed profile. Used by the TextToSQL context builder for
@@ -289,7 +332,10 @@ def get_profile_context(table_id: str, session: Session = Depends(get_session)) 
 
     profile = session.exec(
         select(TableProfile)
-        .where(TableProfile.table_id == table_id, TableProfile.status == ProfilingStatus.completed)
+        .where(
+            TableProfile.table_id == table_id,
+            TableProfile.status == ProfilingStatus.completed,
+        )
         .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
@@ -314,14 +360,20 @@ def get_profile_context(table_id: str, session: Session = Depends(get_session)) 
 
 
 # ── POST /tables/{id}/cross-profile ───────────────────────────────────────────
-@router.post("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead], status_code=201)
+@router.post(
+    "/tables/{table_id}/cross-profile",
+    response_model=list[CrossTableProfileRead],
+    status_code=201,
+)
 def cross_profile(table_id: str, session: Session = Depends(get_session)):
     """Discover cross-table join suggestions based on profiling statistics."""
     return discover_joins_for_table(table_id)
 
 
 # ── GET /tables/{id}/cross-profile ────────────────────────────────────────────
-@router.get("/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead])
+@router.get(
+    "/tables/{table_id}/cross-profile", response_model=list[CrossTableProfileRead]
+)
 def get_cross_profiles(table_id: str, session: Session = Depends(get_session)):
     return session.exec(
         select(CrossTableProfile).where(CrossTableProfile.source_table_id == table_id)

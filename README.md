@@ -37,6 +37,9 @@ pnpm dev
 
 ## 📖 Documentation Index
 
+### Developer & Code Quality Standards
+- [Linting, Formatting & Code Quality Guide](./docs/LINTING.md)
+
 ### Platform & Architecture
 - [Project Description & Mission](./docs/project_description.md)
 - [System Architecture](./docs/architecture.md)

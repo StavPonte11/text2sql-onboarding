@@ -4,9 +4,15 @@ html {
 
 .landing-layout {
   min-height: 100vh;
-  background-color: #0F172A; /* Slate 900 */
-  color: #F8FAFC; /* Slate 50 */
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #0f172a; /* Slate 900 */
+  color: #f8fafc; /* Slate 50 */
+  font-family:
+    'Plus Jakarta Sans',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   overflow-x: hidden;
   position: relative;
 }
@@ -24,9 +30,11 @@ html {
 }
 
 /* Typography & Utilities */
-.text-primary { color: #0EA5E9; }
+.text-primary {
+  color: #0ea5e9;
+}
 .text-gradient {
-  background: linear-gradient(135deg, #38BDF8, #818CF8);
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -46,7 +54,7 @@ button {
 }
 
 .btn-primary {
-  background-color: #0EA5E9;
+  background-color: #0ea5e9;
   color: white;
   border: none;
   padding: 8px 16px;
@@ -54,13 +62,13 @@ button {
 }
 
 .btn-primary:hover {
-  background-color: #0284C7;
+  background-color: #0284c7;
   transform: translateY(-1px);
 }
 
 .btn-secondary {
   background-color: transparent;
-  color: #F8FAFC;
+  color: #f8fafc;
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 8px 16px;
   font-size: 14px;
@@ -72,18 +80,19 @@ button {
 
 .btn-outline {
   background-color: transparent;
-  color: #F8FAFC;
+  color: #f8fafc;
   border: 1px solid #475569;
   padding: 8px 16px;
   font-size: 14px;
 }
 
 .btn-outline:hover {
-  border-color: #94A3B8;
+  border-color: #94a3b8;
   background-color: rgba(255, 255, 255, 0.05);
 }
 
-.btn-primary.large, .btn-outline.large {
+.btn-primary.large,
+.btn-outline.large {
   padding: 14px 28px;
   font-size: 16px;
   border-radius: 8px;
@@ -130,7 +139,7 @@ button {
 }
 
 .landing-nav-links a {
-  color: #94A3B8;
+  color: #94a3b8;
   text-decoration: none;
   font-size: 14px;
   font-weight: 500;
@@ -138,7 +147,7 @@ button {
 }
 
 .landing-nav-links a:hover {
-  color: #F8FAFC;
+  color: #f8fafc;
 }
 
 .landing-nav-actions {
@@ -163,7 +172,7 @@ button {
   display: inline-block;
   padding: 6px 12px;
   background-color: rgba(14, 165, 233, 0.1);
-  color: #38BDF8;
+  color: #38bdf8;
   border: 1px solid rgba(14, 165, 233, 0.2);
   border-radius: 100px;
   font-size: 13px;
@@ -182,7 +191,7 @@ button {
 .hero-subtitle {
   font-size: 18px;
   line-height: 1.6;
-  color: #94A3B8;
+  color: #94a3b8;
   margin: 0 0 40px 0;
   max-width: 520px;
 }
@@ -209,12 +218,12 @@ button {
 .stat-value {
   font-size: 24px;
   font-weight: 700;
-  color: #F8FAFC;
+  color: #f8fafc;
 }
 
 .stat-label {
   font-size: 13px;
-  color: #64748B;
+  color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -226,17 +235,17 @@ button {
 }
 
 .mockup-window {
-  background-color: #1E293B;
+  background-color: #1e293b;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
   overflow: hidden;
   z-index: 10;
   position: relative;
   transform-style: preserve-3d;
 }
-
-
 
 .mockup-header {
   background-color: rgba(15, 23, 42, 0.5);
@@ -256,14 +265,20 @@ button {
   height: 10px;
   border-radius: 50%;
 }
-.dot.red { background-color: #EF4444; }
-.dot.yellow { background-color: #F59E0B; }
-.dot.green { background-color: #10B981; }
+.dot.red {
+  background-color: #ef4444;
+}
+.dot.yellow {
+  background-color: #f59e0b;
+}
+.dot.green {
+  background-color: #10b981;
+}
 
 .mockup-title {
   margin: 0 auto;
   font-size: 12px;
-  color: #64748B;
+  color: #64748b;
   font-family: monospace;
 }
 
@@ -282,16 +297,16 @@ button {
 
 .chat-bubble.user {
   background-color: rgba(14, 165, 233, 0.1);
-  color: #E0F2FE;
+  color: #e0f2fe;
   align-self: flex-end;
   border-bottom-right-radius: 0;
   max-width: 80%;
 }
 
 .chat-bubble.system {
-  background-color: #0F172A;
+  background-color: #0f172a;
   border: 1px solid rgba(255, 255, 255, 0.05);
-  color: #F8FAFC;
+  color: #f8fafc;
   align-self: flex-start;
   border-bottom-left-radius: 0;
   width: 100%;
@@ -301,23 +316,29 @@ button {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
   line-height: 1.5;
-  color: #CBD5E1;
+  color: #cbd5e1;
   background: #020617;
   padding: 12px;
   border-radius: 6px;
   margin-bottom: 12px;
 }
 
-.sql-code .keyword { color: #C678DD; }
-.sql-code .function { color: #61AFEF; }
-.sql-code .string { color: #98C379; }
+.sql-code .keyword {
+  color: #c678dd;
+}
+.sql-code .function {
+  color: #61afef;
+}
+.sql-code .string {
+  color: #98c379;
+}
 
 .query-result {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #94A3B8;
+  color: #94a3b8;
   padding-top: 12px;
   border-top: 1px dashed rgba(255, 255, 255, 0.1);
 }
@@ -345,7 +366,7 @@ button {
 
 .logos-section p {
   font-size: 12px;
-  color: #64748B;
+  color: #64748b;
   letter-spacing: 1px;
   margin-bottom: 32px;
 }
@@ -387,7 +408,7 @@ button {
 
 .section-header p {
   font-size: 18px;
-  color: #94A3B8;
+  color: #94a3b8;
   max-width: 600px;
   margin: 0 auto;
 }
@@ -403,7 +424,9 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
   padding: 32px;
-  transition: border-color 0.2s, background-color 0.2s;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
 }
 
 .feature-card:hover {
@@ -415,7 +438,7 @@ button {
   width: 48px;
   height: 48px;
   background-color: rgba(14, 165, 233, 0.1);
-  color: #0EA5E9;
+  color: #0ea5e9;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -429,7 +452,7 @@ button {
 }
 
 .feature-card p {
-  color: #94A3B8;
+  color: #94a3b8;
   line-height: 1.6;
   margin: 0;
 }
@@ -455,7 +478,7 @@ button {
 
 .cta-content p {
   font-size: 20px;
-  color: #94A3B8;
+  color: #94a3b8;
   margin: 0 0 40px 0;
 }
 
@@ -484,7 +507,7 @@ button {
 }
 
 .footer-desc {
-  color: #64748B;
+  color: #64748b;
   margin-top: 16px;
   line-height: 1.6;
 }
@@ -495,7 +518,7 @@ button {
 }
 
 .footer-col h4 {
-  color: #F8FAFC;
+  color: #f8fafc;
   font-size: 14px;
   margin: 0 0 24px 0;
   text-transform: uppercase;
@@ -504,14 +527,14 @@ button {
 
 .footer-col a {
   display: block;
-  color: #94A3B8;
+  color: #94a3b8;
   text-decoration: none;
   margin-bottom: 12px;
   transition: color 0.2s;
 }
 
 .footer-col a:hover {
-  color: #F8FAFC;
+  color: #f8fafc;
 }
 
 .footer-bottom {
@@ -519,7 +542,7 @@ button {
   margin: 0 auto;
   padding-top: 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-  color: #64748B;
+  color: #64748b;
   font-size: 14px;
   text-align: center;
 }
@@ -531,15 +554,16 @@ button {
     text-align: center;
     padding-top: 120px;
   }
-  
+
   .hero-subtitle {
     margin: 0 auto 40px;
   }
-  
-  .hero-cta, .hero-stats {
+
+  .hero-cta,
+  .hero-stats {
     justify-content: center;
   }
-  
+
   .hero-visual {
     margin-top: 40px;
   }
@@ -549,20 +573,20 @@ button {
   .landing-nav-links {
     display: none;
   }
-  
+
   .hero-title {
     font-size: 40px;
   }
-  
+
   .hero-stats {
     flex-direction: column;
     gap: 24px;
   }
-  
+
   .footer-content {
     flex-direction: column;
   }
-  
+
   .footer-links {
     flex-wrap: wrap;
     gap: 40px;

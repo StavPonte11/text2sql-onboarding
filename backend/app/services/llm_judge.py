@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import httpx
 from pydantic import BaseModel, Field
@@ -57,11 +56,13 @@ EXECUTION ERROR (if any):
 {error_message}
 """
 
+
 class ReasoningOutput(BaseModel):
     table_selection: str
     sql_equivalence: str
     result_correctness: str
     hallucination: str
+
 
 class JudgeStructuredOutput(BaseModel):
     table_selection_correctness: float = Field(..., ge=0.0, le=1.0)
@@ -69,7 +70,7 @@ class JudgeStructuredOutput(BaseModel):
     result_correctness: float = Field(..., ge=0.0, le=1.0)
     hallucination_detected: bool
     reasoning: ReasoningOutput
-    failure_type: Optional[str] = None
+    failure_type: str | None = None
     confidence_in_judgment: float = Field(..., ge=0.0, le=1.0)
 
 
@@ -90,10 +91,13 @@ def build_judge_prompt(
         result_columns=", ".join(execution.columns) if execution.columns else "None",
         min_rows=expected_shape.row_count_min,
         max_rows=expected_shape.row_count_max,
-        expected_columns=", ".join(expected_shape.expected_columns) if expected_shape.expected_columns else "None",
+        expected_columns=", ".join(expected_shape.expected_columns)
+        if expected_shape.expected_columns
+        else "None",
         schema_block=schema_block,
-        error_message=execution.error_message or "None"
+        error_message=execution.error_message or "None",
     )
+
 
 def evaluate_with_llm(
     user_question: str,
@@ -108,16 +112,24 @@ def evaluate_with_llm(
     This simulates an external API call to OpenAI/Anthropic using the strict JSON schema.
     """
     user_prompt = build_judge_prompt(
-        user_question, expected_sql, generated_sql, execution, expected_shape, schema_block
+        user_question,
+        expected_sql,
+        generated_sql,
+        execution,
+        expected_shape,
+        schema_block,
     )
 
     logger.info(f"LLM Judge evaluating question: {user_question[:50]}...")
 
     from app.config import settings
+
     api_key = getattr(settings, "OPENAI_API_KEY", None)
 
     if not api_key:
-        logger.warning("OPENAI_API_KEY not found. LLM judge cannot run. Returning fallback 0.0 scores.")
+        logger.warning(
+            "OPENAI_API_KEY not found. LLM judge cannot run. Returning fallback 0.0 scores."
+        )
         return JudgeOutput(
             table_selection_correctness=0.0,
             sql_semantic_equivalence=0.0,
@@ -125,7 +137,7 @@ def evaluate_with_llm(
             hallucination_detected=False,
             failure_type="execution_error" if not execution.success else None,
             reasoning={"error": "OPENAI_API_KEY is missing. Evaluation skipped."},
-            confidence_in_judgment=0.0
+            confidence_in_judgment=0.0,
         )
 
     try:
@@ -135,18 +147,18 @@ def evaluate_with_llm(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
                 json={
                     "model": "gpt-4-turbo",
                     "messages": [
                         {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.0,
                     # Provide strict JSON schema matching the Pydantic models
-                    "response_format": {"type": "json_object"}
-                }
+                    "response_format": {"type": "json_object"},
+                },
             )
             response.raise_for_status()
 
@@ -163,17 +175,17 @@ def evaluate_with_llm(
             hallucination_detected=parsed_output.hallucination_detected,
             failure_type=parsed_output.failure_type,
             reasoning=parsed_output.reasoning.model_dump(),
-            confidence_in_judgment=parsed_output.confidence_in_judgment
+            confidence_in_judgment=parsed_output.confidence_in_judgment,
         )
 
     except Exception as e:
-        logger.error(f"LLM Judge API Error: {str(e)}")
+        logger.error(f"LLM Judge API Error: {e!s}")
         return JudgeOutput(
             table_selection_correctness=0.0,
             sql_semantic_equivalence=0.0,
             result_correctness=0.0,
             hallucination_detected=False,
             failure_type="execution_error",
-            reasoning={"error": f"LLM Judge API Error: {str(e)}"},
-            confidence_in_judgment=0.0
+            reasoning={"error": f"LLM Judge API Error: {e!s}"},
+            confidence_in_judgment=0.0,
         )

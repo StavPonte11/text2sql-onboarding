@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Install dependencies using uv.lock and pyproject.toml
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --no-dev --no-install-project
 
 COPY app ./app
 COPY alembic ./alembic

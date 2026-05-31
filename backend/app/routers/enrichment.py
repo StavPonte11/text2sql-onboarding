@@ -52,11 +52,8 @@ def create_enrichment(
         old_data = existing.data or {}
         new_data = payload.data or {}
 
-        SENSITIVE_KEYS = {"table_description", "schema", "columns", "schema_name"}
-        changed_keys = {
-            k for k in SENSITIVE_KEYS
-            if old_data.get(k) != new_data.get(k)
-        }
+        sensitive_keys = {"table_description", "schema", "columns", "schema_name"}
+        changed_keys = {k for k in sensitive_keys if old_data.get(k) != new_data.get(k)}
 
         if changed_keys:
             logger.warning(
@@ -66,8 +63,6 @@ def create_enrichment(
             table.status = TableStatus.degraded
             table.updated_at = datetime.utcnow()
             session.add(table)
-
-
 
     ev = EnrichmentVersion(
         table_id=table_id,

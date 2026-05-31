@@ -1,5 +1,6 @@
-import { create } from "zustand";
-import type { UserScope } from "../types";
+import { create } from 'zustand';
+
+import type { UserScope } from '../types';
 
 interface AppState {
   activeScope: UserScope | null;
