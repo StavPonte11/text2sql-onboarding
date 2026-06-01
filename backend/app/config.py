@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     )
     TRINO_SERVICE_URL: str | None = None
 
+    # Langfuse run-item finalization wait (used by wait_for_run_items to gate cleanup)
+    # Increase LANGFUSE_WAIT_MAX_ATTEMPTS on slow private-network deployments.
+    LANGFUSE_WAIT_MAX_ATTEMPTS: int = 20
+    LANGFUSE_WAIT_INITIAL_DELAY_SECS: float = 0.5
+    LANGFUSE_WAIT_BACKOFF_FACTOR: float = 1.5
+
     # JWT Config
     JWT_SECRET: str = "dev-secret-change-in-production"
     JWT_ALGORITHM: str = "HS256"
