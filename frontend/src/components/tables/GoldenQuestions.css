@@ -1,0 +1,54 @@
+/* GoldenQuestions styles */
+
+.questions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.questions-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.questions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.questions-table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.question-text-cell {
+  max-width: 260px;
+}
+
+.question-text {
+  font-weight: 500;
+}
+
+.sql-code-snippet {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.difficulty-badge {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.created-date-cell {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* File upload hidden input */
+.file-upload-input {
+  display: none;
+}

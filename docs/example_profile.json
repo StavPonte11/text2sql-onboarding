@@ -1,0 +1,118 @@
+{
+  "_comment": "Example of what a completed table_profiles.profile_json looks like after a real Trino run",
+  "table": "\"hive\".\"analytics\".\"orders\"",
+  "version": 3,
+  "computed_at": "2026-05-06T12:00:00.000000",
+  "row_count": 4823901,
+  "sample_size": 9847,
+  "column_count": 8,
+  "null_rate_avg": 0.063,
+  "columns": [
+    {
+      "name": "order_id",
+      "data_type": "bigint",
+      "semantic_type": "continuous",
+      "is_categorical": false,
+      "distinct_count": 4819833,
+      "null_rate": 0.0,
+      "stats": {
+        "type": "continuous",
+        "min": "1",
+        "max": "9999999",
+        "avg": 4823042.7,
+        "median": 4821500.0,
+        "distinct_count": 4819833,
+        "null_rate": 0.0,
+        "sample_values": ["1028", "9423", "88112", "441203", "2009941"]
+      }
+    },
+    {
+      "name": "status",
+      "data_type": "varchar",
+      "semantic_type": "categorical",
+      "is_categorical": true,
+      "distinct_count": 4,
+      "null_rate": 0.001,
+      "stats": {
+        "type": "categorical",
+        "values": ["completed", "pending", "cancelled", "refunded"],
+        "frequencies": {
+          "completed": 3421009,
+          "pending": 982033,
+          "cancelled": 390201,
+          "refunded": 30658
+        },
+        "distinct_count": 4,
+        "null_rate": 0.001
+      }
+    },
+    {
+      "name": "created_at",
+      "data_type": "timestamp",
+      "semantic_type": "time",
+      "is_categorical": false,
+      "distinct_count": 3981002,
+      "null_rate": 0.0,
+      "stats": {
+        "type": "time",
+        "min": "2020-01-01 00:00:00",
+        "max": "2026-05-05 23:59:59",
+        "avg": null,
+        "median": null,
+        "distinct_count": 3981002,
+        "null_rate": 0.0,
+        "sample_values": ["2024-03-12 08:23:11", "2025-01-07 14:01:44"]
+      }
+    },
+    {
+      "name": "total_amount",
+      "data_type": "double",
+      "semantic_type": "continuous",
+      "is_categorical": false,
+      "distinct_count": 2831029,
+      "null_rate": 0.031,
+      "stats": {
+        "type": "continuous",
+        "min": "0.01",
+        "max": "99999.99",
+        "avg": 128.43,
+        "median": 74.99,
+        "distinct_count": 2831029,
+        "null_rate": 0.031,
+        "sample_values": ["12.99", "349.00", "74.99"]
+      }
+    },
+    {
+      "name": "region",
+      "data_type": "varchar",
+      "semantic_type": "categorical",
+      "is_categorical": true,
+      "distinct_count": 7,
+      "null_rate": 0.008,
+      "stats": {
+        "type": "categorical",
+        "values": ["us-east", "us-west", "eu-central", "eu-west", "apac", "latam", "mena"],
+        "frequencies": {
+          "us-east": 1821003,
+          "us-west": 1102983,
+          "eu-central": 788213,
+          "eu-west": 712944,
+          "apac": 290041,
+          "latam": 72819,
+          "mena": 35898
+        },
+        "distinct_count": 7,
+        "null_rate": 0.008
+      }
+    }
+  ],
+  "insights": [
+    "~4,823,901 rows (COUNT(*)).",
+    "9,847 rows sampled via TABLESAMPLE BERNOULLI(10).",
+    "2 categorical column(s): status, region.",
+    "Time columns: created_at — suitable for range filters.",
+    "High null rate (>20%): total_amount — consider IS NOT NULL guard in queries.",
+    "PK candidates: order_id."
+  ],
+  "errors": []
+}

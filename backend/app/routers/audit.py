@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
+
 from app.db.engine import get_session
 from app.models.models import AuditQuery, AuditQueryRead
 

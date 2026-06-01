@@ -1,4 +1,9 @@
-from sqlmodel import SQLModel, create_engine, Session
+import os
+
+from alembic.config import Config
+from sqlmodel import Session, create_engine
+
+from alembic import command
 from app.config import settings
 
 connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
@@ -6,7 +11,11 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args=connect_a
 
 
 def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
+    """Run Alembic migrations to update the database schema."""
+    # Path to alembic.ini
+    alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "../../alembic.ini"))
+    # Run the migrations
+    command.upgrade(alembic_cfg, "head")
 
 
 def get_session():

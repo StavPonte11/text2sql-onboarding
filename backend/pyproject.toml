@@ -1,0 +1,100 @@
+[project]
+name = "text2sql-backend"
+version = "0.1.0"
+description = "TextToSQL Studio backend API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+    "sqlmodel==0.0.22",
+    "alembic==1.14.0",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "langfuse==2.56.2",
+    "python-dotenv==1.0.1",
+    "httpx==0.28.1",
+    "apscheduler==3.10.4",
+    "trino==0.328.0",
+    "psycopg2-binary==2.9.9",
+    "pandas==2.2.3",
+    "openpyxl==3.1.5",
+    "python-multipart==0.0.20",
+    "python-jose[cryptography]==3.3.0",
+    "passlib[bcrypt]==1.7.4",
+    "requests==2.32.3",
+    "minio>=7.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "types-requests>=2.32.0",
+    "types-passlib>=1.7.7.20240827",
+    "types-python-jose>=3.3.4.20240106",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort / import sorting
+    "B",   # flake8-bugbear (bugs/anti-patterns)
+    "C90", # mccabe complexity
+    "UP",  # pyupgrade (modern python syntax)
+    "N",   # pep8-naming
+    "T20", # flake8-print (disallow print in production code)
+    "RUF", # Ruff-specific rules
+]
+ignore = [
+    "E501", # Let formatter handle line wrapping where needed
+    "B904", # Allow raising without 'from' in HTTP exception wrappers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/seed.py" = ["T201"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.Header", "fastapi.Cookie", "fastapi.Security", "fastapi.Form", "fastapi.File"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["app"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+exclude = ["alembic/"]
+plugins = [
+    "pydantic.mypy"
+]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disable_error_code = [
+    "attr-defined",
+    "union-attr",
+    "arg-type",
+    "assignment",
+    "list-item",
+    "type-arg",
+    "var-annotated"
+]
+
+

@@ -1,0 +1,28 @@
+{
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "prepare": "husky",
+    "lint": "pnpm --filter text2sql-studio-frontend run lint && backend/.venv/bin/ruff check backend/app",
+    "lint:fix": "pnpm --filter text2sql-studio-frontend run lint:fix && backend/.venv/bin/ruff check backend/app --fix",
+    "format": "pnpm --filter text2sql-studio-frontend run format && backend/.venv/bin/ruff format backend/app",
+    "type-check": "pnpm --filter text2sql-studio-frontend run type-check && backend/.venv/bin/mypy backend/app"
+  },
+  "lint-staged": {
+    "frontend/src/**/*.{ts,tsx,js,jsx}": [
+      "pnpm --filter text2sql-studio-frontend exec eslint --fix",
+      "pnpm --filter text2sql-studio-frontend exec prettier --write"
+    ],
+    "frontend/src/**/*.css": [
+      "pnpm --filter text2sql-studio-frontend exec prettier --write"
+    ],
+    "backend/app/**/*.py": [
+      "backend/.venv/bin/ruff check --fix",
+      "backend/.venv/bin/ruff format"
+    ]
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "typescript": "^6.0.3"
+  }
+}

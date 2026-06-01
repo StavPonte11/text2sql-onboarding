@@ -1,18 +1,27 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ConfigProvider, App as AntApp, theme } from "antd";
-import { Sidebar } from "./components/layout/Sidebar";
-import { ScopeBanner } from "./components/layout/ScopeBanner";
-import { TableList } from "./components/tables/TableList";
-import { TableDetails } from "./components/tables/TableDetails";
-import { OnboardingWizard } from "./components/wizard/OnboardingWizard";
-import { MonitoringPage } from "./components/monitoring/MonitoringPage";
-import { ScopesPage } from "./pages/ScopesPage";
-import { SandboxPage } from "./pages/SandboxPage";
-import { useTranslation } from "react-i18next";
-import { Globe } from "lucide-react";
-import "./styles/globals.css";
-import "./i18n";
+import { useTranslation } from 'react-i18next';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { App as AntApp, ConfigProvider, theme } from 'antd';
+import { Globe } from 'lucide-react';
+
+import { ScopeBanner } from './components/layout/ScopeBanner';
+import { Sidebar } from './components/layout/Sidebar';
+import { MonitoringPage } from './components/monitoring/MonitoringPage';
+import { TableDetails } from './components/tables/TableDetails';
+import { TableList } from './components/tables/TableList';
+import { OnboardingWizard } from './components/wizard/OnboardingWizard';
+import { AdminLoginPage } from './pages/AdminLoginPage';
+import { AdminPanelPage } from './pages/AdminPanelPage';
+import { AnalyticsPage } from './pages/AnalyticsPage';
+import { ControlCenterPage } from './pages/ControlCenterPage';
+import { EvaluationsPage } from './pages/EvaluationsPage';
+import { LandingPage } from './pages/LandingPage';
+import { ScopesPage } from './pages/ScopesPage';
+import { useAdminStore } from './store/adminStore';
+
+import './styles/globals.css';
+
+import './i18n';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,21 +31,29 @@ const queryClient = new QueryClient({
 
 function LanguageToggle() {
   const { i18n } = useTranslation();
-  const isHe = i18n.language === "he";
+  const isHe = i18n.language === 'he';
   return (
     <button
       className="lang-toggle"
       onClick={() => {
-        const next = isHe ? "en" : "he";
+        const next = isHe ? 'en' : 'he';
         i18n.changeLanguage(next);
-        document.documentElement.dir = next === "he" ? "rtl" : "ltr";
+        document.documentElement.dir = next === 'he' ? 'rtl' : 'ltr';
         document.documentElement.lang = next;
       }}
     >
       <Globe size={13} />
-      {isHe ? "EN" : "עב"}
+      {isHe ? 'EN' : 'עב'}
     </button>
   );
+}
+
+function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAdminStore((state) => state.isAuthenticated);
+  if (!isAuthenticated) {
+    return <Navigate to="/admin/login" replace />;
+  }
+  return <>{children}</>;
 }
 
 function AppLayout() {
@@ -45,17 +62,29 @@ function AppLayout() {
       <Sidebar />
       <div className="layout__content">
         <ScopeBanner />
-        <div style={{ position: "absolute", top: 12, right: 16, zIndex: 100 }}>
+        <div className="layout__lang-toggle">
           <LanguageToggle />
         </div>
         <Routes>
-          <Route path="/" element={<Navigate to="/tables" replace />} />
+          <Route path="/control-center" element={<ControlCenterPage />} />
+          <Route path="/evaluations" element={<EvaluationsPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/tables" element={<TableList />} />
-          <Route path="/tables/:id" element={<TableDetails />} />
+          <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
+          <Route path="/tables/:id/:tab" element={<TableDetails />} />
           <Route path="/wizard" element={<OnboardingWizard />} />
-          <Route path="/sandbox" element={<SandboxPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedAdminRoute>
+                <AdminPanelPage />
+              </ProtectedAdminRoute>
+            }
+          />
+          {/* Catch-all redirect for unmatched inner routes */}
+          <Route path="*" element={<Navigate to="/control-center" replace />} />
         </Routes>
       </div>
     </div>
@@ -64,11 +93,24 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { colorPrimary: '#6366f1' } }}>
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: {
+          colorPrimary: '#0ea5e9',
+          fontFamily: "'Plus Jakarta Sans', sans-serif",
+          borderRadius: 6,
+        },
+      }}
+    >
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <BrowserRouter>
-            <AppLayout />
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/admin/login" element={<AdminLoginPage />} />
+              <Route path="/*" element={<AppLayout />} />
+            </Routes>
           </BrowserRouter>
         </QueryClientProvider>
       </AntApp>

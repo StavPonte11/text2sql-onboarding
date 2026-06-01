@@ -1,0 +1,16 @@
+[
+  {
+    "question": "What is the total number of orders?",
+    "expected_sql": "SELECT COUNT(*) FROM orders"
+  },
+  {
+    "question_text": "List the top 5 customers by revenue",
+    "sql": "SELECT customer_name, SUM(amount) as revenue FROM orders GROUP BY customer_name ORDER BY revenue DESC LIMIT 5",
+    "question_type": "complex"
+  },
+  {
+    "question": "Show all orders from the last 30 days",
+    "expected_sql": "SELECT * FROM orders WHERE order_date >= current_date - interval '30' day",
+    "difficulty": "simple"
+  }
+]
