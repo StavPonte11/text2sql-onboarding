@@ -6,12 +6,14 @@ detects categorical vs continuous columns, and produces structured output
 ready for PostgreSQL persistence and LLM context injection.
 """
 
+import concurrent.futures
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.config import settings
 from app.services.trino_client import execute_query_sync
 
 logger = logging.getLogger(__name__)
@@ -295,10 +297,6 @@ def _parse_row_fields(row_type: str) -> list[tuple[str, str]]:
             fields.append((parts[0], "unknown"))
     return fields
 
-
-import concurrent.futures
-
-from app.config import settings
 
 _global_trino_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=settings.PROFILER_MAX_CONCURRENT_QUERIES
@@ -910,9 +908,7 @@ def run_table_profiling(
             result.column_count = len(columns_meta)
 
     # Step 4: Per-column analysis (Parallel execution across columns)
-    col_stats: List[ColumnStats] = []
-
-    import concurrent.futures
+    col_stats: list[ColumnStats] = []
 
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=min(30, len(columns_meta) or 1)
@@ -930,7 +926,7 @@ def run_table_profiling(
                 )
             )
 
-        for future, (col_name, data_type) in zip(futures, columns_meta):
+        for future, (col_name, data_type) in zip(futures, columns_meta, strict=False):
             logger.info("[ProfilingEngine]   → %s (%s)", col_name, data_type)
             try:
                 cs = future.result()

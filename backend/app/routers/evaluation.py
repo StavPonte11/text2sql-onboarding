@@ -453,6 +453,10 @@ def _run_candidate_eval(
 
     Using a fixed name ensures there is always exactly one candidate dataset
     in Langfuse regardless of how many promotions have been attempted.
+
+    Cleanup of dataset items is gated on confirmed Langfuse run item
+    finalization (via wait_for_run_items) to avoid the race condition where
+    items are deleted before the server finishes persisting evaluation run items.
     """
     run = EvalRun(
         table_id=table.id,
@@ -467,117 +471,136 @@ def _run_candidate_eval(
     question_scores: list[float] = []
 
     dataset_name = "text2sql_candidate"
+    run_name = f"{run_name_prefix}-Candidate"
 
     score = 0.0
-    try:
-        if langfuse_client.enabled:
-            try:
-                langfuse_client.ensure_dataset_synced(
-                    dataset_name, _build_questions_payload(questions, table)
-                )
-
-                evaluator = TextToSQLEvaluator(
-                    run_name=f"{run_name_prefix}-Candidate",
-                    session=session,
-                    table_id=table.id,
-                    run_id=run.id,
-                    question_scores=question_scores,
-                )
-                evaluator.run_single_dataset(dataset_name)
-            except Exception as e:
-                logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
-
-        if not question_scores:
-            question_scores = [float(random.choice([0, 1])) for _ in questions]
-
-        # Generate stubs for exact and ranking based on the same length
-
-        question_scores_contains = question_scores
-        question_scores_exact = [
-            float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-        ]
-        question_scores_ranking = [
-            float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-        ]
-
-        avg_score_contains = (
-            round(sum(question_scores_contains) / len(question_scores_contains), 3)
-            if question_scores_contains
-            else 0.0
-        )
-        pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-        pass_rate_contains = (
-            round(pass_count_contains / len(question_scores_contains), 3)
-            if question_scores_contains
-            else 1.0
-        )
-
-        avg_score_exact = (
-            round(sum(question_scores_exact) / len(question_scores_exact), 3)
-            if question_scores_exact
-            else 0.0
-        )
-        pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-        (
-            round(pass_count_exact / len(question_scores_exact), 3)
-            if question_scores_exact
-            else 1.0
-        )
-
-        avg_score_ranking = (
-            round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
-            if question_scores_ranking
-            else 0.0
-        )
-        pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-        (
-            round(pass_count_ranking / len(question_scores_ranking), 3)
-            if question_scores_ranking
-            else 1.0
-        )
-
-        run.score = avg_score_contains
-        run.pass_rate = pass_rate_contains
-        run.fail_rate = round(1.0 - pass_rate_contains, 3)
-        run.total_questions = len(question_scores_contains)
-        run.status = EvalStatus.completed
-        run.completed_at = datetime.utcnow()
-        run.dimension_averages = {
-            "contains_execution_accuracy": avg_score_contains,
-            "exact_execution_accuracy": avg_score_exact,
-            "ranking_accuracy": avg_score_ranking,
-        }
-        session.add(run)
-
-        # Persist per-question EvalResult rows so the report endpoint
-        # can show per-question scores in the UI.
-        existing_results = session.exec(
-            select(EvalResult).where(EvalResult.run_id == run.id)
-        ).first()
-        if not existing_results:
-            for q, score in zip(questions, question_scores_contains, strict=False):
-                session.add(
-                    EvalResult(
-                        run_id=run.id,
-                        question_id=q.id,
-                        score=score,
-                        status="pass" if score >= 0.50 else "fail",
-                    )
-                )
-
-        session.commit()
-
-        logger.info(
-            f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
-            f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
-        )
-    finally:
-        # User requested: remove the items after the evaluation so they don't accumulate
-        if langfuse_client.enabled:
-            langfuse_client.clear_dataset(dataset_name)
-            logger.info(
-                f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after evaluation."
+    if langfuse_client.enabled:
+        try:
+            langfuse_client.ensure_dataset_synced(
+                dataset_name, _build_questions_payload(questions, table)
             )
+
+            evaluator = TextToSQLEvaluator(
+                run_name=run_name,
+                session=session,
+                table_id=table.id,
+                run_id=run.id,
+                question_scores=question_scores,
+            )
+            evaluator.run_single_dataset(dataset_name)
+        except Exception as e:
+            logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
+
+    if not question_scores:
+        question_scores = [float(random.choice([0, 1])) for _ in questions]
+
+    # Generate stubs for exact and ranking based on the same length
+
+    question_scores_contains = question_scores
+    question_scores_exact = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
+    question_scores_ranking = [
+        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
+    ]
+
+    avg_score_contains = (
+        round(sum(question_scores_contains) / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 0.0
+    )
+    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
+    pass_rate_contains = (
+        round(pass_count_contains / len(question_scores_contains), 3)
+        if question_scores_contains
+        else 1.0
+    )
+
+    avg_score_exact = (
+        round(sum(question_scores_exact) / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 0.0
+    )
+    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
+    (
+        round(pass_count_exact / len(question_scores_exact), 3)
+        if question_scores_exact
+        else 1.0
+    )
+
+    avg_score_ranking = (
+        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 0.0
+    )
+    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
+    (
+        round(pass_count_ranking / len(question_scores_ranking), 3)
+        if question_scores_ranking
+        else 1.0
+    )
+
+    run.score = avg_score_contains
+    run.pass_rate = pass_rate_contains
+    run.fail_rate = round(1.0 - pass_rate_contains, 3)
+    run.total_questions = len(question_scores_contains)
+    run.status = EvalStatus.completed
+    run.completed_at = datetime.utcnow()
+    run.dimension_averages = {
+        "contains_execution_accuracy": avg_score_contains,
+        "exact_execution_accuracy": avg_score_exact,
+        "ranking_accuracy": avg_score_ranking,
+    }
+    session.add(run)
+
+    # Persist per-question EvalResult rows so the report endpoint
+    # can show per-question scores in the UI.
+    existing_results = session.exec(
+        select(EvalResult).where(EvalResult.run_id == run.id)
+    ).first()
+    if not existing_results:
+        for q, score in zip(questions, question_scores_contains, strict=False):
+            session.add(
+                EvalResult(
+                    run_id=run.id,
+                    question_id=q.id,
+                    score=score,
+                    status="pass" if score >= 0.50 else "fail",
+                )
+            )
+
+    session.commit()
+
+    logger.info(
+        f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
+        f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
+    )
+
+    # ── Gate cleanup on confirmed Langfuse run item finalization ───────────────
+    # We must NOT delete dataset items until Langfuse has fully persisted all
+    # evaluation run items server-side.  Deleting before that causes the run to
+    # record 0 items (race condition, especially on slow private networks).
+    #
+    # wait_for_run_items polls GET /api/public/dataset-run-items until the
+    # expected count is reached — deterministic, state-driven, no fixed sleep.
+    if langfuse_client.enabled:
+        finalized = langfuse_client.wait_for_run_items(
+            dataset_name=dataset_name,
+            run_name=run_name,
+            expected_count=len(questions),
+        )
+        if not finalized:
+            logger.warning(
+                "[Promotion/Phase-B] Langfuse run items were not fully persisted "
+                "within the configured wait window. Proceeding with cleanup to avoid "
+                "blocking the promotion pipeline. Check LANGFUSE_WAIT_MAX_ATTEMPTS "
+                "and LANGFUSE_WAIT_INITIAL_DELAY_SECS if this happens repeatedly."
+            )
+        langfuse_client.clear_dataset(dataset_name)
+        logger.info(
+            f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after "
+            f"confirmed evaluation completion."
+        )
 
     return avg_score_contains
 

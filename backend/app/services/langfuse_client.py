@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -525,7 +526,7 @@ class LangfuseDatasetService:
                 )
                 if del_res.status_code != 200:
                     self.logger.error(
-                        f"[LangfuseDatasetService] Failed to delete item {item['id']}: {del_res.text}"
+                        f"[LangfuseDatasetService] Failed to delete item {item['id']}: {item['id']} {del_res.text}"
                     )
                 else:
                     self.logger.debug(
@@ -556,6 +557,113 @@ class LangfuseDatasetService:
         )
         result = self.sync_dataset(dataset_name, questions)
         return result is not None
+
+    def wait_for_run_items(
+        self,
+        dataset_name: str,
+        run_name: str,
+        expected_count: int,
+        *,
+        max_attempts: int | None = None,
+        initial_delay: float | None = None,
+        backoff_factor: float | None = None,
+    ) -> bool:
+        """
+        Poll the Langfuse API until the dataset run has ``expected_count`` run
+        items persisted, or until the attempt budget is exhausted.
+
+        This is the synchronisation point that gates dataset-item cleanup after
+        an evaluation run.  Deleting items before this returns True causes
+        Langfuse to record 0 run items for the evaluation (race condition on
+        slow / private-network deployments).
+
+        The polling uses exponential back-off so it reacts as soon as
+        Langfuse is ready rather than waiting a fixed duration.  All tuning
+        knobs have environment-variable overrides:
+
+            LANGFUSE_WAIT_MAX_ATTEMPTS        (default 20)
+            LANGFUSE_WAIT_INITIAL_DELAY_SECS  (default 0.5)
+            LANGFUSE_WAIT_BACKOFF_FACTOR      (default 1.5)
+
+        Args:
+            dataset_name:   Langfuse dataset name to inspect.
+            run_name:       Evaluation run name to count items for.
+            expected_count: Number of run items that must be present.
+            max_attempts:   Override for LANGFUSE_WAIT_MAX_ATTEMPTS.
+            initial_delay:  Override for LANGFUSE_WAIT_INITIAL_DELAY_SECS.
+            backoff_factor: Override for LANGFUSE_WAIT_BACKOFF_FACTOR.
+
+        Returns:
+            True  — ``expected_count`` items confirmed before the budget ran out.
+            False — timed out; caller should log a warning and proceed anyway.
+        """
+        if not self.enabled:
+            return True  # Nothing to wait for when Langfuse is disabled.
+
+        if expected_count <= 0:
+            return True  # Vacuously satisfied.
+
+        _max_attempts = (
+            max_attempts
+            if max_attempts is not None
+            else settings.LANGFUSE_WAIT_MAX_ATTEMPTS
+        )
+        _initial_delay = (
+            initial_delay
+            if initial_delay is not None
+            else settings.LANGFUSE_WAIT_INITIAL_DELAY_SECS
+        )
+        _backoff_factor = (
+            backoff_factor
+            if backoff_factor is not None
+            else settings.LANGFUSE_WAIT_BACKOFF_FACTOR
+        )
+
+        delay = _initial_delay
+        for attempt in range(1, _max_attempts + 1):
+            try:
+                # Use the SDK's datasets.get_run() — hits the correct v3 endpoint:
+                #   GET /api/public/datasets/{dataset_name}/runs/{run_name}
+                # Returns DatasetRunWithItems whose .dataset_run_items is the
+                # authoritative list of persisted run items.
+                #
+                # The legacy /api/public/dataset-run-items?runName=... endpoint
+                # returns 400 "expected string got undefined" on Langfuse v3
+                # because the query-parameter name changed.  Using the SDK
+                # avoids that problem entirely.
+                run_with_items = self._tracer.client.client.datasets.get_run(
+                    dataset_name, run_name
+                )
+                total = len(run_with_items.dataset_run_items)
+                self.logger.debug(
+                    f"[LangfuseDatasetService] wait_for_run_items: "
+                    f"{total}/{expected_count} items persisted "
+                    f"(attempt {attempt}/{_max_attempts})"
+                )
+                if total >= expected_count:
+                    self.logger.info(
+                        f"[LangfuseDatasetService] wait_for_run_items: "
+                        f"confirmed {total}/{expected_count} items after {attempt} attempt(s) "
+                        f"for run '{run_name}' on dataset '{dataset_name}'."
+                    )
+                    return True
+            except Exception as exc:
+                self.logger.warning(
+                    f"[LangfuseDatasetService] wait_for_run_items: "
+                    f"request error on attempt {attempt}: {exc}"
+                )
+
+            if attempt < _max_attempts:
+                time.sleep(delay)
+                delay = round(delay * _backoff_factor, 3)
+
+        self.logger.warning(
+            f"[LangfuseDatasetService] wait_for_run_items: timed out after "
+            f"{_max_attempts} attempts waiting for {expected_count} run items "
+            f"(run='{run_name}', dataset='{dataset_name}'). "
+            f"Proceeding — dataset cleanup may race with Langfuse ingestion."
+        )
+        return False
 
     def link_trace_to_dataset_run(self, **kwargs) -> None:
         if not self.enabled:
