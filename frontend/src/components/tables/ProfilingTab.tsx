@@ -517,7 +517,7 @@ function MiniMetric({ col, totalRows }: { col: ColumnProfile; totalRows?: number
     'tinyint',
   ];
   if (
-    col.semantic_type === 'continuous' ||
+    col.semantic_type === 'continuous' &&
     NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '')
   ) {
     const bins = col.stats_json?.histogram
@@ -809,7 +809,7 @@ function ColumnReportRow({
                   'tinyint',
                 ];
                 const isNumeric =
-                  col.semantic_type === 'continuous' ||
+                  col.semantic_type === 'continuous' &&
                   NUMERIC_DTYPES.includes(col.data_type?.toLowerCase() || '');
                 const isTime = col.semantic_type === 'time' || col.is_time;
                 const isCat =

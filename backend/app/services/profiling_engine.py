@@ -13,7 +13,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.services.trino_client import TrinoExecutionResult, execute_query_sync
+from app.config import settings
+from app.services.trino_client import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
@@ -297,20 +298,26 @@ def _parse_row_fields(row_type: str) -> list[tuple[str, str]]:
     return fields
 
 
+_global_trino_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=settings.PROFILER_MAX_CONCURRENT_QUERIES
+)
+
+
 def execute_with_timeout(query: str, table_id: str):
-    """Runs execute_query_sync in a thread and enforces a hard wall-clock timeout."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(execute_query_sync, query, table_id)
-        try:
-            return future.result(timeout=QUERY_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
-            logger.warning(
-                f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}"
-            )
-            return TrinoExecutionResult(
-                success=False,
-                error_message=f"Query timed out after {QUERY_TIMEOUT_SECONDS}s",
-            )
+    """Runs execute_query_sync in a global thread pool and enforces a hard wall-clock timeout."""
+    future = _global_trino_executor.submit(execute_query_sync, query, table_id)
+    try:
+        return future.result(timeout=QUERY_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        logger.warning(
+            f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}"
+        )
+        from app.services.trino_client import TrinoExecutionResult
+
+        return TrinoExecutionResult(
+            success=False,
+            error_message=f"Query timed out after {QUERY_TIMEOUT_SECONDS}s",
+        )
 
 
 def _detect_semantic_type(is_categorical: bool, is_geo: bool, is_time: bool) -> str:
@@ -501,6 +508,8 @@ def _analyze_row_column(
                     max_unix = _safe_float(row[5])
 
                     if min_unix is not None and max_unix is not None:
+                        from datetime import datetime
+
                         cast_expr = f"to_unixtime(CAST({field_path} AS TIMESTAMP))"
                         hist_r = execute_with_timeout(
                             build_generic_histogram_query(
@@ -613,22 +622,32 @@ def _analyze_column(
         }
         return stats
 
-    # 1. Exact distinct count
-    r = execute_with_timeout(build_distinct_count_query(fqn, col_name), table_id)
-    if r.success and r.rows:
-        stats.distinct_count = int(r.rows[0][0] or 0)
-    else:
-        stats.errors.append(f"distinct_count: {r.error_message}")
+    import concurrent.futures
 
-    # 2. Null ratio
-    r = execute_with_timeout(build_null_ratio_query(fqn, col_name), table_id)
-    if r.success and r.rows:
-        total = int(r.rows[0][0] or 1)
-        non_null = int(r.rows[0][1] or 0)
-        stats.null_count = total - non_null
-        stats.null_rate = round(stats.null_count / max(total, 1), 4)
-    else:
-        stats.errors.append(f"null_ratio: {r.error_message}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as inner_exec:
+        f_dist = inner_exec.submit(
+            execute_with_timeout, build_distinct_count_query(fqn, col_name), table_id
+        )
+        f_null = inner_exec.submit(
+            execute_with_timeout, build_null_ratio_query(fqn, col_name), table_id
+        )
+
+        # 1. Exact distinct count
+        r_dist = f_dist.result()
+        if r_dist.success and r_dist.rows:
+            stats.distinct_count = int(r_dist.rows[0][0] or 0)
+        else:
+            stats.errors.append(f"distinct_count: {r_dist.error_message}")
+
+        # 2. Null ratio
+        r_null = f_null.result()
+        if r_null.success and r_null.rows:
+            total = int(r_null.rows[0][0] or 1)
+            non_null = int(r_null.rows[0][1] or 0)
+            stats.null_count = total - non_null
+            stats.null_rate = round(stats.null_count / max(total, 1), 4)
+        else:
+            stats.errors.append(f"null_ratio: {r_null.error_message}")
 
     # 3. Top values + categorical detection
     low_cardinality = 0 < stats.distinct_count < CATEGORICAL_DISTINCT_THRESHOLD
@@ -888,20 +907,38 @@ def run_table_profiling(
             columns_meta = [(c, "unknown") for c in sample_cols]
             result.column_count = len(columns_meta)
 
-    # Step 4: Per-column analysis
+    # Step 4: Per-column analysis (Parallel execution across columns)
     col_stats: list[ColumnStats] = []
-    for col_name, data_type in columns_meta:
-        logger.info("[ProfilingEngine]   → %s (%s)", col_name, data_type)
-        try:
-            cs = _analyze_column(fqn, table_id, col_name, data_type, result.row_count)
-            col_stats.append(cs)
-        except Exception as exc:
-            logger.error("[ProfilingEngine] Column %s failed: %s", col_name, exc)
-            col_stats.append(
-                ColumnStats(
-                    column_name=col_name, data_type=data_type, errors=[str(exc)]
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(30, len(columns_meta) or 1)
+    ) as worker_executor:
+        futures = []
+        for col_name, data_type in columns_meta:
+            futures.append(
+                worker_executor.submit(
+                    _analyze_column,
+                    fqn,
+                    table_id,
+                    col_name,
+                    data_type,
+                    result.row_count,
                 )
             )
+
+        for future, (col_name, data_type) in zip(futures, columns_meta, strict=False):
+            logger.info("[ProfilingEngine]   → %s (%s)", col_name, data_type)
+            try:
+                cs = future.result()
+                col_stats.append(cs)
+            except Exception as exc:
+                logger.error("[ProfilingEngine] Column %s failed: %s", col_name, exc)
+                col_stats.append(
+                    ColumnStats(
+                        column_name=col_name, data_type=data_type, errors=[str(exc)]
+                    )
+                )
+
     result.column_stats = col_stats
 
     # Step 5: Aggregate null rate

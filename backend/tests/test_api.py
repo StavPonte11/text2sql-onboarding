@@ -17,16 +17,26 @@ MOCK_OM_METADATA = {
     "description": "Orders table for testing",
     "columns": [
         {"name": "order_id", "description": "Primary key", "dataType": "VARCHAR"},
-        {"name": "user_id", "description": "Foreign key for users", "dataType": "VARCHAR"},
-        {"name": "total_amount", "description": "Total purchase cost", "dataType": "DOUBLE"}
-    ]
+        {
+            "name": "user_id",
+            "description": "Foreign key for users",
+            "dataType": "VARCHAR",
+        },
+        {
+            "name": "total_amount",
+            "description": "Total purchase cost",
+            "dataType": "DOUBLE",
+        },
+    ],
 }
+
 
 # ── Base health test ───────────────────────────────────────────────────────────
 def test_health_endpoint(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
 
 # ── Tables API Tests ──────────────────────────────────────────────────────────
 @patch("app.routers.tables.httpx.get")
@@ -58,8 +68,20 @@ def test_create_table(mock_fqn, mock_get, client, db_session):
 
 def test_list_tables(client, db_session):
     # Add dummy tables to database
-    t1 = Table(name="test_1", schema_name="s", owner_id="u", oasis_source_id="o1", status=TableStatus.draft)
-    t2 = Table(name="test_2", schema_name="s", owner_id="u", oasis_source_id="o2", status=TableStatus.sandbox)
+    t1 = Table(
+        name="test_1",
+        schema_name="s",
+        owner_id="u",
+        oasis_source_id="o1",
+        status=TableStatus.draft,
+    )
+    t2 = Table(
+        name="test_2",
+        schema_name="s",
+        owner_id="u",
+        oasis_source_id="o2",
+        status=TableStatus.sandbox,
+    )
     db_session.add(t1)
     db_session.add(t2)
     db_session.commit()
@@ -105,7 +127,13 @@ def test_create_and_list_scopes(client, db_session):
 # ── Questions API Tests ────────────────────────────────────────────────────────
 def test_question_lifecycle(client, db_session):
     # Seed a table
-    table = Table(name="orders", schema_name="s", owner_id="u", oasis_source_id="o", status=TableStatus.draft)
+    table = Table(
+        name="orders",
+        schema_name="s",
+        owner_id="u",
+        oasis_source_id="o",
+        status=TableStatus.draft,
+    )
     db_session.add(table)
     db_session.commit()
     db_session.refresh(table)
@@ -115,7 +143,7 @@ def test_question_lifecycle(client, db_session):
         "question": "Show all orders last month",
         "expected_sql": "SELECT * FROM orders WHERE date > now()",
         "difficulty": "simple",
-        "question_type": "simple"
+        "question_type": "simple",
     }
     response = client.post(f"/tables/{table.id}/questions", json=payload)
     assert response.status_code == 201
@@ -138,20 +166,27 @@ def test_trigger_evaluation_run(mock_lf, client, db_session):
     mock_lf.enabled = False  # mock client disabled
 
     # Create Table
-    table = Table(name="sales", schema_name="s", owner_id="u", oasis_source_id="o", status=TableStatus.draft)
+    table = Table(
+        name="sales",
+        schema_name="s",
+        owner_id="u",
+        oasis_source_id="o",
+        status=TableStatus.draft,
+    )
     db_session.add(table)
     db_session.commit()
     db_session.refresh(table)
 
     # Seed an enrichment version (required by the validation check)
     from app.models.models import EnrichmentVersion
+
     enrichment = EnrichmentVersion(
         table_id=table.id,
         version=1,
         data={
             "table_description": "Sales table for testing",
-            "columns": [{"name": "id", "dataType": "INT"}]
-        }
+            "columns": [{"name": "id", "dataType": "INT"}],
+        },
     )
     db_session.add(enrichment)
 
@@ -169,7 +204,9 @@ def test_trigger_evaluation_run(mock_lf, client, db_session):
 
 # ── Audit API Tests ────────────────────────────────────────────────────────────
 def test_list_audit_queries(client, db_session):
-    audit = AuditQuery(user_id="test-user", raw_question="GET /tables", status="success")
+    audit = AuditQuery(
+        user_id="test-user", raw_question="GET /tables", status="success"
+    )
     db_session.add(audit)
     db_session.commit()
 

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     LANGFUSE_WAIT_MAX_ATTEMPTS: int = 20
     LANGFUSE_WAIT_INITIAL_DELAY_SECS: float = 0.5
     LANGFUSE_WAIT_BACKOFF_FACTOR: float = 1.5
+    PROFILER_MAX_CONCURRENT_QUERIES: int = 10
 
     # JWT Config
     JWT_SECRET: str = "dev-secret-change-in-production"
