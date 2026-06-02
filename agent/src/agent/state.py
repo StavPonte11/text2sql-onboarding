@@ -14,3 +14,4 @@ class AgentState(TypedDict):
     raw_data_ref: str | None
     summary: str
     sql_explanation: str
+    allowed_tables: list[str] | None

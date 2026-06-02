@@ -30,27 +30,48 @@ def get_query_embedding(text: str) -> list[float]:
         print(f"Error getting query embedding: {e}")
         return [0.0] * 768
 
-def hybrid_search_tables(query: str, query_embedding: list[float], session: Session) -> list[Table]:
+def hybrid_search_tables(query: str, query_embedding: list[float], session: Session, allowed_tables: list[str] | None = None) -> list[Table]:
     """Hybrid search combining pgvector cosine distance and keyword matching."""
-    # 1. Vector Search
-    stmt = text("""
-        SELECT id FROM tables
-        ORDER BY embedding <=> :emb
-        LIMIT 10
-    """)
-    try:
-        vec_ids = [row[0] for row in session.execute(stmt, {"emb": str(query_embedding)}).fetchall()]
-    except Exception as e:
-        print(f"Vector search failed: {e}")
-        vec_ids = []
-
-    # 2. Keyword Search
+    # 1. Get all allowed tables
     stmt_all = select(Table)
     all_tables = session.exec(stmt_all).all()
     
+    allowed = allowed_tables or []
+    allowed_tables_set = []
+    allowed_ids = set()
+    for table in all_tables:
+        is_allowed = (
+            table.status == "production" or
+            (allowed and (
+                table.id in allowed or
+                table.name in allowed or
+                f"{table.schema_name}.{table.name}" in allowed
+            ))
+        )
+        if is_allowed:
+            allowed_tables_set.append(table)
+            allowed_ids.add(table.id)
+
+    # 2. Vector Search
+    if allowed_ids:
+        stmt = text("""
+            SELECT id FROM tables
+            WHERE id = ANY(:allowed_ids)
+            ORDER BY embedding <=> :emb
+            LIMIT 10
+        """)
+        try:
+            vec_ids = [row[0] for row in session.execute(stmt, {"emb": str(query_embedding), "allowed_ids": list(allowed_ids)}).fetchall()]
+        except Exception as e:
+            print(f"Vector search failed: {e}")
+            vec_ids = []
+    else:
+        vec_ids = []
+
+    # 3. Keyword Search
     keyword_matches = []
     query_words = query.lower().split()
-    for table in all_tables:
+    for table in allowed_tables_set:
         enrichment = session.exec(
             select(EnrichmentVersion)
             .where(EnrichmentVersion.table_id == table.id)
@@ -74,7 +95,7 @@ def hybrid_search_tables(query: str, query_embedding: list[float], session: Sess
     keyword_matches.sort(key=lambda x: x[1], reverse=True)
     kw_ids = [x[0] for x in keyword_matches[:10]]
     
-    # 3. Combine and limit to 8-12 tables
+    # 4. Combine and limit to 8-12 tables
     combined_ids = list(dict.fromkeys(vec_ids + kw_ids))[:12]
     
     result_tables = []
@@ -180,11 +201,12 @@ async def schema_explorer_node(state: AgentState):
     """RAG Schema Explorer sub-agent node."""
     user_query = state["user_query"]
     extracted = state.get("extracted_entities", {})
+    allowed_tables = state.get("allowed_tables")
     
     # 1. Automatically run hybrid search to find candidates
     emb = get_query_embedding(user_query)
     with Session(engine) as session:
-        candidate_tables = hybrid_search_tables(user_query, emb, session)
+        candidate_tables = hybrid_search_tables(user_query, emb, session, allowed_tables)
         
     tables_info = []
     profile_details = []
