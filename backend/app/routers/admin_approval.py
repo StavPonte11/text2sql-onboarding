@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
-from app.db.engine import get_session
-from app.models.models import (
+from core.db.engine import get_session
+from core.models.models import (
     EvalRun,
     EvalStatus,
     GoldenQuestion,

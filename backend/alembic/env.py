@@ -18,7 +18,7 @@ if config.config_file_name is not None:
 from sqlmodel import SQLModel
 
 from app.config import settings
-from app.models.models import *  # Import all models so SQLModel.metadata is populated
+from core.models.models import *  # Import all models so SQLModel.metadata is populated
 
 target_metadata = SQLModel.metadata
 

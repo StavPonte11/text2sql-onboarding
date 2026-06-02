@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.db.engine import get_session
-from app.models.models import UserScope, UserScopeCreate, UserScopeRead
+from core.db.engine import get_session
+from core.models.models import UserScope, UserScopeCreate, UserScopeRead
 
 router = APIRouter(prefix="/scopes", tags=["scopes"])
 

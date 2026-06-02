@@ -48,5 +48,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_HOURS: int = 8
 
+    # Embedder Config
+    EMBEDDER_URL: str = "http://host.docker.internal:11434/api/embeddings"
+    EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+
 
 settings = Settings()

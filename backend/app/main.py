@@ -6,8 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from app.db.engine import create_db_and_tables, engine
-from app.models.models import AuditQuery
+from core.db.engine import create_db_and_tables, engine
+from core.models.models import AuditQuery
 from app.routers import (
     admin_approval,
     admin_auth,

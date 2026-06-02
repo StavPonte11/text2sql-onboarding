@@ -23,6 +23,7 @@ dependencies = [
     "passlib[bcrypt]==1.7.4",
     "requests==2.32.3",
     "minio>=7.2.0",
+    "core",
 ]
 
 [dependency-groups]
@@ -96,5 +97,12 @@ disable_error_code = [
     "type-arg",
     "var-annotated"
 ]
+
+[tool.uv.sources]
+core = { path = "../core", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = "."
+python_files = ["test_*.py"]
 
 

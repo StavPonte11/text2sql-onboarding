@@ -2,8 +2,8 @@ import logging
 
 from sqlmodel import Session, select
 
-from app.db.engine import engine
-from app.models.models import ColumnProfile, CrossTableProfile
+from core.db.engine import engine
+from core.models.models import ColumnProfile, CrossTableProfile
 
 logger = logging.getLogger(__name__)
 

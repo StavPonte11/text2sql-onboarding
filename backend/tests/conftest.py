@@ -6,9 +6,9 @@ from fastapi.testclient import TestClient
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlmodel import Session, SQLModel, create_engine
 
-import app.db.engine
+import core.db.engine
 from app.config import settings
-from app.db.engine import get_session
+from core.db.engine import get_session
 from app.main import app as fastapi_app
 
 # Parse the database URL from settings
@@ -78,6 +78,7 @@ def test_engine(setup_test_db):
     from sqlalchemy import text
 
     with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS security"))
         conn.commit()
 
@@ -89,11 +90,11 @@ def test_engine(setup_test_db):
 
 @pytest.fixture(scope="session", autouse=True)
 def patch_global_engine(test_engine):
-    """Globally monkeypatches the app.db.engine.engine to isolate all routers to the test database."""
-    original_engine = app.db.engine.engine
-    app.db.engine.engine = test_engine
+    """Globally monkeypatches the core.db.engine.engine to isolate all routers to the test database."""
+    original_engine = core.db.engine.engine
+    core.db.engine.engine = test_engine
     yield
-    app.db.engine.engine = original_engine
+    core.db.engine.engine = original_engine
 
 
 @pytest.fixture

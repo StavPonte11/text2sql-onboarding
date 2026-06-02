@@ -4,8 +4,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 
-from app.db.engine import get_session
-from app.models.models import (
+from core.db.engine import get_session
+from core.models.models import (
     EnrichmentCreate,
     EnrichmentRead,
     EnrichmentVersion,

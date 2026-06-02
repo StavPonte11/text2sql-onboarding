@@ -1,11 +1,12 @@
 from unittest.mock import MagicMock, patch
 
-from app.models.models import (
+from core.models.models import (
     AuditQuery,
     EvalStatus,
     GoldenQuestion,
     Table,
     TableStatus,
+    EnrichmentVersion
 )
 
 # ── Mock objects for testing ──────────────────────────────────────────────────
@@ -178,8 +179,6 @@ def test_trigger_evaluation_run(mock_lf, client, db_session):
     db_session.refresh(table)
 
     # Seed an enrichment version (required by the validation check)
-    from app.models.models import EnrichmentVersion
-
     enrichment = EnrichmentVersion(
         table_id=table.id,
         version=1,
