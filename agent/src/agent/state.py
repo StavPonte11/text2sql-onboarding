@@ -13,3 +13,4 @@ class AgentState(TypedDict):
     refinement_count: int
     raw_data_ref: str | None
     summary: str
+    sql_explanation: str

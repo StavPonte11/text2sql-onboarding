@@ -468,6 +468,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - REDIS_SSL=false
       - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBEDDER_URL=http://host.docker.internal:11434
       - ESCA_URL=http://host.docker.internal:7010
       - TRINO_HOST=trino
       - TRINO_PORT=8080

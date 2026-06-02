@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AgentSettings(BaseSettings):
@@ -7,5 +8,13 @@ class AgentSettings(BaseSettings):
     ESCA_URL: str = "http://localhost:7010"
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "gemma4:e4b"
+    EMBEDDER_URL: str = "http://localhost:11434"
+    EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+
+    LANGFUSE_SECRET_KEY: str = Field(min_length=1)
+    LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
+    LANGFUSE_BASE_URL: str = Field(min_length=1)
+
 
 settings = AgentSettings()
+
