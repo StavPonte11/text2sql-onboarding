@@ -6,7 +6,7 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     user_query: str
     messages: Annotated[list[BaseMessage], add_messages]
-    extracted_entities: dict[str, Any]
+    query_enrichments: list[dict[str, Any]]
     schema_plan: str
     sql_query: str
     trino_error: str | None
@@ -15,3 +15,7 @@ class AgentState(TypedDict):
     summary: str
     sql_explanation: str
     allowed_tables: list[str] | None
+    feedback: str | None
+    feedback_route: str | None
+    non_interactive: bool | None
+

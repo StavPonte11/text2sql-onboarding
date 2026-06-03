@@ -1,30 +1,83 @@
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_ollama import ChatOllama
 from agent.state import AgentState
 from agent.nodes.extractor import extractor_node
 from agent.nodes.schema_explorer import schema_explorer_node
 from agent.nodes.query_builder import query_builder_node
 from agent.nodes.refiner import refiner_node
 from agent.nodes.finalizer import finalizer_node
+from agent.config import settings
+from pydantic import BaseModel, Field
+from typing import Literal
+
+# Initialize LLM for rejection routing classification
+llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+
+class RejectionRoute(BaseModel):
+    route: Literal["extractor", "schema_explorer", "query_builder"] = Field(
+        description="The phase to route the execution back to based on the user feedback."
+    )
+
+def rejection_router_node(state: AgentState):
+    """Classify user rejection feedback and select the appropriate phase to return to."""
+    feedback = state.get("feedback")
+    if not feedback:
+        return {"feedback_route": "query_builder"}
+        
+    prompt = f"""You are a sub-agent routing system. Analyze the user feedback on the previous query builder plan and select which phase to route the execution back to:
+- extractor: Choose this if the user is correcting the query intent, entities, constants, adding or mentioning new entities or asking a completely different question.
+- schema_explorer: Choose this if the user points out a wrong table, suggests using a different table/view, or references table schema selection issues.
+- query_builder: Choose this if the user is requesting a minor change in the SQL query itself (like modifying a WHERE clause, sorting, limits, joins, or specific syntax adjustments), but the tables and overall query intent are correct.
+
+User Feedback: {feedback}"""
+
+    structured_llm = llm.with_structured_output(RejectionRoute, method="json_schema")
+    try:
+        response = structured_llm.invoke(prompt)
+        route = response.route
+    except Exception as e:
+        print(f"Structured output parsing failed: {e}")
+        route = "extractor"  # Fallback
+        
+    return {"feedback_route": route}
+
 
 def route_refiner(state: AgentState):
     if state.get("trino_error") and state.get("refinement_count", 0) < 3:
         return "refiner"
     return "finalizer"
 
+def route_query_builder(state: AgentState):
+    if state.get("feedback"):
+        return "rejection_router"
+    return "refiner"
+
+def route_rejection(state: AgentState):
+    route = state.get("feedback_route")
+    if route in ["extractor", "schema_explorer", "query_builder"]:
+        return route
+    return "extractor"
+
 workflow = StateGraph(AgentState)
 
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("schema_explorer", schema_explorer_node)
 workflow.add_node("query_builder", query_builder_node)
+workflow.add_node("rejection_router", rejection_router_node)
 workflow.add_node("refiner", refiner_node)
 workflow.add_node("finalizer", finalizer_node)
 
 workflow.add_edge(START, "extractor")
 workflow.add_edge("extractor", "schema_explorer")
 workflow.add_edge("schema_explorer", "query_builder")
-workflow.add_edge("query_builder", "refiner")
+
+workflow.add_conditional_edges("query_builder", route_query_builder, {"rejection_router": "rejection_router", "refiner": "refiner"})
+workflow.add_conditional_edges("rejection_router", route_rejection, {"extractor": "extractor", "schema_explorer": "schema_explorer", "query_builder": "query_builder"})
 
 workflow.add_conditional_edges("refiner", route_refiner, {"refiner": "refiner", "finalizer": "finalizer"})
 workflow.add_edge("finalizer", END)
 
-agent_graph = workflow.compile()
+memory = MemorySaver()
+agent_graph = workflow.compile(checkpointer=memory)
+

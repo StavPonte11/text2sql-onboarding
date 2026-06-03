@@ -1,6 +1,8 @@
+from langgraph.types import interrupt
 import json
 import urllib.request
-from typing import Any
+from typing import Any, List, Optional
+from pydantic import BaseModel, Field
 from esca_sdk import EscaClient
         
 from agent.state import AgentState
@@ -16,6 +18,25 @@ from agent.config import settings
 
 # Initialize LLM
 llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+
+# Define standardized Schema Explorer Output Type
+class SchemaExplorerOutput(BaseModel):
+    schema_plan: Optional[Any] = Field(
+        default=None,
+        description="Detailed query plan describing tables, columns, and joins."
+    )
+    ambiguity_detected: bool = Field(
+        default=False,
+        description="Set to true if there is table selection ambiguity."
+    )
+    ambiguity_message: str = Field(
+        default="",
+        description="A question to ask the user to clarify/select the right table(s). Must be empty if ambiguity_detected is false."
+    )
+    candidate_options: List[str] = Field(
+        default_factory=list,
+        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
+    )
 
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
@@ -198,10 +219,11 @@ async def get_table_profile(table_id: str) -> str:
         }, indent=2)
 
 async def schema_explorer_node(state: AgentState):
-    """RAG Schema Explorer sub-agent node."""
+    """RAG Schema Explorer sub-agent node, pausing for table selection if ambiguous."""
     user_query = state["user_query"]
-    extracted = state.get("extracted_entities", {})
+    enrichments = state.get("query_enrichments", [])
     allowed_tables = state.get("allowed_tables")
+    feedback = state.get("feedback")
     
     # 1. Automatically run hybrid search to find candidates
     emb = get_query_embedding(user_query)
@@ -227,7 +249,11 @@ async def schema_explorer_node(state: AgentState):
                 profile_details.append(json.loads(profile_res))
             except Exception as e:
                 print(f"Error fetching profile for {t.name}: {e}")
-                
+    
+    # TODO: Make more dynamic - allow LLM to search other tables if the first pass is not enough
+    # TODO: Support multi-turn conversation
+    # TODO: Support async simultanious profile fetching for top K tables 
+         
     # 3. Present all metadata to the LLM to construct a query plan
     prompt = ChatPromptTemplate.from_messages([
         ("system", (
@@ -235,22 +261,81 @@ async def schema_explorer_node(state: AgentState):
             "and inspect their column details to form a query plan for the user's question.\n\n"
             "Candidate Tables found:\n{tables_json}\n\n"
             "Detailed Profiles for top tables (with Esca Reference IDs):\n{profiles_json}\n\n"
-            "Formulate a detailed query plan describing which tables to query, how to join them, "
-            "their columns, and include the exact Esca reference IDs for their profiles. Do not guess columns."
+            "## Decision-Making Rules\n\n"
+            "You MUST make all planning decisions autonomously. This includes:\n"
+            "- Join strategy: If multiple tables are needed to answer the query, decide which tables to join and on which keys — do NOT ask the user.\n"
+            "- Column selection: Choose the most appropriate columns yourself.\n"
+            "- Filter strategy: Infer filters from the user's question.\n"
+            "- Table selection when one is clearly more appropriate: Pick the best match and proceed.\n\n"
+            "## When to Flag Ambiguity (ONLY these cases)\n\n"
+            "Set ambiguity_detected=true ONLY IF:\n"
+            "1. Two or more completely independent tables could each independently and fully answer the user's question, "
+            "and you have no way to determine which one the user wants (e.g., 'orders' vs 'orders_archive' with no "
+            "indication of time range, or two fact tables from different business domains that both seem equally relevant).\n"
+            "2. There is no table in the catalog that can answer the query at all.\n\n"
+            "Do NOT flag ambiguity for: join decisions, column choices, filter logic, or any decision you can make yourself.\n\n"
+            "## Output Format\n\n"
+            "Output MUST be a valid JSON object with the following keys:\n"
+            "- schema_plan: detailed query plan describing tables, columns, joins, and Esca reference IDs (empty string if ambiguity_detected is true)\n"
+            "- ambiguity_detected: boolean, true ONLY in the hard-blocker cases described above\n"
+            "- ambiguity_message: a concise question to ask the user to resolve the blocker (empty string if ambiguity_detected is false)\n"
+            "- candidate_options: list of strings (table names or options) for the user to choose from (empty list if ambiguity_detected is false)\n"
+            "Return only the raw JSON, no markdown formatting (no ```json code blocks)."
         )),
-        ("human", "Question: {query}\nExtracted Entities: {extracted}")
+        ("human", "{human_message}")
     ])
+    
+    human_message = f"Question: {user_query}\nQuery Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
+    if feedback:
+        human_message += f"\nUser Feedback on previous plan/query: {feedback}"
+        
+    structured_llm = llm.with_structured_output(SchemaExplorerOutput, method="json_schema")
+    chain = prompt | structured_llm
+    
+    try:
+        data = await chain.ainvoke({
+            "tables_json": json.dumps(tables_info, indent=2),
+            "profiles_json": json.dumps(profile_details, indent=2),
+            "human_message": human_message
+        })
+    except Exception as e:
+        print(f"Structured output parsing failed in schema explorer: {e}")
+        data = SchemaExplorerOutput(
+            schema_plan=None,
+            ambiguity_detected=False,
+            ambiguity_message="",
+            candidate_options=[]
+        )
+        
+    if data.ambiguity_detected and data.ambiguity_message and not state.get("non_interactive"):
+        user_choice = interrupt({
+            "type": "schema_explorer_ambiguity",
+            "message": data.ambiguity_message,
+            "options": data.candidate_options
+        })
+        
+        clarified_message = f"{human_message}\nSelected table/option: {user_choice}"
+        try:
+            data = await chain.ainvoke({
+                "tables_json": json.dumps(tables_info, indent=2),
+                "profiles_json": json.dumps(profile_details, indent=2),
+                "human_message": clarified_message
+            })
+        except Exception as e:
+            print(f"Structured output parsing failed in schema explorer after clarification: {e}")
+            data = SchemaExplorerOutput(
+                schema_plan=None,
+                ambiguity_detected=False,
+                ambiguity_message="",
+                candidate_options=[]
+            )
+            
+    plan = data.schema_plan
+    if plan is not None and not isinstance(plan, str):
+        plan = json.dumps(plan)
+    elif plan is None:
+        plan = ""
+        
+    return {"schema_plan": plan}
 
-    # TODO: Make more dynamic - allow LLM to search other tables if the first pass is not enough
-    # TODO: Support multi-turn conversation
-    # TODO: Support async simultanious profile fetching for top K tables
-    
-    chain = prompt | llm
-    response = await chain.ainvoke({
-        "tables_json": json.dumps(tables_info, indent=2),
-        "profiles_json": json.dumps(profile_details, indent=2),
-        "query": user_query,
-        "extracted": json.dumps(extracted)
-    })
-    
-    return {"schema_plan": response.content.strip()}
+
