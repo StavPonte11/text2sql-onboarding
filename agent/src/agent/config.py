@@ -23,6 +23,7 @@ class AgentSettings(BaseSettings):
     LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
     LANGFUSE_PROMPT_FINALIZER_SUMMARY: str = "text2sql/finalizer_summary"
     LANGFUSE_PROMPT_FINALIZER_SQL_EXPLANATION: str = "text2sql/finalizer_sql_explanation"
+    LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
 
 
 settings = AgentSettings()

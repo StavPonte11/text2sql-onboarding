@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
 from agent.nodes.extractor import extractor_node
 from agent.nodes.schema_explorer import schema_explorer_node
@@ -8,6 +9,7 @@ from agent.nodes.query_builder import query_builder_node
 from agent.nodes.refiner import refiner_node
 from agent.nodes.finalizer import finalizer_node
 from agent.config import settings
+from agent.langfuse_client import langfuse_client
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -25,16 +27,13 @@ def rejection_router_node(state: AgentState):
     if not feedback:
         return {"feedback_route": "query_builder"}
         
-    prompt = f"""You are a sub-agent routing system. Analyze the user feedback on the previous query builder plan and select which phase to route the execution back to:
-- extractor: Choose this if the user is correcting the query intent, entities, constants, adding or mentioning new entities or asking a completely different question.
-- schema_explorer: Choose this if the user points out a wrong table, suggests using a different table/view, or references table schema selection issues.
-- query_builder: Choose this if the user is requesting a minor change in the SQL query itself (like modifying a WHERE clause, sorting, limits, joins, or specific syntax adjustments), but the tables and overall query intent are correct.
-
-User Feedback: {feedback}"""
+    langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REJECTION_ROUTER)
+    prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
 
     structured_llm = llm.with_structured_output(RejectionRoute, method="json_schema")
+    chain = prompt | structured_llm
     try:
-        response = structured_llm.invoke(prompt)
+        response = chain.invoke({"feedback": feedback})
         route = response.route
     except Exception as e:
         print(f"Structured output parsing failed: {e}")
