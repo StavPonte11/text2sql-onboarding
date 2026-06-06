@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from esca_sdk import EscaClient
         
 from agent.state import AgentState
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
@@ -15,9 +15,10 @@ from core.db.engine import engine
 from core.models.models import Table, TableProfile, ColumnProfile, EnrichmentVersion
 from sqlmodel import Session, select
 from agent.config import settings
+from agent.langfuse_client import langfuse_client
 
 # Initialize LLM
-llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
 
 # Define standardized Schema Explorer Output Type
 class SchemaExplorerOutput(BaseModel):
@@ -176,7 +177,9 @@ async def get_table_profile(table_id: str) -> str:
         # Heavy data to pass by reference to Esca
         profile_data = {
             "table_id": table_id,
-            "table_name": f"{table.schema_name}.{table.name}",
+            "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
+            "catalog": table.catalog,
+            "schema": table.schema_name,
             "row_count": profile.row_count,
             "sample_data": profile.sample_data,
             "auto_insights": profile.auto_insights,
@@ -209,7 +212,7 @@ async def get_table_profile(table_id: str) -> str:
         # Return only lightweight metadata to LLM
         return json.dumps({
             "table_id": table_id,
-            "table_name": f"{table.schema_name}.{table.name}",
+            "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
             "row_count": profile.row_count,
             "columns": [
                 {"name": cp.column_name, "type": cp.data_type}
@@ -233,17 +236,16 @@ async def schema_explorer_node(state: AgentState):
     tables_info = []
     profile_details = []
     
-    # 2. Automatically get profiles for the top candidate tables (up to 3) to seed the prompt
+    # 2. Automatically get profiles for the top candidate tables (up to 4) to seed the prompt
     for i, t in enumerate(candidate_tables):
         tables_info.append({
             "id": t.id,
-            "name": f"{t.schema_name}.{t.name}",
-            "catalog": t.catalog,
+            "name": f"{t.catalog}.{t.schema_name}.{t.name}",
             "description": ""
         })
         
         # Fetch profile for the top 3 tables
-        if i < 3:
+        if i < 4:
             try:
                 profile_res = await get_table_profile.ainvoke({"table_id": t.id})
                 profile_details.append(json.loads(profile_res))
@@ -255,35 +257,8 @@ async def schema_explorer_node(state: AgentState):
     # TODO: Support async simultanious profile fetching for top K tables 
          
     # 3. Present all metadata to the LLM to construct a query plan
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", (
-            "You are a Schema Explorer sub-agent. Your goal is to identify the most relevant tables "
-            "and inspect their column details to form a query plan for the user's question.\n\n"
-            "Candidate Tables found:\n{tables_json}\n\n"
-            "Detailed Profiles for top tables (with Esca Reference IDs):\n{profiles_json}\n\n"
-            "## Decision-Making Rules\n\n"
-            "You MUST make all planning decisions autonomously. This includes:\n"
-            "- Join strategy: If multiple tables are needed to answer the query, decide which tables to join and on which keys — do NOT ask the user.\n"
-            "- Column selection: Choose the most appropriate columns yourself.\n"
-            "- Filter strategy: Infer filters from the user's question.\n"
-            "- Table selection when one is clearly more appropriate: Pick the best match and proceed.\n\n"
-            "## When to Flag Ambiguity (ONLY these cases)\n\n"
-            "Set ambiguity_detected=true ONLY IF:\n"
-            "1. Two or more completely independent tables could each independently and fully answer the user's question, "
-            "and you have no way to determine which one the user wants (e.g., 'orders' vs 'orders_archive' with no "
-            "indication of time range, or two fact tables from different business domains that both seem equally relevant).\n"
-            "2. There is no table in the catalog that can answer the query at all.\n\n"
-            "Do NOT flag ambiguity for: join decisions, column choices, filter logic, or any decision you can make yourself.\n\n"
-            "## Output Format\n\n"
-            "Output MUST be a valid JSON object with the following keys:\n"
-            "- schema_plan: detailed query plan describing tables, columns, joins, and Esca reference IDs (empty string if ambiguity_detected is true)\n"
-            "- ambiguity_detected: boolean, true ONLY in the hard-blocker cases described above\n"
-            "- ambiguity_message: a concise question to ask the user to resolve the blocker (empty string if ambiguity_detected is false)\n"
-            "- candidate_options: list of strings (table names or options) for the user to choose from (empty list if ambiguity_detected is false)\n"
-            "Return only the raw JSON, no markdown formatting (no ```json code blocks)."
-        )),
-        ("human", "{human_message}")
-    ])
+    langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_SCHEMA_EXPLORER)
+    prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
     
     human_message = f"Question: {user_query}\nQuery Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
     if feedback:

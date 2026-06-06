@@ -14,7 +14,8 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "trino>=0.328.0",
     "langfuse>=2.0.0",
-    "langchain"
+    "langchain",
+    "langchain-openai"
 ]
 
 [tool.uv.sources]

@@ -1,31 +1,15 @@
 import json
 import asyncio
 from agent.state import AgentState
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from esca_sdk import EscaClient
 from agent.config import settings
+from agent.langfuse_client import langfuse_client
 
-llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
 
-prompt_summary = ChatPromptTemplate.from_messages([
-    ("system", (
-        "You are a helpful data assistant. Summarize the findings for the user nicely. "
-        "You are given the SQL query that was executed and a preview of the queried data (columns and first few rows) to help you understand the context of the results. "
-        "Note: If the columns contain single items or aliases like `_col0` with a numeric value, this is the result of an aggregation query (such as `COUNT(*)`). Use this direct result to answer the user's question.\n\n"
-        "Data Preview:\n{data_preview}"
-    )),
-    ("human", "User asked: {user_query}\nSQL Query: {sql_query}\nData Ref: {raw_data_ref}")
-])
-
-prompt_sql_explanation = ChatPromptTemplate.from_messages([
-    ("system", (
-        "You are a database analyst assistant. Explain the following SQL query in clear, natural language. "
-        "Describe what fields and tables are queried, any filters, joins, groupings, or aggregations, and what the query accomplishes. "
-        "Keep the explanation concise and professional."
-    )),
-    ("human", "SQL Query:\n{sql_query}")
-])
+# Prompts will be loaded dynamically from Langfuse inside the node execution
 
 async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
     """Load data from Esca and return a preview of the columns and the first few rows."""
@@ -61,6 +45,10 @@ async def get_sql_explanation(sql_query: str | None) -> str:
     """Ask LLM to explain the SQL query in natural language."""
     if not sql_query:
         return "No SQL query was generated."
+        
+    langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_FINALIZER_SQL_EXPLANATION)
+    prompt_sql_explanation = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
+    
     chain = prompt_sql_explanation | llm
     response = await chain.ainvoke({"sql_query": sql_query})
     return response.content
@@ -71,6 +59,9 @@ async def finalizer_node(state: AgentState):
     preview_str = ""
     if raw_data_ref:
         preview_str = await get_esca_preview(raw_data_ref)
+        
+    langfuse_prompt_summary = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_FINALIZER_SUMMARY)
+    prompt_summary = ChatPromptTemplate.from_messages(langfuse_prompt_summary.get_langchain_prompt())
         
     summary_chain = prompt_summary | llm
     

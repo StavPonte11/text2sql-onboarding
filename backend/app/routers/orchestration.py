@@ -13,10 +13,6 @@ New endpoints:
 import random
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse.decorators import langfuse_context, observe
-from sqlmodel import Session, select
-
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
@@ -35,6 +31,10 @@ from core.models.models import (
     GoldenQuestion,
     Table,
 )
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from langfuse.decorators import langfuse_context, observe
+from sqlmodel import Session, select
+
 from app.routers.evaluation import execute_single_table_eval
 from app.services.trino_client import execute_query_sync
 
@@ -712,8 +712,17 @@ def system_health(session: Session = Depends(get_session)):
     latest_run = all_runs[0] if all_runs else None
 
     if all_runs:
-        global_score = round(sum(r.score for r in all_runs) / len(all_runs), 3)
-        global_pass_rate = round(sum(r.pass_rate for r in all_runs) / len(all_runs), 3)
+        valid_scores = [r.score for r in all_runs if r.score is not None]
+        global_score = (
+            round(sum(valid_scores) / len(valid_scores), 3) if valid_scores else None
+        )
+
+        valid_pass_rates = [r.pass_rate for r in all_runs if r.pass_rate is not None]
+        global_pass_rate = (
+            round(sum(valid_pass_rates) / len(valid_pass_rates), 3)
+            if valid_pass_rates
+            else None
+        )
     else:
         global_score = None
         global_pass_rate = None
@@ -721,17 +730,20 @@ def system_health(session: Session = Depends(get_session)):
     # Top failing tables (lowest avg score)
     table_scores: dict[str, list[float]] = {}
     for r in all_runs:
-        table_scores.setdefault(r.table_id, []).append(r.score)
+        if r.score is not None:
+            table_scores.setdefault(r.table_id, []).append(r.score)
 
     failing_tables = []
     for tid, scores in table_scores.items():
         avg = sum(scores) / len(scores)
         if avg < LOW_SCORE_THRESHOLD:
-            table = session.get(Table, tid)
+            table = session.get(Table, tid) if tid else None
             failing_tables.append(
                 {
                     "table_id": tid,
-                    "table_name": table.name if table else tid[:8],
+                    "table_name": table.name
+                    if table
+                    else (tid[:8] if tid else "Unknown"),
                     "avg_score": round(avg, 3),
                     "failure_rate": round(1 - avg, 3),
                 }

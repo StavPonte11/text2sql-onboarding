@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from agent.state import AgentState
 from agent.nodes.extractor import extractor_node
 from agent.nodes.schema_explorer import schema_explorer_node
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 # Initialize LLM for rejection routing classification
-llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
 
 class RejectionRoute(BaseModel):
     route: Literal["extractor", "schema_explorer", "query_builder"] = Field(
