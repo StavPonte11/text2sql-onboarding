@@ -20,4 +20,7 @@ RUN --mount=type=secret,id=deploy_key,target=/root/.ssh/id_rsa,mode=0600 \
     ssh-keyscan github.com >> /root/.ssh/known_hosts && \
     uv sync
 
-CMD ["uv", "run", "uvicorn", "agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Add virtualenv bin to PATH to run uvicorn
+ENV PATH="/app/agent/.venv/bin:$PATH"
+
+CMD ["uvicorn", "agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
