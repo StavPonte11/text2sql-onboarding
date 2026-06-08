@@ -18,4 +18,5 @@ class AgentState(TypedDict):
     feedback: str | None
     feedback_route: str | None
     non_interactive: bool | None
+    active_extractors: list[dict[str, str]] | None
 
