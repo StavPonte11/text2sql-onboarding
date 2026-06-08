@@ -410,7 +410,7 @@ services:
       dockerfile: ./backend/Dockerfile
       secrets:
         - deploy_key
-    command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - ./backend/.env
     ports:
