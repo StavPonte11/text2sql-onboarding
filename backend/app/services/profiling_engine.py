@@ -24,7 +24,9 @@ CATEGORICAL_COVERAGE_THRESHOLD = 0.90  # top-N values cover ≥90% → categoric
 SAMPLE_PERCENT = 10  # TABLESAMPLE BERNOULLI(10)
 SAMPLE_LIMIT = 10_000
 TOP_VALUES_LIMIT = 50
-QUERY_TIMEOUT_SECONDS = 25  # Hard per-query timeout in seconds
+QUERY_TIMEOUT_SECONDS = (
+    settings.TRINO_REQUEST_TIMEOUT
+)  # Hard per-query timeout in seconds
 
 NUMERIC_TYPES = {
     "bigint",
