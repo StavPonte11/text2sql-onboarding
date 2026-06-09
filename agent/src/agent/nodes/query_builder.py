@@ -1,20 +1,19 @@
 from agent.state import AgentState
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
+from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
 
-llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
 
 def query_builder_node(state: AgentState):
     """Build SQL from plan and pause for user approval."""
     feedback = state.get("feedback")
     feedback_str = f"\nUser Feedback to apply: {feedback}" if feedback else ""
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a SQL expert who specializes in trino. Build a SQL query based on the plan and user query. Output ONLY the SQL query, nothing else."),
-        ("human", "Plan: {schema_plan}\nQuery: {user_query}{feedback_str}")
-    ])
+    langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_QUERY_BUILDER)
+    prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
     chain = prompt | llm
     response = chain.invoke({
         "schema_plan": state.get("schema_plan"), 

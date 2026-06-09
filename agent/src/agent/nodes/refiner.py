@@ -1,13 +1,14 @@
 import json
 import uuid
 from agent.state import AgentState
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from core import execute_query_sync
 from esca_sdk import EscaClient
 from agent.config import settings
+from agent.langfuse_client import langfuse_client
 
-llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
+llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
 
 MAX_REFINER_ITERATIONS = 3
 
@@ -25,10 +26,8 @@ async def refiner_node(state: AgentState):
         if count >= MAX_REFINER_ITERATIONS:
             return {"trino_error": trino_error, "refinement_count": count + 1}
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a Trino SQL expert. Fix the SQL query based on the database error. Output ONLY the fixed SQL query, nothing else (no backticks, no explanation)."),
-            ("human", "SQL: {sql}\nError: {error}")
-        ])
+        langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
+        prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
         chain = prompt | llm
         response = await chain.ainvoke({"sql": sql, "error": trino_error})
         new_sql = response.content.replace('```sql', '').replace('```', '').strip()

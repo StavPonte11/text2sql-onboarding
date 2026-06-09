@@ -3,11 +3,11 @@ import datetime
 import requests
 from typing import List
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
 from agent.config import settings
-
+from agent.langfuse_client import langfuse_client
 
 # A single piece of enriched context added to the query
 class ContextEntry(BaseModel):
@@ -42,26 +42,11 @@ class BaseExtractor(abc.ABC):
 
 class LLMExtractor(BaseExtractor):
     def __init__(self):
-        # TODO: Support openai as well as ollama
-        self.llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_URL, temperature=0)
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", (
-                "You are a query enrichment assistant for a text-to-SQL system.\n\n"
-                "Your job is to read the user's natural-language query and add context that "
-                "makes ambiguous or implicit terms clearer for downstream processing.\n\n"
-                "Add enrichment entries for things like:\n"
-                "  • Abbreviations or acronyms that have a specific meaning "
-                "(e.g. 'MDA' → 'Magen David Adom')\n"
-                "  • Ambiguous proper nouns where context helps "
-                "(e.g. 'Jordan' used as a country vs. a person's name)\n"
-                "  • Domain-specific shorthand the downstream system may not know\n\n"
-                "Do NOT try to identify which database table or column to use — that is handled by a "
-                "separate schema exploration phase.\n"
-                "Do NOT add enrichments for terms that are already fully clear from the query.\n"
-                "If the query needs no enrichment, return an empty enrichments list."
-            )),
-            ("human", "{user_query}")
-        ])
+        self.llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
+        
+        langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_EXTRACTOR)
+        self.prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
+        
         self.chain = self.prompt | self.llm.with_structured_output(ExtractorOutput, method="json_schema")
 
     def extract(self, query: str) -> List[ContextEntry]:
