@@ -11,6 +11,8 @@ class AgentSettings(BaseSettings):
     LLM_MODEL: str = "gemma4:e4b"
     EMBEDDER_URL: str = "http://localhost:11434"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+    HYBRID_SEARCH_MAX_TABLES: int = 10
+    MAX_PROFILES_TO_FETCH: int = 3
 
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)

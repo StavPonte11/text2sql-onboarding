@@ -80,10 +80,10 @@ def hybrid_search_tables(query: str, query_embedding: list[float], session: Sess
             SELECT id FROM tables
             WHERE id = ANY(:allowed_ids)
             ORDER BY embedding <=> :emb
-            LIMIT 10
+            LIMIT :limit
         """)
         try:
-            vec_ids = [row[0] for row in session.execute(stmt, {"emb": str(query_embedding), "allowed_ids": list(allowed_ids)}).fetchall()]
+            vec_ids = [row[0] for row in session.execute(stmt, {"emb": str(query_embedding), "allowed_ids": list(allowed_ids), "limit": settings.HYBRID_SEARCH_MAX_TABLES}).fetchall()]
         except Exception as e:
             print(f"Vector search failed: {e}")
             vec_ids = []
@@ -115,10 +115,10 @@ def hybrid_search_tables(query: str, query_embedding: list[float], session: Sess
             keyword_matches.append((table.id, score))
             
     keyword_matches.sort(key=lambda x: x[1], reverse=True)
-    kw_ids = [x[0] for x in keyword_matches[:10]]
+    kw_ids = [x[0] for x in keyword_matches[:settings.HYBRID_SEARCH_MAX_TABLES]]
     
-    # 4. Combine and limit to 8-12 tables
-    combined_ids = list(dict.fromkeys(vec_ids + kw_ids))[:12]
+    # 4. Combine and limit to settings.HYBRID_SEARCH_MAX_TABLES tables
+    combined_ids = list(dict.fromkeys(vec_ids + kw_ids))[:settings.HYBRID_SEARCH_MAX_TABLES]
     
     result_tables = []
     for tid in combined_ids:
@@ -244,8 +244,8 @@ async def schema_explorer_node(state: AgentState):
             "description": ""
         })
         
-        # Fetch profile for the top 3 tables
-        if i < 4:
+        # Fetch profile for the top tables based on MAX_PROFILES_TO_FETCH
+        if i < settings.MAX_PROFILES_TO_FETCH:
             try:
                 profile_res = await get_table_profile.ainvoke({"table_id": t.id})
                 profile_details.append(json.loads(profile_res))

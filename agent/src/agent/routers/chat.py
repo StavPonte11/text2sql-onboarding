@@ -9,7 +9,7 @@ from langfuse.langchain import CallbackHandler
 from agent.config import settings
 from sqlmodel import Session, select
 from core.db.engine import engine
-from core.models.models import Table
+from core.models.models import Table, HttpExtractor, ExtractorStatus
 from langgraph.types import Command
 
 # Set the environment variables for Langfuse from the validated Pydantic settings config
@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     resume_value: str | QueryApproval | None = None
     allowed_tables: list[str] | None = None
+    extractors: list[str] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -96,8 +97,30 @@ async def chat_endpoint(request: ChatRequest):
                             detail=f"Table '{allowed}' does not exist."
                         )
 
+        active_extractors = []
+        with Session(engine) as session:
+            if request.extractors:
+                for ext_name_or_id in request.extractors:
+                    ext = session.exec(select(HttpExtractor).where(
+                        (HttpExtractor.id == ext_name_or_id) | (HttpExtractor.name == ext_name_or_id)
+                    )).first()
+                    if not ext:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Extractor '{ext_name_or_id}' does not exist."
+                        )
+                    active_extractors.append({"name": ext.name, "url": ext.url})
+            else:
+                prod_extractors = session.exec(select(HttpExtractor).where(HttpExtractor.status == ExtractorStatus.production)).all()
+                for ext in prod_extractors:
+                    active_extractors.append({"name": ext.name, "url": ext.url})
+
         result = await agent_graph.ainvoke(
-            {"user_query": request.query, "allowed_tables": request.allowed_tables},
+            {
+                "user_query": request.query, 
+                "allowed_tables": request.allowed_tables,
+                "active_extractors": active_extractors
+            },
             config=config
         )
 

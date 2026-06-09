@@ -738,3 +738,41 @@ class ForeignKeyMappingRead(SQLModel):
     target_column: str
     created_at: datetime
     updated_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP EXTRACTORS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExtractorStatus(StrEnum):
+    draft = "draft"
+    sandbox = "sandbox"
+    verified = "verified"
+    production = "production"
+    degraded = "degraded"
+
+class HttpExtractor(SQLModel, table=True):
+    __tablename__ = "http_extractors"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(unique=True, index=True)
+    url: str
+    description: str | None = None
+    status: ExtractorStatus = Field(default=ExtractorStatus.draft)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class HttpExtractorCreate(SQLModel):
+    name: str
+    url: str
+    description: str | None = None
+    status: ExtractorStatus = ExtractorStatus.draft
+
+class HttpExtractorRead(SQLModel):
+    id: str
+    name: str
+    url: str
+    description: str | None
+    status: ExtractorStatus
+    created_at: datetime
+    updated_at: datetime

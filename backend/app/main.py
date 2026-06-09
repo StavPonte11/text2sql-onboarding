@@ -15,6 +15,7 @@ from app.routers import (
     audit,
     enrichment,
     evaluation,
+    extractors,
     feedback,
     health,
     orchestration,
@@ -109,6 +110,7 @@ api_router.include_router(tables.router)
 api_router.include_router(enrichment.router)
 api_router.include_router(questions.router)
 api_router.include_router(evaluation.router)
+api_router.include_router(extractors.router)
 api_router.include_router(orchestration.router)
 api_router.include_router(publish.router)
 api_router.include_router(scopes.router)
