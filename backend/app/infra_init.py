@@ -969,8 +969,8 @@ def _ensure_airlines_registered() -> None:
 
     from sqlmodel import Session, select
 
-    from app.db.engine import engine
-    from app.models.models import (
+    from core.db.engine import engine
+    from core.models.models import (
         ColumnProfile,
         ProfilingStatus,
         Table,
