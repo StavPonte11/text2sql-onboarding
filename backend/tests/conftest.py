@@ -7,6 +7,8 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlmodel import Session, SQLModel, create_engine
 
 import core.db.engine
+from app.core.auth import get_current_user
+from core.models.models import SecurityUser
 from app.config import settings
 from core.db.engine import get_session
 from app.main import app as fastapi_app
@@ -112,7 +114,20 @@ def client(test_engine):
         with Session(test_engine) as session:
             yield session
 
+    
+
+    def override_get_current_user():
+        return SecurityUser(
+            id="test-user-id",
+            email="test-user@example.com",
+            name="Test User",
+            is_active=True,
+            is_admin=True,
+        )
+
     fastapi_app.dependency_overrides[get_session] = override_get_session
+    fastapi_app.dependency_overrides[get_current_user] = override_get_current_user
     with TestClient(fastapi_app) as test_client:
         yield test_client
     fastapi_app.dependency_overrides.clear()
+

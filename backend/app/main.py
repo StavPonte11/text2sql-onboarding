@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 
 from core.db.engine import create_db_and_tables, engine
 from core.models.models import AuditQuery
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session
 
 from app.config import settings
@@ -27,13 +28,18 @@ from app.routers import (
     scopes,
     tables,
 )
+from app.api import auth as auth_api
+from app.core.auth import get_current_user
+from app.config import settings, auth_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 
-logging.basicConfig(
-    stream=sys.stdout,
-    level=logging.DEBUG if settings.APP_ENV == "development" else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    force=False,
+from python_core_utils import setup_logging
+from python_core_utils.logging import CorrelationIdMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+setup_logging(
+    log_level="DEBUG" if settings.APP_ENV == "development" else "INFO",
+    logger_names=["app", "uvicorn", "fastapi"]
 )
 logger = logging.getLogger(__name__)
 
@@ -59,10 +65,23 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=auth_settings.SESSION_SECRET_KEY,
+    session_cookie=auth_settings.SESSION_COOKIE_NAME,
+    max_age=auth_settings.SESSION_COOKIE_MAX_AGE,
+)
+
+# Trust X-Forwarded-Proto from reverse proxies (fixes HTTPS redirect issue in Keycloak SSO)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Attach CorrelationId and log every request via python_core_utils
+app.add_middleware(CorrelationIdMiddleware)
 
 
 @app.middleware("http")
@@ -108,22 +127,32 @@ async def audit_middleware(request: Request, call_next):
 
 
 api_router = APIRouter(prefix="/api")
-api_router.include_router(tables.router)
-api_router.include_router(enrichment.router)
-api_router.include_router(questions.router)
-api_router.include_router(evaluation.router)
-api_router.include_router(extractors.router)
-api_router.include_router(orchestration.router)
-api_router.include_router(publish.router)
-api_router.include_router(scopes.router)
-api_router.include_router(audit.router)
-api_router.include_router(profiling.router)
-api_router.include_router(feedback.router)
+
+# Public endpoints
 api_router.include_router(health.router)
 api_router.include_router(admin_auth.router)
 api_router.include_router(admin_approval.router)
 api_router.include_router(agent.router)
+api_router.include_router(auth_api.router, prefix="/v1/auth", tags=["auth"])
 
+# Private endpoints (SSO protected)
+auth_deps = [Depends(get_current_user)]
+private_router = APIRouter(dependencies=auth_deps)
+
+private_router.include_router(tables.router)
+private_router.include_router(enrichment.router)
+private_router.include_router(questions.router)
+private_router.include_router(evaluation.router)
+private_router.include_router(extractors.router)
+private_router.include_router(orchestration.router)
+private_router.include_router(publish.router)
+private_router.include_router(scopes.router)
+private_router.include_router(audit.router)
+private_router.include_router(profiling.router)
+private_router.include_router(feedback.router)
+private_router.include_router(admin_approval.router)
+
+api_router.include_router(private_router)
 app.include_router(api_router)
 
 

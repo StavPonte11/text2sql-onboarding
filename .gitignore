@@ -35,3 +35,7 @@ __pycache__/
 
 # Private keys / Secrets
 deploy_key
+
+# Snowflake local config
+snowflake.conf
+*.conf
