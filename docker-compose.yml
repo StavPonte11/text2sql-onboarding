@@ -442,6 +442,7 @@ services:
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
       - FRONTEND_DEFAULT_REDIRECT=${FRONTEND_DEFAULT_REDIRECT}
+      - SSO_REDIRECT_URI=${SSO_REDIRECT_URI}
     depends_on:
       db:
         condition: service_healthy

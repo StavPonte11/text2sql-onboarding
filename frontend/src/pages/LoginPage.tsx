@@ -50,7 +50,7 @@ export function LoginPage() {
               block
               onClick={() => {
                 const nextUrl = encodeURIComponent(window.location.origin + '/control-center');
-                window.location.href = `${API_BASE_URL}/api/v1/auth/login/google?next_url=${nextUrl}`;
+                window.location.href = `${API_BASE_URL}/v1/auth/login/google?next_url=${nextUrl}`;
               }}
             >
               Sign in with Google
@@ -63,7 +63,7 @@ export function LoginPage() {
               block
               onClick={() => {
                 const nextUrl = encodeURIComponent(window.location.origin + '/control-center');
-                window.location.href = `${API_BASE_URL}/api/v1/auth/login/keycloak?next_url=${nextUrl}`;
+                window.location.href = `${API_BASE_URL}/v1/auth/login/keycloak?next_url=${nextUrl}`;
               }}
             >
               Sign in with Keycloak
