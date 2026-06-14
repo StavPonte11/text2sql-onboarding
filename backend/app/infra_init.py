@@ -648,8 +648,31 @@ def _ensure_trino_schemas() -> None:
                 raise
 
 
+def _delete_minio_prefix(prefix: str) -> None:
+    """Idempotently delete all objects under a given prefix in the warehouse bucket."""
+    logger.info("[InfraInit] Cleaning MinIO prefix '%s' …", prefix)
+    client = Minio(
+        _MINIO_HOST,
+        access_key=_MINIO_ACCESS_KEY,
+        secret_key=_MINIO_SECRET_KEY,
+        secure=False,
+    )
+    try:
+        objects = client.list_objects(_WAREHOUSE_BUCKET, prefix=prefix, recursive=True)
+        obj_list = list(objects)
+        if obj_list:
+            for obj in obj_list:
+                client.remove_object(_WAREHOUSE_BUCKET, obj.object_name)
+            logger.info("[InfraInit] Cleaned MinIO prefix '%s' successfully", prefix)
+        else:
+            logger.info("[InfraInit] MinIO prefix '%s' is already empty", prefix)
+    except Exception as exc:
+        logger.warning("[InfraInit] Failed to clean MinIO prefix '%s': %s", prefix, exc)
+
+
 def _ensure_trino_tables() -> None:
     """Create all required Trino tables (IF NOT EXISTS — idempotent)."""
+    import re
     for table in _TABLES:
         try:
             _trino_exec(table["create_sql"])
@@ -660,6 +683,25 @@ def _ensure_trino_tables() -> None:
                 logger.info(
                     "[InfraInit] Trino table '%s' already exists — OK", table["fqn"]
                 )
+            elif "non-empty location" in err:
+                match = re.search(r"location\s*=\s*'s3://warehouse/([^']+)'", table["create_sql"], re.IGNORECASE)
+                if match:
+                    prefix = match.group(1)
+                    logger.info("[InfraInit] Non-empty location error for '%s'. Cleaning MinIO prefix '%s' and retrying...", table["fqn"], prefix)
+                    _delete_minio_prefix(prefix)
+                    try:
+                        _trino_exec(table["create_sql"])
+                        logger.info("[InfraInit] Trino table '%s' ensured after cleanup ✓", table["fqn"])
+                    except Exception as retry_exc:
+                        logger.error(
+                            "[InfraInit] Failed to create table '%s' on retry: %s", table["fqn"], retry_exc
+                        )
+                        raise retry_exc
+                else:
+                    logger.error(
+                        "[InfraInit] Failed to parse location prefix from SQL for '%s': %s", table["fqn"], exc
+                    )
+                    raise
             else:
                 logger.error(
                     "[InfraInit] Failed to create table '%s': %s", table["fqn"], exc
