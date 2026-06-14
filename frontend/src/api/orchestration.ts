@@ -1,18 +1,5 @@
-import axios from 'axios';
+import api from './client';
 
-import { API_BASE_URL } from '../config/constants';
-import { useAppStore } from '../store/appStore';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
-});
-
-api.interceptors.request.use((config) => {
-  const scope = useAppStore.getState().activeScope;
-  if (scope) config.headers['X-Scope-Id'] = scope.id;
-  return config;
-});
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

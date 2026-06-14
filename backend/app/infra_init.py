@@ -8,6 +8,8 @@ the entire data layer is self-healing after `docker compose down/up`:
   2. Trino  — create minio catalog schemas & tables (IF NOT EXISTS)
   3. Trino  — seed sample rows (only when table is empty)
   4. OpenMetadata — register local_trino service / database / schemas / tables
+  5. Airlines  — register Snowflake/airlines tables in the backend DB and
+                 trigger a profiling job for each (idempotent).
 
 All steps are fully idempotent. Running this multiple times is safe.
 """
@@ -40,6 +42,23 @@ _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
 _TRINO_READY_INTERVAL = 5  # seconds between retries
+
+# ── Airlines Snowflake catalog ─────────────────────────────────────────────────
+# System owner used for infrastructure-seeded tables
+_SYSTEM_OWNER_ID = "system"
+
+# Each entry maps to one Table row in the backend DB.
+# Add new Snowflake databases/schemas here to include them in auto-profiling.
+_AIRLINES_TABLES: list[dict[str, str]] = [
+    {"name": "aircrafts_data",  "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "airports_data",   "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "boarding_passes", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "bookings",        "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "flights",         "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "seats",           "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "ticket_flights",  "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "tickets",         "schema_name": "airlines", "catalog": "airlines"},
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -590,13 +609,12 @@ def _wait_for_trino() -> None:
     logger.info("[InfraInit] Waiting for Trino minio catalog to become ready …")
     for attempt in range(1, _TRINO_READY_RETRIES + 1):
         try:
-            rows = _trino_exec("SHOW SCHEMAS FROM minio", ignore_errors=True)
-            if rows is not None:
-                logger.info(
-                    "[InfraInit] Trino minio catalog ready after %d attempt(s) ✓",
-                    attempt,
-                )
-                return
+            _trino_exec("SHOW SCHEMAS FROM minio")
+            logger.info(
+                "[InfraInit] Trino minio catalog ready after %d attempt(s) ✓",
+                attempt,
+            )
+            return
         except Exception as exc:
             logger.debug(
                 "[InfraInit] Trino not ready (attempt %d/%d): %s",
@@ -901,6 +919,232 @@ def _ensure_om_table(
         )
 
 
+def _verify_custom_catalogs() -> None:
+    """
+    Detect all non-default catalogs loaded in Trino (excluding system, minio, tpch)
+    and verify their connectivity by running SHOW SCHEMAS.
+    """
+    logger.info("[InfraInit] Scanning Trino for custom Snowflake/external catalogs...")
+    try:
+        catalogs = _trino_exec("SHOW CATALOGS")
+        custom_catalogs = []
+        for row in catalogs:
+            name = row[0]
+            if name not in ("system", "minio", "tpch"):
+                custom_catalogs.append(name)
+        
+        if not custom_catalogs:
+            logger.info("[InfraInit] No custom catalogs detected in Trino.")
+            return
+
+        logger.info(
+            "[InfraInit] Found custom catalog(s): %s. Verifying connections...",
+            custom_catalogs,
+        )
+        for catalog in custom_catalogs:
+            logger.info("[InfraInit] Verifying connection to catalog '%s'...", catalog)
+            schemas = _trino_exec(f"SHOW SCHEMAS FROM {catalog}")
+            logger.info(
+                "[InfraInit] Catalog '%s' connection verified successfully ✓ (%d schema(s) found: %s)",
+                catalog,
+                len(schemas),
+                [s[0] for s in schemas],
+            )
+    except Exception as exc:
+        logger.error("[InfraInit] Verification of custom catalogs failed: %s", exc)
+        raise
+
+
+def _ensure_airlines_registered() -> None:
+    """
+    Idempotently register every table in _AIRLINES_TABLES into the backend DB
+    and trigger a profiling job (in a background thread) for any table that
+    has no completed profile yet.
+
+    To add more Snowflake databases/schemas in the future, simply append entries
+    to the _AIRLINES_TABLES list at the top of this file.
+    """
+    import threading
+    from datetime import datetime, timedelta
+
+    from sqlmodel import Session, select
+
+    from app.db.engine import engine
+    from app.models.models import (
+        ColumnProfile,
+        ProfilingStatus,
+        Table,
+        TableProfile,
+        TableStatus,
+    )
+    from app.services.profiling_engine import run_table_profiling
+
+    logger.info("[InfraInit] Registering airlines Snowflake tables...")
+
+    registered_ids: list[str] = []
+
+    with Session(engine) as session:
+        for tdef in _AIRLINES_TABLES:
+            # Check whether this table already exists in the DB
+            existing = session.exec(
+                select(Table).where(
+                    Table.name == tdef["name"],
+                    Table.schema_name == tdef["schema_name"],
+                    Table.catalog == tdef["catalog"],
+                )
+            ).first()
+
+            if existing:
+                logger.info(
+                    "[InfraInit] Table '%s.%s.%s' already registered (id=%s) — OK",
+                    tdef["catalog"], tdef["schema_name"], tdef["name"], existing.id,
+                )
+                registered_ids.append(existing.id)
+            else:
+                table = Table(
+                    name=tdef["name"],
+                    schema_name=tdef["schema_name"],
+                    catalog=tdef["catalog"],
+                    service="local_trino",
+                    status=TableStatus.production,
+                    owner_id=_SYSTEM_OWNER_ID,
+                    oasis_source_id=f"airlines.{tdef['schema_name']}.{tdef['name']}",
+                )
+                session.add(table)
+                session.flush()  # generate the id
+                registered_ids.append(table.id)
+                logger.info(
+                    "[InfraInit] Registered table '%s.%s.%s' (id=%s) ✓",
+                    tdef["catalog"], tdef["schema_name"], tdef["name"], table.id,
+                )
+
+        session.commit()
+
+    logger.info(
+        "[InfraInit] Airlines tables registered: %d total.", len(registered_ids)
+    )
+
+    def _run_profile(table_id: str, table_name: str, schema_name: str, catalog: str) -> None:
+        """Background worker: run profiling and persist results for one table."""
+        try:
+            with Session(engine) as session:
+                # Create a pending profile record
+                profile = TableProfile(
+                    table_id=table_id,
+                    status=ProfilingStatus.running,
+                    version=1,
+                )
+                session.add(profile)
+                session.commit()
+                session.refresh(profile)
+                profile_id = profile.id
+
+            # Run the profiling engine (outside the DB session to avoid long holds)
+            result = run_table_profiling(
+                table_id=table_id,
+                catalog=catalog,
+                schema=schema_name,
+                table=table_name,
+                version=1,
+            )
+
+            # Persist results
+            with Session(engine) as session:
+                profile = session.get(TableProfile, profile_id)
+                if not profile:
+                    return
+                profile.status = (
+                    ProfilingStatus.completed if result.success else ProfilingStatus.failed
+                )
+                profile.version = result.version
+                profile.row_count = result.row_count
+                profile.sample_size = result.sample_size
+                profile.column_count = result.column_count
+                profile.null_rate_avg = result.null_rate_avg
+                profile.auto_insights = result.auto_insights
+                profile.sample_data = result.sample_data
+                profile.profile_json = result.profile_json
+                profile.cached_until = datetime.utcnow() + timedelta(hours=24)
+                profile.updated_at = datetime.utcnow()
+                session.add(profile)
+
+                for cs in result.column_stats:
+                    cp = ColumnProfile(
+                        table_id=table_id,
+                        profile_id=profile_id,
+                        column_name=cs.column_name,
+                        data_type=cs.data_type,
+                        null_count=cs.null_count,
+                        null_rate=cs.null_rate,
+                        distinct_count=cs.distinct_count,
+                        min_value=cs.min_value,
+                        max_value=cs.max_value,
+                        avg_value=cs.avg_value,
+                        median_value=cs.median_value,
+                        top_values=cs.top_values,
+                        is_categorical=cs.is_categorical,
+                        is_geo=cs.is_geo,
+                        is_time=cs.is_time,
+                        semantic_type=cs.semantic_type,
+                        stats_json=cs.stats_json,
+                    )
+                    session.add(cp)
+
+                session.commit()
+
+            logger.info(
+                "[InfraInit] Profiling complete for '%s.%s.%s': %d cols, %s rows",
+                catalog, schema_name, table_name,
+                len(result.column_stats),
+                format(result.row_count or 0, ","),
+            )
+        except Exception as exc:
+            logger.error(
+                "[InfraInit] Profiling failed for table %s: %s", table_id, exc
+            )
+
+    # Trigger profiling in background threads for tables without a completed profile
+    threads_started = 0
+    with Session(engine) as session:
+        # Collect table metadata needed for profiling
+        table_meta: list[tuple[str, str, str, str]] = []
+        for table_id in registered_ids:
+            completed = session.exec(
+                select(TableProfile).where(
+                    TableProfile.table_id == table_id,
+                    TableProfile.status == ProfilingStatus.completed,
+                )
+            ).first()
+            if completed:
+                logger.info(
+                    "[InfraInit] Table %s already has a completed profile — skipping.",
+                    table_id,
+                )
+                continue
+
+            tbl = session.get(Table, table_id)
+            if tbl:
+                table_meta.append((table_id, tbl.name, tbl.schema_name, tbl.catalog))
+
+    for table_id, tname, sname, cat in table_meta:
+        t = threading.Thread(
+            target=_run_profile,
+            args=(table_id, tname, sname, cat),
+            daemon=True,
+            name=f"profile-{cat}.{sname}.{tname}",
+        )
+        t.start()
+        threads_started += 1
+        logger.info(
+            "[InfraInit] Started profiling thread for '%s.%s.%s' ✓", cat, sname, tname
+        )
+
+    logger.info(
+        "[InfraInit] Airlines profiling: %d background thread(s) started for %d table(s).",
+        threads_started, len(registered_ids),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -924,6 +1168,7 @@ def init_infrastructure() -> None:
     try:
         _ensure_iceberg_tables()
         _wait_for_trino()
+        _verify_custom_catalogs()
         _ensure_trino_schemas()
         _ensure_trino_tables()
         _seed_trino_data()
@@ -937,6 +1182,14 @@ def init_infrastructure() -> None:
         # OM registration failure is non-fatal — backend can still serve traffic
         logger.warning(
             "[InfraInit] OpenMetadata registration failed (non-fatal): %s", exc
+        )
+
+    try:
+        _ensure_airlines_registered()
+    except Exception as exc:
+        # Airlines registration failure is non-fatal
+        logger.warning(
+            "[InfraInit] Airlines table registration failed (non-fatal): %s", exc
         )
 
     logger.info("[InfraInit] ═══════════════════════════════════════")

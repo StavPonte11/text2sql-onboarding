@@ -1,4 +1,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from python_core_utils.auth.config import SSOSettings
+
+class AuthSettings(SSOSettings):
+    pass
 
 
 class Settings(BaseSettings):
@@ -8,7 +12,7 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8080", "http://host.docker.internal:5173"]
 
     OPENMETADATA_TOKEN: str = ""
 
@@ -54,3 +58,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+auth_settings = AuthSettings()

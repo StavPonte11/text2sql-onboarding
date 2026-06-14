@@ -1,3 +1,4 @@
+import base64
 import logging
 from datetime import datetime
 
@@ -24,6 +25,47 @@ from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_pay
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
+
+
+_cached_om_token: str | None = None
+
+
+def get_om_token(force_refresh: bool = False) -> str:
+    global _cached_om_token
+    if _cached_om_token and not force_refresh:
+        return _cached_om_token
+
+    try:
+        b64_password = base64.b64encode(b"admin").decode()
+        r = httpx.post(
+            f"{settings.OPENMETADATA_URL}/api/v1/users/login",
+            json={"email": "admin@open-metadata.org", "password": b64_password},
+            timeout=10.0,
+        )
+        r.raise_for_status()
+        token = r.json().get("accessToken") or r.json().get("token", "")
+        if token:
+            _cached_om_token = token
+            return token
+    except Exception as e:
+        logger.warning(f"Failed to dynamically log in to OpenMetadata: {e}")
+
+    return settings.OPENMETADATA_TOKEN
+
+
+def om_get_request(url: str) -> httpx.Response:
+    token = get_om_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    response = httpx.get(url, headers=headers, timeout=10.0, verify=False)
+
+    if response.status_code == 401:
+        logger.info("OpenMetadata request returned 401. Retrying with a refreshed token...")
+        token = get_om_token(force_refresh=True)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.get(url, headers=headers, timeout=10.0, verify=False)
+
+    return response
+
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 
@@ -91,15 +133,19 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
     try:
         # Instead of sending oasis_source_id into the URL, send the FQN
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        token = settings.OPENMETADATA_TOKEN
-        response = httpx.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
-            verify=False,
-        )
+        response = om_get_request(url)
         response.raise_for_status()
         data = response.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Table '{fqn}' not found in metadata repository."
+            )
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Failed to fetch table metadata: {e!s}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to fetch table metadata: {e!s}"
@@ -186,15 +232,19 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
 
     try:
         url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        token = settings.OPENMETADATA_TOKEN
-        response = httpx.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
-            verify=False,
-        )
+        response = om_get_request(url)
         response.raise_for_status()
         data = response.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Table '{fqn}' not found in metadata repository."
+            )
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Failed to refetch table metadata: {e!s}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to refetch table metadata: {e!s}"

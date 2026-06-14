@@ -16,6 +16,7 @@ from core.models.models import (
 )
 from app.services.auth import require_admin
 from app.services.langfuse_client import langfuse_client
+from app.core.auth import check_admin
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,6 @@ class RejectionNote(BaseModel):
     note: str
 
 
-def _get_admin_from_header(
-    x_admin_email: str = Header(..., alias="X-Admin-Email"),
-    session: Session = Depends(get_session),
-) -> SecurityUser:
-    """Dependency: extracts the admin email from X-Admin-Email header and validates it."""
-    return require_admin(x_admin_email, session)
 
 
 def _sync_questions_to_production_dataset(session: Session):
@@ -113,7 +108,7 @@ def _sync_questions_to_production_dataset(session: Session):
 
 @router.get("/pending", response_model=list[dict])
 def get_pending_tables(
-    current_admin: SecurityUser = Depends(_get_admin_from_header),
+    current_admin: SecurityUser = Depends(check_admin),
     session: Session = Depends(get_session),
 ):
     """Get all tables in 'verified' status (awaiting admin approval)."""
@@ -156,7 +151,7 @@ def get_pending_tables(
 @router.post("/{table_id}/approve")
 def approve_table(
     table_id: str,
-    current_admin: SecurityUser = Depends(_get_admin_from_header),
+    current_admin: SecurityUser = Depends(check_admin),
     session: Session = Depends(get_session),
 ):
     """
@@ -199,7 +194,7 @@ def approve_table(
 def reject_table(
     table_id: str,
     rejection: RejectionNote,
-    current_admin: SecurityUser = Depends(_get_admin_from_header),
+    current_admin: SecurityUser = Depends(check_admin),
     session: Session = Depends(get_session),
 ):
     """

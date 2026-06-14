@@ -2,9 +2,8 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
-
 from sqlalchemy import JSON, Column, ForeignKey
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
 
 
@@ -677,6 +676,31 @@ class TableHealthRead(SQLModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class OrganizationMember(SQLModel, table=True):
+    __tablename__ = "organization_members"
+    __table_args__ = {"schema": "security"}
+
+    user_id: str = Field(
+        foreign_key="security.users.id", primary_key=True
+    )
+    organization_id: str = Field(
+        foreign_key="security.organizations.id", primary_key=True
+    )
+
+
+class Organization(SQLModel, table=True):
+    __tablename__ = "organizations"
+    __table_args__ = {"schema": "security"}
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(unique=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    members: list["SecurityUser"] = Relationship(
+        back_populates="organizations", link_model=OrganizationMember
+    )
+
+
 class SecurityUser(SQLModel, table=True):
     __tablename__ = "users"
     __table_args__ = {"schema": "security"}
@@ -684,10 +708,16 @@ class SecurityUser(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     email: str = Field(unique=True, index=True)
     name: str
+    sso_id: str | None = Field(default=None, index=True)
+    provider: str | None = Field(default=None)
     is_active: bool = Field(default=True)
     is_admin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    organizations: list["Organization"] = Relationship(
+        back_populates="members", link_model=OrganizationMember
+    )
 
 
 class SecurityUserRead(SQLModel):
@@ -696,8 +726,14 @@ class SecurityUserRead(SQLModel):
     name: str
     is_active: bool
     is_admin: bool
+    provider: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class AuthConfigRead(SQLModel):
+    ENABLE_KEYCLOAK: bool
+    ENABLE_GOOGLE: bool
 
 
 # ─────────────────────────────────────────────────────────────────────────────

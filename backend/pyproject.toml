@@ -24,6 +24,7 @@ dependencies = [
     "requests==2.32.3",
     "minio>=7.2.0",
     "core",
+    "python-core-utils[keycloak] @ git+ssh://git@github.com/matzpen-agency/python-core-utils.git@feat/google-sso#egg=python-core-utils",
 ]
 
 [dependency-groups]
