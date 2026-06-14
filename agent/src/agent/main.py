@@ -1,17 +1,10 @@
-from fastapi import FastAPI
-from agent.routers import chat
-from python_core_utils import setup_logging, CorrelationIdMiddleware
+from python_core_utils import setup_logging
+from agent.mcp_server import mcp
 
 # Set up logging with correlation ID
 setup_logging()
 
-app = FastAPI(title="Text2SQL Agent Service")
-
-# Register middleware
-app.add_middleware(CorrelationIdMiddleware)
-
-app.include_router(chat.router)
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+# FastMCP SSE app is a full Starlette app.
+# We expose it directly so its lifespan is triggered properly by Uvicorn.
+# It exposes the endpoint at /sse.
+app = mcp.sse_app()

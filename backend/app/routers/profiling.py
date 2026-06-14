@@ -10,9 +10,6 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlmodel import Session, select
-
 from core.db.engine import engine, get_session
 from core.models.models import (
     ColumnProfile,
@@ -24,6 +21,9 @@ from core.models.models import (
     TableProfile,
     TableProfileRead,
 )
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlmodel import Session, select
+
 from app.services.join_detection import discover_joins_for_table
 from app.services.profiling_engine import (
     build_context_for_llm,
@@ -35,37 +35,19 @@ router = APIRouter(tags=["profiling"])
 
 
 # ── Background worker ──────────────────────────────────────────────────────────
-def _run_profile_job(table_id: str, profile_id: str):
+def _run_profile_job(table_id: str):
     """
     Background task: runs real Trino profiling via profiling_engine,
-    then persists results into table_profiles + column_profiles.
+    then upserts results into table_profiles + column_profiles.
     """
     with Session(engine) as session:
-        profile = session.get(TableProfile, profile_id)
         table = session.get(Table, table_id)
-        if not profile or not table:
-            logger.error(
-                f"[Profiling] profile_id={profile_id} or table_id={table_id} not found"
-            )
+        if not table:
+            logger.error(f"[Profiling] table_id={table_id} not found")
             return
 
-        # Determine next version
-        latest = session.exec(
-            select(TableProfile)
-            .where(TableProfile.table_id == table_id)
-            .order_by(TableProfile.version.desc())
-        ).first()
-        version = (latest.version if latest else 0) + 1
-
-        profile.status = ProfilingStatus.running
-        profile.version = version
-        session.add(profile)
-        session.commit()
-
-        # Extract variables before session closes
         schema_name = table.schema_name
         table_name = table.name
-
         catalog = table.catalog
 
     # Run engine OUTSIDE the session to avoid long-held DB connections
@@ -75,31 +57,28 @@ def _run_profile_job(table_id: str, profile_id: str):
             catalog=catalog,
             schema=schema_name,
             table=table_name,
-            version=version,
+            version=1,
         )
     except Exception as exc:
         with open("error.log", "w") as f:
             f.write(traceback.format_exc())
         logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
-        with Session(engine) as session:
-            profile = session.get(TableProfile, profile_id)
-            if profile:
-                profile.status = ProfilingStatus.failed
-                profile.updated_at = datetime.utcnow()
-                session.add(profile)
-                session.commit()
         return
 
-    # Persist results
-    with Session(engine) as session:
-        profile = session.get(TableProfile, profile_id)
-        if not profile:
-            return
+    if not result.success:
+        logger.error(f"[Profiling] Engine unsuccessful for {table_id}")
+        return
 
-        profile.status = (
-            ProfilingStatus.completed if result.success else ProfilingStatus.failed
-        )
-        profile.version = result.version
+    # Persist results (Upsert by table_id)
+    with Session(engine) as session:
+        profile = session.exec(
+            select(TableProfile).where(TableProfile.table_id == table_id)
+        ).first()
+        if not profile:
+            profile = TableProfile(table_id=table_id)
+            session.add(profile)
+
+        profile.status = ProfilingStatus.completed
         profile.row_count = result.row_count
         profile.sample_size = result.sample_size
         profile.column_count = result.column_count
@@ -110,12 +89,22 @@ def _run_profile_job(table_id: str, profile_id: str):
         profile.cached_until = datetime.utcnow() + timedelta(hours=24)
         profile.updated_at = datetime.utcnow()
         session.add(profile)
+        session.commit()
+        session.refresh(profile)
 
-        # Persist column profiles
+        # Clear old column profiles
+        old_cols = session.exec(
+            select(ColumnProfile).where(ColumnProfile.table_id == table_id)
+        ).all()
+        for old_c in old_cols:
+            session.delete(old_c)
+        session.commit()
+
+        # Persist new column profiles
         for cs in result.column_stats:
             cp = ColumnProfile(
                 table_id=table_id,
-                profile_id=profile_id,
+                profile_id=profile.id,
                 column_name=cs.column_name,
                 data_type=cs.data_type,
                 null_count=cs.null_count,
@@ -136,8 +125,8 @@ def _run_profile_job(table_id: str, profile_id: str):
 
         session.commit()
         logger.info(
-            f"[Profiling] Persisted profile {profile_id} for table {table_id} "
-            f"(v{result.version}, {len(result.column_stats)} columns)"
+            f"[Profiling] Persisted profile {profile.id} for table {table_id} "
+            f"({len(result.column_stats)} columns)"
         )
 
 
@@ -148,32 +137,16 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    completed = session.exec(
-        select(TableProfile)
-        .where(
-            TableProfile.table_id == table_id,
-            TableProfile.status == ProfilingStatus.completed,
-        )
-        .order_by(TableProfile.created_at.desc())
+    profile = session.exec(
+        select(TableProfile).where(TableProfile.table_id == table_id)
     ).first()
 
-    latest = session.exec(
-        select(TableProfile)
-        .where(TableProfile.table_id == table_id)
-        .order_by(TableProfile.created_at.desc())
-    ).first()
-
-    if not completed and not latest:
+    if not profile:
         raise HTTPException(
             status_code=404, detail="No profile found. Run POST /profile/run first."
         )
 
-    # If a new profile is running, return the old data but indicate it's running
-    if completed and latest and latest.status == ProfilingStatus.running:
-        completed.status = ProfilingStatus.running
-        return completed
-
-    return latest if latest else completed
+    return profile
 
 
 # ── POST /tables/all/profile/run ──────────────────────────────────────────────
@@ -191,24 +164,7 @@ def run_all_profiles(
     count = 0
     for table in tables:
         # If not force, check for running profile
-        if not force:
-            stale = session.exec(
-                select(TableProfile).where(
-                    TableProfile.table_id == str(table.id),
-                    TableProfile.status == ProfilingStatus.running,
-                )
-            ).first()
-            if stale:
-                continue
-
-        profile = TableProfile(
-            table_id=str(table.id), status=ProfilingStatus.running, version=1
-        )
-        session.add(profile)
-        session.commit()
-        session.refresh(profile)
-
-        background_tasks.add_task(_run_profile_job, str(table.id), profile.id)
+        background_tasks.add_task(_run_profile_job, str(table.id))
         count += 1
 
     logger.info(
@@ -240,33 +196,18 @@ def run_table_profile(
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    # Reset any stale 'running' profiles (e.g. from a server restart)
-    stale = session.exec(
-        select(TableProfile).where(
-            TableProfile.table_id == table_id,
-            TableProfile.status == ProfilingStatus.running,
-        )
-    ).all()
-    for s in stale:
-        s.status = ProfilingStatus.failed
-        s.updated_at = datetime.utcnow()
-        session.add(s)
-    if stale:
-        session.commit()
-        logger.info(
-            f"[Profiling] Reset {len(stale)} stale running profile(s) for {table_id}"
-        )
+    profile = session.exec(
+        select(TableProfile).where(TableProfile.table_id == table_id)
+    ).first()
 
-    profile = TableProfile(table_id=table_id, status=ProfilingStatus.running, version=1)
-    session.add(profile)
-    session.commit()
-    session.refresh(profile)
+    background_tasks.add_task(_run_profile_job, table_id)
+    logger.info(f"[Profiling] Queued profiling job: table={table_id}")
 
-    background_tasks.add_task(_run_profile_job, table_id, profile.id)
-    logger.info(
-        f"[Profiling] Queued profiling job: table={table_id}, profile={profile.id}"
-    )
-    return profile
+    if profile:
+        return profile
+
+    # Return a dummy pending profile just to satisfy response_model if not exists yet
+    return TableProfile(table_id=table_id, status=ProfilingStatus.pending)
 
 
 # ── GET /tables/{id}/profile/columns ──────────────────────────────────────────
@@ -275,12 +216,9 @@ def run_table_profile(
 )
 def get_column_profiles(table_id: str, session: Session = Depends(get_session)):
     profile = session.exec(
-        select(TableProfile)
-        .where(
+        select(TableProfile).where(
             TableProfile.table_id == table_id,
-            TableProfile.status == ProfilingStatus.completed,
         )
-        .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
         return []
@@ -297,12 +235,9 @@ def get_single_column_profile(
     table_id: str, column: str, session: Session = Depends(get_session)
 ):
     profile = session.exec(
-        select(TableProfile)
-        .where(
+        select(TableProfile).where(
             TableProfile.table_id == table_id,
-            TableProfile.status == ProfilingStatus.completed,
         )
-        .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="No completed profile found")
@@ -331,12 +266,9 @@ def get_profile_context(
         raise HTTPException(status_code=404, detail="Table not found")
 
     profile = session.exec(
-        select(TableProfile)
-        .where(
+        select(TableProfile).where(
             TableProfile.table_id == table_id,
-            TableProfile.status == ProfilingStatus.completed,
         )
-        .order_by(TableProfile.created_at.desc())
     ).first()
     if not profile:
         raise HTTPException(
@@ -354,7 +286,6 @@ def get_profile_context(
         column_profiles=col_profiles,
     )
     context["profile_id"] = profile.id
-    context["profile_version"] = profile.version
     context["computed_at"] = profile.created_at.isoformat()
     return context
 

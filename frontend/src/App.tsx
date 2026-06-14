@@ -12,6 +12,7 @@ import { TableList } from './components/tables/TableList';
 import { OnboardingWizard } from './components/wizard/OnboardingWizard';
 import { AdminLoginPage } from './pages/AdminLoginPage';
 import { AdminPanelPage } from './pages/AdminPanelPage';
+import { AgentTestingPage } from './pages/AgentTestingPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { EvaluationsPage } from './pages/EvaluationsPage';
@@ -75,6 +76,7 @@ function AppLayout() {
           <Route path="/wizard" element={<OnboardingWizard />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/permissions" element={<ScopesPage />} />
+          <Route path="/agent-testing" element={<AgentTestingPage />} />
           <Route
             path="/admin"
             element={

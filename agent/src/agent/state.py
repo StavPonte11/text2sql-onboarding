@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     summary: str
     sql_explanation: str
     allowed_tables: list[str] | None
+    allowed_statuses: list[str] | None
     feedback: str | None
     feedback_route: str | None
     non_interactive: bool | None

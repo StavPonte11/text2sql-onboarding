@@ -13,8 +13,9 @@ RUN pnpm run build
 # Serve stage
 FROM nginxinc/nginx-unprivileged:alpine
 
-# Set a default backend URL, can be overridden via Openshift environment variables
+# Set default service URLs, can be overridden via OpenShift environment variables
 ENV BACKEND_URL=http://localhost:8000
+ENV AGENT_URL=http://localhost:8001
 
 # Copy the config as a template to allow Nginx to substitute the ${BACKEND_URL} variable at startup
 COPY nginx.conf /etc/nginx/templates/default.conf.template

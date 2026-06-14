@@ -7,12 +7,12 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: text2sql
     ports:
-    - 5432:5432
+      - 5432:5432
     volumes:
-    - pg_data:/var/lib/postgresql/data
-    - ./backend/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d text2sql"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d text2sql" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,34 +22,34 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
   minio:
     image: minio/minio:RELEASE.2023-11-20T22-40-07Z
     ports:
-    - 9000:9000
-    - 9001:9001
+      - 9000:9000
+      - 9001:9001
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password123
     command: server /data --console-address ":9001"
     volumes:
-    - minio_data:/data
+      - minio_data:/data
   trino:
     image: trinodb/trino:435
     ports:
-    - 8080:8080
+      - 8080:8080
     volumes:
-    - ./infra/trino/etc/catalog:/etc/trino/catalog
+      - ./infra/trino/etc/catalog:/etc/trino/catalog
     depends_on:
       db:
         condition: service_healthy
       minio:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/v1/info" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -62,14 +62,13 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: password
     expose:
-    - 3306
+      - 3306
     ports:
-    - 3306:3306
+      - 3306:3306
     volumes:
-    - db-data:/var/lib/mysql
+      - db-data:/var/lib/mysql
     healthcheck:
-      test: mysql --user=root --password=$$MYSQL_ROOT_PASSWORD --silent --execute
-        "use openmetadata_db"
+      test: mysql --user=root --password=$$MYSQL_ROOT_PASSWORD --silent --execute "use openmetadata_db"
       interval: 15s
       timeout: 10s
       retries: 10
@@ -77,20 +76,19 @@ services:
     container_name: openmetadata_elasticsearch
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
     environment:
-    - discovery.type=single-node
-    - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
-    - xpack.security.enabled=false
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - xpack.security.enabled=false
     ports:
-    - 9200:9200
-    - 9300:9300
+      - 9200:9200
+      - 9300:9300
     healthcheck:
-      test: curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep
-        -qE 'green|yellow' || exit 1
+      test: curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1
       interval: 15s
       timeout: 10s
       retries: 10
     volumes:
-    - es-data:/usr/share/elasticsearch/data
+      - es-data:/usr/share/elasticsearch/data
   execute-migrate-all:
     container_name: execute_migrate_all
     image: docker.getcollate.io/openmetadata/server:1.6.1
@@ -168,8 +166,7 @@ services:
       ELASTICSEARCH_INDEX_MAPPING_LANG: ${ELASTICSEARCH_INDEX_MAPPING_LANG:-EN}
       EVENT_MONITOR: ${EVENT_MONITOR:-prometheus}
       EVENT_MONITOR_BATCH_SIZE: ${EVENT_MONITOR_BATCH_SIZE:-10}
-      EVENT_MONITOR_PATH_PATTERN: ${EVENT_MONITOR_PATH_PATTERN:-["/api/v1/tables/*",
-        "/api/v1/health-check"]}
+      EVENT_MONITOR_PATH_PATTERN: ${EVENT_MONITOR_PATH_PATTERN:-["/api/v1/tables/*", "/api/v1/health-check"]}
       EVENT_MONITOR_LATENCY: ${EVENT_MONITOR_LATENCY:-[]}
       PIPELINE_SERVICE_CLIENT_ENABLED: ${PIPELINE_SERVICE_CLIENT_ENABLED:-true}
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-"org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"}
@@ -304,8 +301,7 @@ services:
       ELASTICSEARCH_INDEX_MAPPING_LANG: ${ELASTICSEARCH_INDEX_MAPPING_LANG:-EN}
       EVENT_MONITOR: ${EVENT_MONITOR:-prometheus}
       EVENT_MONITOR_BATCH_SIZE: ${EVENT_MONITOR_BATCH_SIZE:-10}
-      EVENT_MONITOR_PATH_PATTERN: ${EVENT_MONITOR_PATH_PATTERN:-["/api/v1/tables/*",
-        "/api/v1/health-check"]}
+      EVENT_MONITOR_PATH_PATTERN: ${EVENT_MONITOR_PATH_PATTERN:-["/api/v1/tables/*", "/api/v1/health-check"]}
       EVENT_MONITOR_LATENCY: ${EVENT_MONITOR_LATENCY:-[]}
       PIPELINE_SERVICE_CLIENT_ENABLED: ${PIPELINE_SERVICE_CLIENT_ENABLED:-true}
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-"org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"}
@@ -352,11 +348,11 @@ services:
       WEB_CONF_CACHE_CONTROL: ${WEB_CONF_CACHE_CONTROL:-""}
       WEB_CONF_PRAGMA: ${WEB_CONF_PRAGMA:-""}
     expose:
-    - 8585
-    - 8586
+      - 8585
+      - 8586
     ports:
-    - 8585:8585
-    - 8586:8586
+      - 8585:8585
+      - 8586:8586
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -366,11 +362,11 @@ services:
         condition: service_completed_successfully
     healthcheck:
       test:
-      - CMD
-      - wget
-      - -q
-      - --spider
-      - http://localhost:8586/healthcheck
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://localhost:8586/healthcheck
   ingestion:
     container_name: openmetadata_ingestion
     image: docker.getcollate.io/openmetadata/ingestion:1.6.1
@@ -394,15 +390,15 @@ services:
       DB_PROPERTIES: ${AIRFLOW_DB_PROPERTIES:-}
     entrypoint: /bin/bash
     command:
-    - /opt/airflow/ingestion_dependency.sh
+      - /opt/airflow/ingestion_dependency.sh
     expose:
-    - 8080
+      - 8080
     ports:
-    - 8082:8080
+      - 8082:8080
     volumes:
-    - ingestion-volume-dag-airflow:/opt/airflow/dag_generated_configs
-    - ingestion-volume-dags:/opt/airflow/dags
-    - ingestion-volume-tmp:/tmp
+      - ingestion-volume-dag-airflow:/opt/airflow/dag_generated_configs
+      - ingestion-volume-dags:/opt/airflow/dags
+      - ingestion-volume-tmp:/tmp
 
   backend:
     build:
@@ -431,6 +427,7 @@ services:
       - OPENMETADATA_SERVICE_NAME=local_trino
       - APP_ENV=production
       - JWT_SECRET=dev-secret-change-in-production
+      - AGENT_URL=http://agent:8001
       - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
       - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
       - LANGFUSE_HOST=https://cloud.langfuse.com
@@ -442,7 +439,7 @@ services:
       openmetadata-server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -473,6 +470,7 @@ services:
       - EMBEDDER_URL=http://host.docker.internal:11434
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
+      - MAX_PROFILES_TO_FETCH=4
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino
@@ -498,6 +496,7 @@ services:
       - "3000:8080"
     environment:
       - BACKEND_URL=http://backend:8000
+      - AGENT_URL=http://agent:8001
     depends_on:
       backend:
         condition: service_healthy
@@ -514,4 +513,3 @@ volumes:
 secrets:
   deploy_key:
     file: ./deploy_key
-

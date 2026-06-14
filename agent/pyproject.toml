@@ -15,7 +15,8 @@ dependencies = [
     "trino>=0.328.0",
     "langfuse>=2.0.0",
     "langchain",
-    "langchain-openai"
+    "langchain-openai",
+    "mcp>=1.12.4",
 ]
 
 [tool.uv.sources]

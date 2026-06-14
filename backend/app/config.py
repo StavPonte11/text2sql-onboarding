@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
+    # Agent MCP service URL (internal service-to-service)
+    AGENT_URL: str = "http://localhost:8001"
+
     OPENMETADATA_TOKEN: str = ""
 
     APP_ENV: str = "development"
