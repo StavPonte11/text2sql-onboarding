@@ -3,9 +3,9 @@ from sqlmodel import Session
 
 from python_core_utils.auth import create_sso_router
 from app.config import auth_settings
-from app.db.engine import engine
+from core.db.engine import engine
 from app.core.auth import sync_user_from_payload, get_current_user
-from app.models.models import AuthConfigRead, SecurityUserRead
+from core.models.models import AuthConfigRead, SecurityUserRead
 
 router = APIRouter()
 

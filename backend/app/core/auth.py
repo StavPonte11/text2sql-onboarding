@@ -1,7 +1,7 @@
 from fastapi import Request, HTTPException, Depends, status
 from sqlmodel import Session, select
-from app.db.engine import get_session
-from app.models.models import SecurityUser, Organization
+from core.db.engine import get_session
+from core.models.models import SecurityUser, Organization
 
 def sync_user_from_payload(db: Session, payload: dict, provider: str) -> SecurityUser:
     email = payload.get("email")
