@@ -22,8 +22,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session, desc, select
 
-from app.db.engine import engine, get_session
-from app.models.models import (
+from core.db.engine import engine, get_session
+from core.models.models import (
     AlertSeverity,
     EnrichmentVersion,
     EvalResult,

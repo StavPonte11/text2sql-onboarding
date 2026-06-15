@@ -10,8 +10,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlmodel import Session, select
 
-from app.db.engine import engine
-from app.models.models import (
+from core.db.engine import engine
+from core.models.models import (
     EvalRun,
     EvaluationSchedule,
     GoldenQuestion,

@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlmodel import Session, col, select
 
 from app.config import settings
-from app.db.engine import get_session
-from app.models.models import (
+from core.db.engine import get_session
+from core.models.models import (
     EnrichmentVersion,
     ForeignKeyMapping,
     ForeignKeyMappingCreate,
@@ -17,7 +17,11 @@ from app.models.models import (
     TableRead,
     TableStatus,
     UserScope,
+    GoldenQuestion,
 )
+
+from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
+from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -286,9 +290,6 @@ def update_table_status(
     session.commit()
     session.refresh(table)
 
-    from app.models.models import GoldenQuestion
-    from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
-    from app.services.langfuse_client import langfuse_client
 
     # Handle transitions
     if status == TableStatus.production and previous_status != TableStatus.production:

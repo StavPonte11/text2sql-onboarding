@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import JSON, Column, ForeignKey
 from sqlmodel import Field, SQLModel
+from pgvector.sqlalchemy import Vector
 
 
 class TableStatus(StrEnum):
@@ -27,6 +28,7 @@ class Table(SQLModel, table=True):
     catalog: str = Field(default="dataverse")
     service: str = Field(default="trino_ingestion")
     openmetadata_json: Any | None = Field(default=None, sa_column=Column(JSON))
+    embedding: Any | None = Field(default=None, sa_column=Column(Vector(768)))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -734,5 +736,43 @@ class ForeignKeyMappingRead(SQLModel):
     source_column: str
     target_table_id: str
     target_column: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP EXTRACTORS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExtractorStatus(StrEnum):
+    draft = "draft"
+    sandbox = "sandbox"
+    verified = "verified"
+    production = "production"
+    degraded = "degraded"
+
+class HttpExtractor(SQLModel, table=True):
+    __tablename__ = "http_extractors"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(unique=True, index=True)
+    url: str
+    description: str | None = None
+    status: ExtractorStatus = Field(default=ExtractorStatus.draft)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class HttpExtractorCreate(SQLModel):
+    name: str
+    url: str
+    description: str | None = None
+    status: ExtractorStatus = ExtractorStatus.draft
+
+class HttpExtractorRead(SQLModel):
+    id: str
+    name: str
+    url: str
+    description: str | None
+    status: ExtractorStatus
     created_at: datetime
     updated_at: datetime

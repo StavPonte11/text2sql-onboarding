@@ -3,7 +3,7 @@
  */
 
 // API base URL configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+export const API_BASE_URL = '/api';
 
 // Query keys for React Query / TanStack Query
 export const QUERY_KEYS = {

@@ -25,7 +25,7 @@ from typing import Any
 from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session
 
-from app.models.models import EvalResult, GoldenQuestion
+from core.models.models import EvalResult, GoldenQuestion
 from app.services.langfuse_client import Evaluation, langfuse_client as _lf_client
 
 logger = logging.getLogger(__name__)

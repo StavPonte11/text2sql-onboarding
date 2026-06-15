@@ -31,3 +31,6 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.
+
+# Private keys / Secrets
+deploy_key
