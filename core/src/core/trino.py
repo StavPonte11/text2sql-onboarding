@@ -84,8 +84,16 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
     except Exception as exc:
         execution_time_ms = int((time.time() - start_time) * 1000)
         logger.error(f"[CoreTrinoClient] FAILED in {execution_time_ms}ms: {exc}")
-        cur.close()
-        conn.close()
+        if cur is not None:
+            try:
+                cur.close()
+            except:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except:
+                pass
         return TrinoExecutionResult(
             success=False,
             rows=[],
