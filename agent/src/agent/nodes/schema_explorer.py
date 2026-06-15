@@ -4,7 +4,7 @@ import urllib.request
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 from esca_sdk import EscaClient
-        
+import logging
 from agent.state import AgentState
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -19,7 +19,7 @@ from agent.langfuse_client import langfuse_client
 
 # Initialize LLM
 llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
-
+logger = logging.getLogger(__name__)
 # Define standardized Schema Explorer Output Type
 class SchemaExplorerOutput(BaseModel):
     schema_plan: Optional[Any] = Field(
@@ -46,7 +46,7 @@ def get_query_embedding(text: str) -> list[float]:
     data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req) as res:
+        with urllib.request.urlopen(req, timeout=10) as res:
             return json.loads(res.read().decode())["embedding"]
     except Exception as e:
         print(f"Error getting query embedding: {e}")
@@ -206,6 +206,7 @@ async def get_table_profile(table_id: str) -> str:
             esca_id = res.get("esca_id")
         except Exception as e:
             esca_id = None
+            logger.error(f"Error: Failed to save profile to Esca for table {table_id}: {e}")
             # TODO: handle error
         finally:
             await client.close()

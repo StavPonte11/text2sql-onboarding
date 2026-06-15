@@ -9,6 +9,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
+from app.config import settings
 from app.routers import (
     admin_approval,
     admin_auth,
@@ -30,9 +31,9 @@ from app.services.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
     stream=sys.stdout,
-    level=logging.DEBUG,
+    level=logging.DEBUG if settings.APP_ENV == "development" else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    force=True,
+    force=False,
 )
 logger = logging.getLogger(__name__)
 

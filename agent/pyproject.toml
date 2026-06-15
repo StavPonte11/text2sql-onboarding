@@ -16,6 +16,7 @@ dependencies = [
     "langfuse>=2.0.0",
     "langchain",
     "langchain-openai",
+    "greenlet>=3.5.1",
     "mcp>=1.12.4",
 ]
 

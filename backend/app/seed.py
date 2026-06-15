@@ -1,6 +1,5 @@
-import urllib.request
 import json
-from sqlmodel import Session, select
+import urllib.request
 
 from core.db.engine import create_db_and_tables, engine
 from core.models.models import (
@@ -15,19 +14,32 @@ from core.models.models import (
     TableStatus,
     UserScope,
 )
+from sqlmodel import Session, select
 
 from app.config import settings
+
+EXPECTED_EMBEDDING_DIM = 768
+
 
 def get_embedding(text: str) -> list[float]:
     url = settings.EMBEDDER_URL
     data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
     try:
-        with urllib.request.urlopen(req) as res:
-            return json.loads(res.read().decode())["embedding"]
+        with urllib.request.urlopen(req, timeout=10) as res:
+            embedding = json.loads(res.read().decode())["embedding"]
+            if len(embedding) != EXPECTED_EMBEDDING_DIM:
+                raise ValueError(
+                    f"Embedder returned embedding of length {len(embedding)}, "
+                    f"expected {EXPECTED_EMBEDDING_DIM}"
+                )
+            return embedding
     except Exception as e:
         print(f"Error getting embedding: {e}")
-        return [0.0] * 768
+        return [0.0] * EXPECTED_EMBEDDING_DIM
+
 
 def seed():
     # Run migrations to ensure all schemas and tables exist
@@ -114,15 +126,51 @@ def seed():
                     "Ideal for single-table queries."
                 ),
                 "columns": [
-                    {"name": "order_id", "description": "Unique order identifier", "dataType": "VARCHAR"},
-                    {"name": "customer_name", "description": "Full name of the customer", "dataType": "VARCHAR"},
-                    {"name": "customer_email", "description": "Customer email address", "dataType": "VARCHAR"},
-                    {"name": "product_name", "description": "Name of the product ordered", "dataType": "VARCHAR"},
-                    {"name": "quantity", "description": "Number of units ordered", "dataType": "INT"},
-                    {"name": "unit_price", "description": "Price per unit (USD)", "dataType": "DOUBLE"},
-                    {"name": "total_amount", "description": "Total order value (USD)", "dataType": "DOUBLE"},
-                    {"name": "status", "description": "Order status", "dataType": "VARCHAR"},
-                    {"name": "order_date", "description": "Date the order was placed", "dataType": "DATE"},
+                    {
+                        "name": "order_id",
+                        "description": "Unique order identifier",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "customer_name",
+                        "description": "Full name of the customer",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "customer_email",
+                        "description": "Customer email address",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "product_name",
+                        "description": "Name of the product ordered",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "quantity",
+                        "description": "Number of units ordered",
+                        "dataType": "INT",
+                    },
+                    {
+                        "name": "unit_price",
+                        "description": "Price per unit (USD)",
+                        "dataType": "DOUBLE",
+                    },
+                    {
+                        "name": "total_amount",
+                        "description": "Total order value (USD)",
+                        "dataType": "DOUBLE",
+                    },
+                    {
+                        "name": "status",
+                        "description": "Order status",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "order_date",
+                        "description": "Date the order was placed",
+                        "dataType": "DATE",
+                    },
                 ],
             },
         )
@@ -132,13 +180,37 @@ def seed():
             data={
                 "table_description": "Customer master table in the complex_retail schema.",
                 "columns": [
-                    {"name": "customer_id", "description": "Unique customer ID", "dataType": "VARCHAR"},
-                    {"name": "first_name", "description": "Customer first name", "dataType": "VARCHAR"},
-                    {"name": "last_name", "description": "Customer last name", "dataType": "VARCHAR"},
-                    {"name": "email", "description": "Customer email", "dataType": "VARCHAR"},
-                    {"name": "country", "description": "Country", "dataType": "VARCHAR"},
+                    {
+                        "name": "customer_id",
+                        "description": "Unique customer ID",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "first_name",
+                        "description": "Customer first name",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "last_name",
+                        "description": "Customer last name",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "email",
+                        "description": "Customer email",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "country",
+                        "description": "Country",
+                        "dataType": "VARCHAR",
+                    },
                     {"name": "city", "description": "City", "dataType": "VARCHAR"},
-                    {"name": "created_at", "description": "Account creation timestamp", "dataType": "TIMESTAMP"},
+                    {
+                        "name": "created_at",
+                        "description": "Account creation timestamp",
+                        "dataType": "TIMESTAMP",
+                    },
                 ],
             },
         )
@@ -148,14 +220,38 @@ def seed():
             data={
                 "table_description": "Products master table in the complex_retail schema.",
                 "columns": [
-                    {"name": "product_id", "description": "Unique product ID", "dataType": "VARCHAR"},
-                    {"name": "name", "description": "Product name", "dataType": "VARCHAR"},
-                    {"name": "category", "description": "Category", "dataType": "VARCHAR"},
-                    {"name": "subcategory", "description": "Sub-category", "dataType": "VARCHAR"},
-                    {"name": "price", "description": "List price (USD)", "dataType": "DOUBLE"},
-                    {"name": "stock_quantity", "description": "Units in stock", "dataType": "INT"},
-                ]
-            }
+                    {
+                        "name": "product_id",
+                        "description": "Unique product ID",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "name",
+                        "description": "Product name",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "category",
+                        "description": "Category",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "subcategory",
+                        "description": "Sub-category",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "price",
+                        "description": "List price (USD)",
+                        "dataType": "DOUBLE",
+                    },
+                    {
+                        "name": "stock_quantity",
+                        "description": "Units in stock",
+                        "dataType": "INT",
+                    },
+                ],
+            },
         )
         e4 = EnrichmentVersion(
             table_id=t5.id,
@@ -163,14 +259,38 @@ def seed():
             data={
                 "table_description": "Orders master table in the complex_retail schema.",
                 "columns": [
-                    {"name": "order_id", "description": "Unique order ID", "dataType": "VARCHAR"},
-                    {"name": "customer_id", "description": "FK to customers.customer_id", "dataType": "VARCHAR"},
-                    {"name": "order_date", "description": "Date placed", "dataType": "DATE"},
-                    {"name": "status", "description": "Order status", "dataType": "VARCHAR"},
-                    {"name": "total_amount", "description": "Total value (USD)", "dataType": "DOUBLE"},
-                    {"name": "shipping_address", "description": "Delivery address", "dataType": "VARCHAR"},
-                ]
-            }
+                    {
+                        "name": "order_id",
+                        "description": "Unique order ID",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "customer_id",
+                        "description": "FK to customers.customer_id",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "order_date",
+                        "description": "Date placed",
+                        "dataType": "DATE",
+                    },
+                    {
+                        "name": "status",
+                        "description": "Order status",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "total_amount",
+                        "description": "Total value (USD)",
+                        "dataType": "DOUBLE",
+                    },
+                    {
+                        "name": "shipping_address",
+                        "description": "Delivery address",
+                        "dataType": "VARCHAR",
+                    },
+                ],
+            },
         )
         e5 = EnrichmentVersion(
             table_id=t3.id,
@@ -178,14 +298,38 @@ def seed():
             data={
                 "table_description": "Order items details table in complex_retail schema.",
                 "columns": [
-                    {"name": "item_id", "description": "Unique item ID", "dataType": "VARCHAR"},
-                    {"name": "order_id", "description": "FK to orders.order_id", "dataType": "VARCHAR"},
-                    {"name": "product_id", "description": "FK to products.product_id", "dataType": "VARCHAR"},
-                    {"name": "quantity", "description": "Quantity ordered", "dataType": "INT"},
-                    {"name": "unit_price", "description": "Unit price (USD)", "dataType": "DOUBLE"},
-                    {"name": "discount_pct", "description": "Discount percent", "dataType": "DOUBLE"},
-                ]
-            }
+                    {
+                        "name": "item_id",
+                        "description": "Unique item ID",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "order_id",
+                        "description": "FK to orders.order_id",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "product_id",
+                        "description": "FK to products.product_id",
+                        "dataType": "VARCHAR",
+                    },
+                    {
+                        "name": "quantity",
+                        "description": "Quantity ordered",
+                        "dataType": "INT",
+                    },
+                    {
+                        "name": "unit_price",
+                        "description": "Unit price (USD)",
+                        "dataType": "DOUBLE",
+                    },
+                    {
+                        "name": "discount_pct",
+                        "description": "Discount percent",
+                        "dataType": "DOUBLE",
+                    },
+                ],
+            },
         )
         session.add_all([e1, e2, e3, e4, e5])
         session.flush()

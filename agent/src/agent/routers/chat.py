@@ -1,14 +1,14 @@
+from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import uuid
-from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from agent.graph import agent_graph
 from python_core_utils.rate_limiting import RateLimiter
 from langfuse.langchain import CallbackHandler
 from agent.config import settings
-from sqlmodel import Session, select
-from core.db.engine import engine
+from sqlmodel import select
+from core.db.engine import async_engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
 from langgraph.types import Command
 
@@ -82,8 +82,8 @@ async def chat_endpoint(request: ChatRequest):
             )
             
         if request.allowed_tables:
-            with Session(engine) as session:
-                all_tables = session.exec(select(Table)).all()
+            async with AsyncSession(async_engine) as session:
+                all_tables = (await session.execute(select(Table))).scalars().all()
                 for allowed in request.allowed_tables:
                     exists = False
                     for t in all_tables:
@@ -99,12 +99,12 @@ async def chat_endpoint(request: ChatRequest):
                         )
 
         active_extractors = []
-        with Session(engine) as session:
+        async with AsyncSession(async_engine) as session:
             if request.extractors:
                 for ext_name_or_id in request.extractors:
-                    ext = session.exec(select(HttpExtractor).where(
+                    ext = (await session.execute(select(HttpExtractor).where(
                         (HttpExtractor.id == ext_name_or_id) | (HttpExtractor.name == ext_name_or_id)
-                    )).first()
+                    ))).scalars().first()
                     if not ext:
                         raise HTTPException(
                             status_code=400,
@@ -112,7 +112,7 @@ async def chat_endpoint(request: ChatRequest):
                         )
                     active_extractors.append({"name": ext.name, "url": ext.url})
             else:
-                prod_extractors = session.exec(select(HttpExtractor).where(HttpExtractor.status == ExtractorStatus.production)).all()
+                prod_extractors = (await session.execute(select(HttpExtractor).where(HttpExtractor.status == ExtractorStatus.production))).scalars().all()
                 for ext in prod_extractors:
                     active_extractors.append({"name": ext.name, "url": ext.url})
 

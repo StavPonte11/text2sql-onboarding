@@ -1,3 +1,4 @@
+from agent.nodes.refiner import MAX_REFINER_ITERATIONS
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
@@ -43,7 +44,7 @@ def rejection_router_node(state: AgentState):
 
 
 def route_refiner(state: AgentState):
-    if state.get("trino_error") and state.get("refinement_count", 0) < 3:
+    if state.get("trino_error") and state.get("refinement_count", 0) < MAX_REFINER_ITERATIONS:
         return "refiner"
     return "finalizer"
 

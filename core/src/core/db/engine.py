@@ -4,9 +4,10 @@ from alembic.config import Config
 from sqlmodel import Session
 
 from alembic import command
-from python_core_utils import get_engine
+from python_core_utils import get_engine, get_async_engine
 
 engine = get_engine()
+async_engine = get_async_engine()
 
 
 def create_db_and_tables(alembic_ini_path: str = "alembic.ini"):
