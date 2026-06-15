@@ -20,6 +20,7 @@ from sqlmodel import Session, col, select
 
 from app.config import settings
 from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
+from app.seed import EXPECTED_EMBEDDING_DIM
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,11 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
         )
         if embed_resp.status_code == 200:
             embedding = embed_resp.json().get("embedding")
+            if len(embedding) != EXPECTED_EMBEDDING_DIM:
+                raise ValueError(
+                    f"Embedder returned embedding of length {len(embedding)}, "
+                    f"expected {EXPECTED_EMBEDDING_DIM}"
+                )
     except Exception as e:
         logger.warning(f"Failed to generate embedding for table {name}: {e}")
 
@@ -245,7 +251,13 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
             timeout=10.0,
         )
         if embed_resp.status_code == 200:
-            table.embedding = embed_resp.json().get("embedding")
+            embedding = embed_resp.json().get("embedding")
+            if len(embedding) != EXPECTED_EMBEDDING_DIM:
+                raise ValueError(
+                    f"Embedder returned embedding of length {len(embedding)}, "
+                    f"expected {EXPECTED_EMBEDDING_DIM}"
+                )
+            table.embedding = embedding
     except Exception as e:
         logger.warning(
             f"Failed to generate embedding for table {name} during sync: {e}"

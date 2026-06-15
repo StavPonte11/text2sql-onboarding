@@ -141,6 +141,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "allowed_tables": request.allowed_tables,
         "allowed_statuses": request.allowed_statuses,
         "extractors": request.extractors,
+        "hitl_enabled": request.hitl_enabled,
     }
 
     result = await _call_agent_mcp(tool_arguments)

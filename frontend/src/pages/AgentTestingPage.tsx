@@ -25,6 +25,8 @@ export function AgentTestingPage() {
     },
   });
 
+  const isResuming = chatMutation.isPending && chatResponse?.status === 'interrupted';
+
   const handleSubmit = () => {
     if (!query) return;
     setChatResponse(null);
@@ -228,12 +230,19 @@ export function AgentTestingPage() {
                     danger
                     icon={<XCircle size={16} />}
                     onClick={handleReject}
-                    disabled={!feedback}
+                    disabled={!feedback || isResuming}
+                    loading={isResuming}
                     title={!feedback ? 'Feedback is required to reject' : undefined}
                   >
                     Reject with Feedback
                   </Button>
-                  <Button type="primary" icon={<CheckCircle size={16} />} onClick={handleApprove}>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircle size={16} />}
+                    onClick={handleApprove}
+                    disabled={isResuming}
+                    loading={isResuming}
+                  >
                     Approve & Continue
                   </Button>
                 </div>

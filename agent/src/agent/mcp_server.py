@@ -18,6 +18,7 @@ async def chat_with_agent(
     allowed_tables: list[str] | None = None,
     allowed_statuses: list[str] | None = None,
     extractors: list[str] | None = None,
+    hitl_enabled: bool = True,
 ) -> str:
     """Run the Text2SQL agent to answer database queries."""
     thread_id = thread_id or str(uuid.uuid4())
@@ -70,7 +71,8 @@ async def chat_with_agent(
                 "user_query": query, 
                 "allowed_tables": allowed_tables,
                 "allowed_statuses": allowed_statuses,
-                "active_extractors": active_extractors
+                "active_extractors": active_extractors,
+                "non_interactive": not hitl_enabled,
             },
             config=config
         )

@@ -1,7 +1,7 @@
 """remove_table_profile_version_and_make_table_id_unique
 
-Revision ID: manual_remove_profile_version
-Revises: 781457ead87d
+Revision ID: 4f7c2b9a8e1d
+Revises: aeb0e2695517
 Create Date: 2026-06-10 12:00:00.000000
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql import text
 
 # revision identifiers, used by Alembic.
-revision = 'manual_remove_profile_version'
+revision = '4f7c2b9a8e1d'
 down_revision = 'aeb0e2695517'
 branch_labels = None
 depends_on = None
