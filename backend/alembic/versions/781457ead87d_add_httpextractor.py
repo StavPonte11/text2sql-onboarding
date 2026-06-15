@@ -31,6 +31,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_http_extractors_name'), 'http_extractors', ['name'], unique=True)
+    #Since we changed eval_runs to have non-nullable table_id, we need to delete all runs that have null table_id
+    op.execute("DELETE FROM eval_runs WHERE table_id IS NULL")
     op.alter_column('eval_runs', 'table_id',
                existing_type=sa.VARCHAR(),
                nullable=False)

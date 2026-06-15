@@ -46,7 +46,7 @@ def get_query_embedding(text: str) -> list[float]:
     data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req) as res:
+        with urllib.request.urlopen(req, timeout=10) as res:
             return json.loads(res.read().decode())["embedding"]
     except Exception as e:
         print(f"Error getting query embedding: {e}")
@@ -62,14 +62,14 @@ def hybrid_search_tables(query: str, query_embedding: list[float], session: Sess
     allowed_tables_set = []
     allowed_ids = set()
     for table in all_tables:
-        is_allowed = (
-            table.status == "production" or
-            (allowed and (
+        if allowed:
+            is_allowed = (
                 table.id in allowed or
                 table.name in allowed or
                 f"{table.schema_name}.{table.name}" in allowed
-            ))
-        )
+            )
+        else:
+            is_allowed = table.status == "production"
         if is_allowed:
             allowed_tables_set.append(table)
             allowed_ids.add(table.id)

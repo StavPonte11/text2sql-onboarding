@@ -15,7 +15,8 @@ dependencies = [
     "trino>=0.328.0",
     "langfuse>=2.0.0",
     "langchain",
-    "langchain-openai"
+    "langchain-openai",
+    "greenlet>=3.5.1",
 ]
 
 [tool.uv.sources]

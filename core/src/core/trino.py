@@ -72,6 +72,8 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
         columns = [desc[0] for desc in cur.description] if cur.description else []
         execution_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[CoreTrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms")
+        cur.close()
+        conn.close()
         return TrinoExecutionResult(
             success=True,
             rows=[list(r) for r in rows],
@@ -82,6 +84,8 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
     except Exception as exc:
         execution_time_ms = int((time.time() - start_time) * 1000)
         logger.error(f"[CoreTrinoClient] FAILED in {execution_time_ms}ms: {exc}")
+        cur.close()
+        conn.close()
         return TrinoExecutionResult(
             success=False,
             rows=[],

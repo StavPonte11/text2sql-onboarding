@@ -4,9 +4,12 @@ from langfuse import Langfuse
 # ==============================================================================
 # CONFIGURATION - Set your private Langfuse server credentials here
 # ==============================================================================
-LANGFUSE_PUBLIC_KEY = "pk-lf-..."
-LANGFUSE_SECRET_KEY = "sk-lf-..."
-LANGFUSE_BASE_URL = "http://localhost:3000"  # Replace with your Langfuse URL
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_HOST")
+
+if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY:
+    raise RuntimeError("LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_HOST must be set")
 
 def main():
     print(f"Connecting to Langfuse at {LANGFUSE_BASE_URL}...")

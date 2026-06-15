@@ -489,6 +489,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      trino:
+        condition: service_healthy
 
   frontend:
     build:
