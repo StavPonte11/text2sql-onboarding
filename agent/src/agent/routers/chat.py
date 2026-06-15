@@ -31,7 +31,9 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     resume_value: str | QueryApproval | None = None
     allowed_tables: list[str] | None = None
+    allowed_statuses: list[str] | None = None
     extractors: list[str] | None = None
+    hitl_enabled: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -119,7 +121,9 @@ async def chat_endpoint(request: ChatRequest):
             {
                 "user_query": request.query, 
                 "allowed_tables": request.allowed_tables,
-                "active_extractors": active_extractors
+                "allowed_statuses": request.allowed_statuses,
+                "active_extractors": active_extractors,
+                "non_interactive": not request.hitl_enabled
             },
             config=config
         )

@@ -2,25 +2,25 @@ import logging
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlmodel import Session, col, select
-
-from app.config import settings
 from core.db.engine import get_session
 from core.models.models import (
     EnrichmentVersion,
     ForeignKeyMapping,
     ForeignKeyMappingCreate,
     ForeignKeyMappingRead,
+    GoldenQuestion,
     Table,
     TableCreate,
     TableRead,
     TableStatus,
     UserScope,
-    GoldenQuestion,
 )
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlmodel import Session, col, select
 
+from app.config import settings
 from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
+from app.seed import EXPECTED_EMBEDDING_DIM
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,25 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
     description = metadata.get("description", data.get("description", ""))
     om_columns = metadata.get("columns", data.get("columns", []))
 
+    # Generate embedding
+    text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
+    embedding = None
+    try:
+        embed_resp = httpx.post(
+            settings.EMBEDDER_URL,
+            json={"model": settings.EMBEDDER_MODEL, "prompt": text_to_embed},
+            timeout=10.0,
+        )
+        if embed_resp.status_code == 200:
+            embedding = embed_resp.json().get("embedding")
+            if len(embedding) != EXPECTED_EMBEDDING_DIM:
+                raise ValueError(
+                    f"Embedder returned embedding of length {len(embedding)}, "
+                    f"expected {EXPECTED_EMBEDDING_DIM}"
+                )
+    except Exception as e:
+        logger.warning(f"Failed to generate embedding for table {name}: {e}")
+
     # Create the table
     table = Table(
         name=name,
@@ -136,6 +155,7 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
         owner_id="system",
         oasis_source_id=payload.oasis_source_id,
         openmetadata_json=data,
+        embedding=embedding,
     )
     session.add(table)
     session.commit()
@@ -222,6 +242,27 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
     description = metadata.get("description", data.get("description", ""))
     om_columns = metadata.get("columns", data.get("columns", []))
 
+    # Generate embedding
+    text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
+    try:
+        embed_resp = httpx.post(
+            settings.EMBEDDER_URL,
+            json={"model": settings.EMBEDDER_MODEL, "prompt": text_to_embed},
+            timeout=10.0,
+        )
+        if embed_resp.status_code == 200:
+            embedding = embed_resp.json().get("embedding")
+            if len(embedding) != EXPECTED_EMBEDDING_DIM:
+                raise ValueError(
+                    f"Embedder returned embedding of length {len(embedding)}, "
+                    f"expected {EXPECTED_EMBEDDING_DIM}"
+                )
+            table.embedding = embedding
+    except Exception as e:
+        logger.warning(
+            f"Failed to generate embedding for table {name} during sync: {e}"
+        )
+
     # Update the table
     table.name = name
     table.schema_name = schema_name
@@ -289,7 +330,6 @@ def update_table_status(
     session.add(table)
     session.commit()
     session.refresh(table)
-
 
     # Handle transitions
     if status == TableStatus.production and previous_status != TableStatus.production:

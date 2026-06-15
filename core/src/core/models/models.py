@@ -440,9 +440,9 @@ class TableProfile(SQLModel, table=True):
         sa_column_args=[
             ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")
         ],
+        unique=True,
         index=True,
     )
-    version: int = Field(default=1)  # monotonically increasing per table
     status: ProfilingStatus = Field(default=ProfilingStatus.pending)
     row_count: int | None = None
     sample_size: int | None = None  # rows returned by TABLESAMPLE
@@ -463,7 +463,6 @@ class TableProfile(SQLModel, table=True):
 class TableProfileRead(SQLModel):
     id: str
     table_id: str
-    version: int
     status: ProfilingStatus
     row_count: int | None
     sample_size: int | None

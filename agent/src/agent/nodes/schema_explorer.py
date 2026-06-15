@@ -52,24 +52,25 @@ def get_query_embedding(text: str) -> list[float]:
         print(f"Error getting query embedding: {e}")
         return [0.0] * 768
 
-def hybrid_search_tables(query: str, query_embedding: list[float], session: Session, allowed_tables: list[str] | None = None) -> list[Table]:
+def hybrid_search_tables(query: str, query_embedding: list[float], session: Session, allowed_tables: list[str] | None = None, allowed_statuses: list[str] | None = None) -> list[Table]:
     """Hybrid search combining pgvector cosine distance and keyword matching."""
     # 1. Get all allowed tables
     stmt_all = select(Table)
     all_tables = session.exec(stmt_all).all()
     
     allowed = allowed_tables or []
+    statuses = allowed_statuses or ["production"]
     allowed_tables_set = []
     allowed_ids = set()
     for table in all_tables:
-        if allowed:
-            is_allowed = (
+        is_allowed = (
+            table.status in statuses or
+            (allowed and (
                 table.id in allowed or
                 table.name in allowed or
                 f"{table.schema_name}.{table.name}" in allowed
-            )
-        else:
-            is_allowed = table.status == "production"
+            ))
+        )
         if is_allowed:
             allowed_tables_set.append(table)
             allowed_ids.add(table.id)
@@ -210,13 +211,18 @@ async def get_table_profile(table_id: str) -> str:
         finally:
             await client.close()
         
-        # Return only lightweight metadata to LLM
+        # Return only lightweight metadata to LLM, but include categorical options so LLM can map terms
         return json.dumps({
             "table_id": table_id,
             "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
             "row_count": profile.row_count,
             "columns": [
-                {"name": cp.column_name, "type": cp.data_type}
+                {
+                    "name": cp.column_name, 
+                    "type": cp.data_type,
+                    "is_categorical": cp.is_categorical,
+                    "top_values": [v.get("value") for v in cp.top_values] if cp.is_categorical and cp.top_values else None
+                }
                 for cp in columns
             ],
             "esca_reference_id": esca_id
@@ -227,12 +233,13 @@ async def schema_explorer_node(state: AgentState):
     user_query = state["user_query"]
     enrichments = state.get("query_enrichments", [])
     allowed_tables = state.get("allowed_tables")
+    allowed_statuses = state.get("allowed_statuses")
     feedback = state.get("feedback")
     
     # 1. Automatically run hybrid search to find candidates
     emb = get_query_embedding(user_query)
     with Session(engine) as session:
-        candidate_tables = hybrid_search_tables(user_query, emb, session, allowed_tables)
+        candidate_tables = hybrid_search_tables(user_query, emb, session, allowed_tables, allowed_statuses)
         
     tables_info = []
     profile_details = []

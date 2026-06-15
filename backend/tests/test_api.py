@@ -51,7 +51,7 @@ def test_create_table(mock_fqn, mock_get, client, db_session):
     mock_get.return_value = mock_response
 
     payload = {"oasis_source_id": "test-source-id-123"}
-    response = client.post("/tables", json=payload)
+    response = client.post("/api/tables", json=payload)
 
     assert response.status_code == 201
     data = response.json()
@@ -87,19 +87,19 @@ def test_list_tables(client, db_session):
     db_session.add(t2)
     db_session.commit()
 
-    response = client.get("/tables")
+    response = client.get("/api/tables")
     assert response.status_code == 200
     assert len(response.json()) >= 2
 
     # Test filtering by status
-    response = client.get("/tables", params={"status": "sandbox"})
+    response = client.get("/api/tables", params={"status": "sandbox"})
     assert response.status_code == 200
     results = response.json()
     assert all(r["status"] == "sandbox" for r in results)
 
 
 def test_get_table_not_found(client):
-    response = client.get("/tables/non-existent-uuid")
+    response = client.get("/api/tables/non-existent-uuid")
     assert response.status_code == 404
     assert response.json()["detail"] == "Table not found"
 
@@ -107,7 +107,7 @@ def test_get_table_not_found(client):
 # ── Scopes API Tests ──────────────────────────────────────────────────────────
 def test_create_and_list_scopes(client, db_session):
     payload = {"user_id": "test-user", "name": "Marketing Team"}
-    response = client.post("/scopes", json=payload)
+    response = client.post("/api/scopes", json=payload)
     assert response.status_code == 201
 
     scope_data = response.json()
@@ -115,12 +115,12 @@ def test_create_and_list_scopes(client, db_session):
     assert scope_data["is_active"] is False
 
     # List scopes
-    response = client.get("/scopes")
+    response = client.get("/api/scopes")
     assert response.status_code == 200
     assert len(response.json()) >= 1
 
     # Activate scope
-    response = client.post(f"/scopes/{scope_data['id']}/activate")
+    response = client.post(f"/api/scopes/{scope_data['id']}/activate")
     assert response.status_code == 200
     assert response.json()["is_active"] is True
 
@@ -146,18 +146,18 @@ def test_question_lifecycle(client, db_session):
         "difficulty": "simple",
         "question_type": "simple",
     }
-    response = client.post(f"/tables/{table.id}/questions", json=payload)
+    response = client.post(f"/api/tables/{table.id}/questions", json=payload)
     assert response.status_code == 201
     q_data = response.json()
     assert q_data["question"] == "Show all orders last month"
 
     # List questions
-    response = client.get(f"/tables/{table.id}/questions")
+    response = client.get(f"/api/tables/{table.id}/questions")
     assert response.status_code == 200
     assert len(response.json()) == 1
 
     # Delete question
-    response = client.delete(f"/tables/{table.id}/questions/{q_data['id']}")
+    response = client.delete(f"/api/tables/{table.id}/questions/{q_data['id']}")
     assert response.status_code == 204
 
 
@@ -194,7 +194,7 @@ def test_trigger_evaluation_run(mock_lf, client, db_session):
     db_session.add(q)
     db_session.commit()
 
-    response = client.post(f"/tables/{table.id}/eval/run")
+    response = client.post(f"/api/tables/{table.id}/eval/run")
     assert response.status_code == 202
     run_data = response.json()
     assert run_data["status"] == EvalStatus.running
@@ -209,6 +209,6 @@ def test_list_audit_queries(client, db_session):
     db_session.add(audit)
     db_session.commit()
 
-    response = client.get("/audit/queries")
+    response = client.get("/api/audit/queries")
     assert response.status_code == 200
     assert len(response.json()) >= 1

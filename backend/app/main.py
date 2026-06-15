@@ -13,6 +13,7 @@ from app.config import settings
 from app.routers import (
     admin_approval,
     admin_auth,
+    agent,
     audit,
     enrichment,
     evaluation,
@@ -121,6 +122,7 @@ api_router.include_router(feedback.router)
 api_router.include_router(health.router)
 api_router.include_router(admin_auth.router)
 api_router.include_router(admin_approval.router)
+api_router.include_router(agent.router)
 
 app.include_router(api_router)
 

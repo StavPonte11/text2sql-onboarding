@@ -42,6 +42,12 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: 'Agents',
+    items: [
+      { to: '/agent-testing', icon: Activity, key: 'nav.agentTesting', label: 'Text2SQL Agent' },
+    ],
+  },
+  {
     label: 'Administration',
     items: [{ to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' }],
   },
