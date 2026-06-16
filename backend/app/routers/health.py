@@ -177,3 +177,12 @@ def get_all_health(session: Session = Depends(get_session)):
     return session.exec(
         select(TableHealth).order_by(TableHealth.health_score.asc())
     ).all()
+
+
+@router.get("/judge/health")
+def get_judge_health():
+    from app.config import settings
+    api_key = getattr(settings, "OPENAI_API_KEY", None)
+    if not api_key:
+        return {"status": "error", "message": "OPENAI_API_KEY is missing"}
+    return {"status": "ok", "message": "LLM Judge is configured"}

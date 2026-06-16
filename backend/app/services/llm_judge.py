@@ -2,6 +2,7 @@ import logging
 
 import httpx
 from pydantic import BaseModel, Field
+from langfuse.decorators import observe
 
 from app.services.scoring import ExecutionResult, ExpectedShape, JudgeOutput
 
@@ -99,6 +100,7 @@ def build_judge_prompt(
     )
 
 
+@observe(name="evaluate_with_llm")
 def evaluate_with_llm(
     user_question: str,
     expected_sql: str,

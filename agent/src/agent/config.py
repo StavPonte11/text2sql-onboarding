@@ -13,6 +13,8 @@ class AgentSettings(BaseSettings):
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     HYBRID_SEARCH_MAX_TABLES: int = 10
     MAX_PROFILES_TO_FETCH: int = 3
+    PROFILE_FETCH_CONCURRENCY: int = 4
+    REDIS_URL: str = "redis://localhost:6379"
 
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)

@@ -12,13 +12,8 @@ from core.db.engine import async_engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
 from langgraph.types import Command
 
-# Set the environment variables for Langfuse from the validated Pydantic settings config
-os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
-os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
-os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_BASE_URL
+from core.langfuse import get_langfuse_handler
 
-# Initialize Langfuse handler
-langfuse_handler = CallbackHandler()
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 
@@ -52,7 +47,7 @@ class ChatResponse(BaseModel):
     response_model=ChatResponse,
     dependencies=[Depends(RateLimiter(requests=10, window=60, fail_open=False))]
 )
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler = Depends(get_langfuse_handler)):
     thread_id = request.thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},

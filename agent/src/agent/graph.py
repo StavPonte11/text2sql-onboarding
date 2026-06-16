@@ -40,7 +40,13 @@ def rejection_router_node(state: AgentState):
         print(f"Structured output parsing failed: {e}")
         route = "extractor"  # Fallback
         
-    return {"feedback_route": route}
+    return {
+        "feedback_route": route,
+        "sql_query": "",
+        "schema_plan": "",
+        "raw_data_ref": None,
+        "trino_error": None
+    }
 
 
 def route_refiner(state: AgentState):
@@ -70,7 +76,12 @@ workflow.add_node("finalizer", finalizer_node)
 
 workflow.add_edge(START, "extractor")
 workflow.add_edge("extractor", "schema_explorer")
-workflow.add_edge("schema_explorer", "query_builder")
+def route_schema_explorer(state: AgentState):
+    if state.get("hallucinated_tables"):
+        return "schema_explorer"
+    return "query_builder"
+
+workflow.add_conditional_edges("schema_explorer", route_schema_explorer, {"schema_explorer": "schema_explorer", "query_builder": "query_builder"})
 
 workflow.add_conditional_edges("query_builder", route_query_builder, {"rejection_router": "rejection_router", "refiner": "refiner"})
 workflow.add_conditional_edges("rejection_router", route_rejection, {"extractor": "extractor", "schema_explorer": "schema_explorer", "query_builder": "query_builder"})

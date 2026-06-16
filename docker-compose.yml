@@ -404,9 +404,7 @@ services:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
-      secrets:
-        - deploy_key
-    # command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - ./backend/.env
     ports:
@@ -449,8 +447,6 @@ services:
     build:
       context: .
       dockerfile: ./agent/Dockerfile
-      secrets:
-        - deploy_key
     env_file:
       - ./agent/.env
     ports:
@@ -512,6 +508,3 @@ volumes:
   es-data: null
   db-data: null
 
-secrets:
-  deploy_key:
-    file: ./deploy_key

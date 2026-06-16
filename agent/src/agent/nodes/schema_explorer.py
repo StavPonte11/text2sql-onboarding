@@ -38,6 +38,10 @@ class SchemaExplorerOutput(BaseModel):
         default_factory=list,
         description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
     )
+    tables_used: List[str] = Field(
+        default_factory=list,
+        description="List of fully qualified table names (catalog.schema.name) used in the plan."
+    )
 
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
@@ -244,25 +248,37 @@ async def schema_explorer_node(state: AgentState):
     tables_info = []
     profile_details = []
     
-    # 2. Automatically get profiles for the top candidate tables (up to 4) to seed the prompt
+    # 2. Automatically get profiles for the top candidate tables (up to MAX_PROFILES_TO_FETCH) to seed the prompt
+    import asyncio
+    sem = asyncio.Semaphore(settings.PROFILE_FETCH_CONCURRENCY)
+
+    async def fetch_profile(t_id, t_name):
+        async with sem:
+            try:
+                profile_res = await get_table_profile.ainvoke({"table_id": t_id})
+                return json.loads(profile_res)
+            except Exception as e:
+                print(f"Error fetching profile for {t_name}: {e}")
+                return None
+
+    fetch_tasks = []
     for i, t in enumerate(candidate_tables):
         tables_info.append({
             "id": t.id,
             "name": f"{t.catalog}.{t.schema_name}.{t.name}",
             "description": ""
         })
-        
-        # Fetch profile for the top tables based on MAX_PROFILES_TO_FETCH
         if i < settings.MAX_PROFILES_TO_FETCH:
-            try:
-                profile_res = await get_table_profile.ainvoke({"table_id": t.id})
-                profile_details.append(json.loads(profile_res))
-            except Exception as e:
-                print(f"Error fetching profile for {t.name}: {e}")
+            fetch_tasks.append(fetch_profile(t.id, t.name))
+
+    if fetch_tasks:
+        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        for res in results:
+            if res and not isinstance(res, Exception):
+                profile_details.append(res)
     
     # TODO: Make more dynamic - allow LLM to search other tables if the first pass is not enough
     # TODO: Support multi-turn conversation
-    # TODO: Support async simultanious profile fetching for top K tables 
          
     # 3. Present all metadata to the LLM to construct a query plan
     langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_SCHEMA_EXPLORER)
@@ -319,6 +335,49 @@ async def schema_explorer_node(state: AgentState):
     elif plan is None:
         plan = ""
         
-    return {"schema_plan": plan}
+    tables_used = getattr(data, "tables_used", [])
+    hallucinated = []
+    
+    if tables_used:
+        try:
+            from python_core_utils.redis import get_redis_client
+            from core.trino import execute_query_sync
+            import asyncio
+            
+            redis_client = get_redis_client()
+            for t_name in tables_used:
+                cache_key = f"table_exists:{t_name}"
+                exists = await redis_client.get(cache_key)
+                if exists is None:
+                    parts = t_name.split('.')
+                    if len(parts) == 3:
+                        cat, sch, tbl = parts
+                        sql = f"SELECT 1 FROM {cat}.information_schema.tables WHERE table_schema = '{sch}' AND table_name = '{tbl}'"
+                        try:
+                            res = await asyncio.to_thread(execute_query_sync, sql)
+                            if res.success and len(res.rows) > 0:
+                                await redis_client.setex(cache_key, 3600, "1")
+                            else:
+                                await redis_client.setex(cache_key, 3600, "0")
+                                hallucinated.append(t_name)
+                        except Exception as e:
+                            print(f"Information schema check failed for {t_name}: {e}")
+                    else:
+                        hallucinated.append(t_name)
+                elif exists == b"0":
+                    hallucinated.append(t_name)
+        except Exception as e:
+            print(f"Error during Redis/Trino table verification: {e}")
+
+    result_state = {"schema_plan": plan}
+    
+    if hallucinated:
+        result_state["hallucinated_tables"] = hallucinated
+        result_state["feedback"] = f"Do not use these tables, they do not exist: {', '.join(hallucinated)}"
+        result_state["last_error"] = f"Hallucinated tables detected: {', '.join(hallucinated)}"
+    else:
+        result_state["hallucinated_tables"] = None
+
+    return result_state
 
 

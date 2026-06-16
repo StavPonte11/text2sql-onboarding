@@ -18,13 +18,20 @@ async def refiner_node(state: AgentState):
     count = state.get("refinement_count", 0)
 
     # Execute against Trino
-    result = execute_query_sync(sql)
-
-    if not result.success:
+    import asyncio
+    try:
+        result = await asyncio.to_thread(execute_query_sync, sql)
+        success = result.success
         trino_error = result.error_message or "Unknown Trino error"
+    except Exception as e:
+        success = False
+        trino_error = str(e)
+        result = None
+
+    if not success:
         # If we reached the refinement limit, just stop and don't prompt LLM
         if count >= MAX_REFINER_ITERATIONS:
-            return {"trino_error": trino_error, "refinement_count": count + 1}
+            return {"trino_error": trino_error, "last_error": trino_error, "refinement_count": count + 1}
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
         prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
@@ -33,7 +40,7 @@ async def refiner_node(state: AgentState):
         new_sql = response.content.replace('```sql', '').replace('```', '').strip()
         if new_sql.endswith(';'):
             new_sql = new_sql[:-1].strip()
-        return {"sql_query": new_sql, "trino_error": trino_error, "refinement_count": count + 1}
+        return {"sql_query": new_sql, "trino_error": trino_error, "last_error": trino_error, "refinement_count": count + 1}
     else:
         # Success, save payload via Esca
         client = EscaClient(api_key=settings.ESCA_API_KEY, base_url=settings.ESCA_URL)

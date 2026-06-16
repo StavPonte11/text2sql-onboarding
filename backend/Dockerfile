@@ -1,11 +1,8 @@
 FROM python:3.12-slim
 
-# Install uv, git and openssh-client
+# Install uv and git
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-RUN apt-get update && apt-get install -y git openssh-client
-
-# Configure git to use ssh for github.com
-RUN git config --global url."git@github.com:".insteadOf "https://github.com/"
+RUN apt-get update && apt-get install -y git
 
 WORKDIR /app
 
@@ -15,11 +12,8 @@ COPY backend /app/backend
 
 WORKDIR /app/backend
 
-# Mount SSH deploy key secret and sync dependencies
-RUN --mount=type=secret,id=deploy_key,target=/root/.ssh/id_rsa,mode=0600 \
-    mkdir -p -m 0700 /root/.ssh && \
-    ssh-keyscan github.com >> /root/.ssh/known_hosts && \
-    uv sync --no-dev --no-install-project
+# Sync dependencies via HTTPS
+RUN uv sync --no-dev --no-install-project
 
 # Add virtualenv bin to PATH to run uvicorn
 ENV PATH="/app/backend/.venv/bin:$PATH"
