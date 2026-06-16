@@ -1,9 +1,6 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, col, select
-
 from core.db.engine import get_session
 from core.models.models import (
     EnrichmentCreate,
@@ -12,6 +9,8 @@ from core.models.models import (
     Table,
     TableStatus,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, col, select
 
 logger = logging.getLogger(__name__)
 

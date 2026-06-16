@@ -1,12 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-import os
+
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from agent.graph import agent_graph
 from python_core_utils.rate_limiting import RateLimiter
 from langfuse.langchain import CallbackHandler
-from agent.config import settings
+
 from sqlmodel import select
 from core.db.engine import async_engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
@@ -17,9 +17,11 @@ from core.langfuse import get_langfuse_handler
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 
+
 class QueryApproval(BaseModel):
     approved: bool
     feedback: str | None = None
+
 
 class ChatRequest(BaseModel):
     query: str | None = None
@@ -45,13 +47,16 @@ class ChatResponse(BaseModel):
 @router.post(
     "/chat",
     response_model=ChatResponse,
-    dependencies=[Depends(RateLimiter(requests=10, window=60, fail_open=False))]
+    dependencies=[Depends(RateLimiter(requests=10, window=60, fail_open=False))],
 )
-async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler = Depends(get_langfuse_handler)):
+async def chat_endpoint(
+    request: ChatRequest,
+    langfuse_handler: CallbackHandler = Depends(get_langfuse_handler),
+):
     thread_id = request.thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},
-        "callbacks": [langfuse_handler] if langfuse_handler else []
+        "callbacks": [langfuse_handler] if langfuse_handler else [],
     }
 
     if request.resume_value is not None:
@@ -59,68 +64,84 @@ async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler 
         if not state_snapshot.values:
             raise HTTPException(
                 status_code=404,
-                detail=f"Thread ID '{thread_id}' not found or has no active session."
+                detail=f"Thread ID '{thread_id}' not found or has no active session.",
             )
-            
+
         resume_val = request.resume_value
         if isinstance(resume_val, QueryApproval):
             resume_val = resume_val.model_dump()
-            
-        result = await agent_graph.ainvoke(
-            Command(resume=resume_val),
-            config=config
-        )
+
+        result = await agent_graph.ainvoke(Command(resume=resume_val), config=config)
     else:
         if not request.query:
             raise HTTPException(
-                status_code=400,
-                detail="Query is required for new chat session."
+                status_code=400, detail="Query is required for new chat session."
             )
-            
+
         if request.allowed_tables:
             async with AsyncSession(async_engine) as session:
                 all_tables = (await session.execute(select(Table))).scalars().all()
                 for allowed in request.allowed_tables:
                     exists = False
                     for t in all_tables:
-                        if (t.id == allowed or 
-                            t.name == allowed or 
-                            f"{t.schema_name}.{t.name}" == allowed):
+                        if (
+                            t.id == allowed
+                            or t.name == allowed
+                            or f"{t.schema_name}.{t.name}" == allowed
+                        ):
                             exists = True
                             break
                     if not exists:
                         raise HTTPException(
-                            status_code=400,
-                            detail=f"Table '{allowed}' does not exist."
+                            status_code=400, detail=f"Table '{allowed}' does not exist."
                         )
 
         active_extractors = []
         async with AsyncSession(async_engine) as session:
             if request.extractors:
                 for ext_name_or_id in request.extractors:
-                    ext = (await session.execute(select(HttpExtractor).where(
-                        (HttpExtractor.id == ext_name_or_id) | (HttpExtractor.name == ext_name_or_id)
-                    ))).scalars().first()
+                    ext = (
+                        (
+                            await session.execute(
+                                select(HttpExtractor).where(
+                                    (HttpExtractor.id == ext_name_or_id)
+                                    | (HttpExtractor.name == ext_name_or_id)
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     if not ext:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"Extractor '{ext_name_or_id}' does not exist."
+                            detail=f"Extractor '{ext_name_or_id}' does not exist.",
                         )
                     active_extractors.append({"name": ext.name, "url": ext.url})
             else:
-                prod_extractors = (await session.execute(select(HttpExtractor).where(HttpExtractor.status == ExtractorStatus.production))).scalars().all()
+                prod_extractors = (
+                    (
+                        await session.execute(
+                            select(HttpExtractor).where(
+                                HttpExtractor.status == ExtractorStatus.production
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
                 for ext in prod_extractors:
                     active_extractors.append({"name": ext.name, "url": ext.url})
 
         result = await agent_graph.ainvoke(
             {
-                "user_query": request.query, 
+                "user_query": request.query,
                 "allowed_tables": request.allowed_tables,
                 "allowed_statuses": request.allowed_statuses,
                 "active_extractors": active_extractors,
-                "non_interactive": not request.hitl_enabled
+                "non_interactive": not request.hitl_enabled,
             },
-            config=config
+            config=config,
         )
 
     final_state = await agent_graph.aget_state(config)
@@ -131,7 +152,7 @@ async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler 
             status="interrupted",
             interrupt_details=interrupt_val,
             schema_plan=final_state.values.get("schema_plan"),
-            sql_query=final_state.values.get("sql_query")
+            sql_query=final_state.values.get("sql_query"),
         )
 
     return ChatResponse(
@@ -141,7 +162,5 @@ async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler 
         raw_data_ref=result.get("raw_data_ref"),
         sql_query=result.get("sql_query"),
         sql_explanation=result.get("sql_explanation"),
-        schema_plan=result.get("schema_plan")
+        schema_plan=result.get("schema_plan"),
     )
-
-

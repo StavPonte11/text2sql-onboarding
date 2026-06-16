@@ -1,8 +1,8 @@
 import logging
 
 import httpx
-from pydantic import BaseModel, Field
 from langfuse.decorators import observe
+from pydantic import BaseModel, Field
 
 from app.services.scoring import ExecutionResult, ExpectedShape, JudgeOutput
 
@@ -125,6 +125,7 @@ def evaluate_with_llm(
     logger.info(f"LLM Judge evaluating question: {user_question[:50]}...")
 
     from app.config import settings
+
     api_key = settings.OPENAI_API_KEY
 
     try:

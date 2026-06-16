@@ -14,14 +14,14 @@ from decimal import Decimal
 from typing import Any
 
 from app.config import settings
-from app.services.trino_client import execute_query_sync
+from core import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 CATEGORICAL_DISTINCT_THRESHOLD = 50
 CATEGORICAL_COVERAGE_THRESHOLD = 0.90  # top-N values cover ≥90% → categorical
-SAMPLE_PERCENT = 10  # TABLESAMPLE BERNOULLI(10)
+
 SAMPLE_LIMIT = 10_000
 TOP_VALUES_LIMIT = 50
 QUERY_TIMEOUT_SECONDS = (

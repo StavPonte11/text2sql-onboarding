@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, select
-
 from core.db.engine import get_session
 from core.models.models import AuditQuery, AuditQueryRead
+from fastapi import APIRouter, Depends, Query
+from sqlmodel import Session, select
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 

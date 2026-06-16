@@ -1,10 +1,6 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
-from sqlmodel import Session, desc, select
-
 from core.db.engine import get_session
 from core.models.models import (
     EvalRun,
@@ -14,6 +10,10 @@ from core.models.models import (
     Table,
     TableStatus,
 )
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
+from sqlmodel import Session, desc, select
+
 from app.services.auth import require_admin
 from app.services.langfuse_client import langfuse_client
 

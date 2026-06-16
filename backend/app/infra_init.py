@@ -33,7 +33,7 @@ _WAREHOUSE_BUCKET = "warehouse"
 _TRINO_HOST = "trino"
 _TRINO_PORT = 8080
 _TRINO_USER = "trino"
-_TRINO_CATALOG = "minio"
+
 
 _OM_URL = "http://openmetadata-server:8585"
 _OM_SERVICE_NAME = "local_trino"
@@ -111,7 +111,7 @@ _TABLES: list[dict[str, Any]] = [
   ('ORD-027','Alice Cohen','alice@example.com','Desk Lamp',1,45.0,45.0,'delivered',DATE '2024-03-12'),
   ('ORD-028','Bob Levi','bob@example.com','Laptop',1,1200.0,1200.0,'shipped',DATE '2024-03-15'),
   ('ORD-029','Carol Mizrahi','carol@example.com','Smartphone',1,800.0,800.0,'delivered',DATE '2024-03-18'),
-  ('ORD-030','Dan Shapiro','dan@example.com','Tablet',1,400.0,400.0,'delivered',DATE '2024-03-20')"""
+  ('ORD-030','Dan Shapiro','dan@example.com','Tablet',1,400.0,400.0,'delivered',DATE '2024-03-20')""",
     },
     # ── complex_retail ─────────────────────────────────────────────────────
     {
@@ -153,7 +153,7 @@ _TABLES: list[dict[str, Any]] = [
   ('C22','Victor','Hugo','victor@example.com','France','Paris',TIMESTAMP '2024-01-02 10:00:00'),
   ('C23','Wendy','Darling','wendy@example.com','Canada','Toronto',TIMESTAMP '2024-01-10 15:45:00'),
   ('C24','Xavier','Charles','xavier@example.com','Canada','Vancouver',TIMESTAMP '2024-01-15 09:00:00'),
-  ('C25','Yasmine','Bleeth','yasmine@example.com','USA','Miami',TIMESTAMP '2024-01-22 13:15:00')"""
+  ('C25','Yasmine','Bleeth','yasmine@example.com','USA','Miami',TIMESTAMP '2024-01-22 13:15:00')""",
     },
     {
         "fqn": "minio.complex_retail.products",
@@ -183,7 +183,7 @@ _TABLES: list[dict[str, Any]] = [
   ('P12','Standing Desk','Furniture','Tables',600.0,25),
   ('P13','Notebook','Office Supplies','Paper',5.0,500),
   ('P14','Gel Pens Pack','Office Supplies','Writing',12.0,400),
-  ('P15','Backpack','Office Supplies','Bags',80.0,100)"""
+  ('P15','Backpack','Office Supplies','Bags',80.0,100)""",
     },
     {
         "fqn": "minio.complex_retail.orders",
@@ -238,7 +238,7 @@ _TABLES: list[dict[str, Any]] = [
   ('O37','C22',DATE '2024-03-02','delivered',180.0,'Paris, Rue de Rivoli 20'),
   ('O38','C23',DATE '2024-03-03','pending',100.0,'Toronto, Yonge St 100'),
   ('O39','C24',DATE '2024-03-04','delivered',75.0,'Vancouver, Georgia St 50'),
-  ('O40','C09',DATE '2024-03-05','delivered',60.0,'London, Baker St 221B')"""
+  ('O40','C09',DATE '2024-03-05','delivered',60.0,'London, Baker St 221B')""",
     },
     {
         "fqn": "minio.complex_retail.order_items",
@@ -280,7 +280,7 @@ _TABLES: list[dict[str, Any]] = [
   ('I24','O22','P08',2,90.0,0.0),
   ('I25','O23','P02',4,25.0,0.0),
   ('I26','O24','P03',1,75.0,0.0),
-  ('I27','O25','P04',2,350.0,0.0)"""
+  ('I27','O25','P04',2,350.0,0.0)""",
     },
 ]
 
@@ -662,7 +662,7 @@ def _seed_trino_data() -> None:
             except Exception as e:
                 # If DELETE is not supported (e.g. some Iceberg configs require specific formats), we ignore and fall back to count checks
                 logger.debug("DELETE on %s failed: %s", table["fqn"], e)
-                
+
             _trino_exec(table["seed_sql"])
             logger.info("[InfraInit] Seeded sample data into '%s' ✓", table["fqn"])
         except Exception as exc:

@@ -257,12 +257,7 @@ class EvaluationHistoryMetric(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class EvaluationHistoryMetricRead(SQLModel):
-    id: str
-    run_id: str
-    metric_name: str
-    metric_value: float
-    created_at: datetime
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -308,9 +303,7 @@ class EvaluationAlertRead(SQLModel):
     created_at: datetime
 
 
-class EvalResultStatus(StrEnum):
-    pass_ = "pass"
-    fail = "fail"
+
 
 
 class EvalResult(SQLModel, table=True):

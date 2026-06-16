@@ -3,6 +3,7 @@ from typing import AsyncGenerator
 from esca_sdk import EscaClient
 from agent.config import settings
 
+
 @asynccontextmanager
 async def get_esca_client() -> AsyncGenerator[EscaClient, None]:
     """

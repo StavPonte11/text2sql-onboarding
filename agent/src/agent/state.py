@@ -1,7 +1,7 @@
-import operator
 from typing import Annotated, TypedDict, Any
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+
 
 class AgentState(TypedDict):
     user_query: str
