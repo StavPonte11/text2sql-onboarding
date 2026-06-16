@@ -1,6 +1,7 @@
 from langgraph.types import interrupt
 import json
 import re
+import urllib.request
 
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -226,10 +227,10 @@ async def get_table_profile(table_id: str) -> str:
                 esca_id = res.get("esca_id")
             except Exception as e:
                 esca_id = None
-                from langfuse.decorators import langfuse_context
+                from agent.langfuse_client import langfuse_client
 
-                if langfuse_context.get_current_trace_id():
-                    langfuse_context.update_current_observation(
+                if langfuse_client and langfuse_client.get_current_observation_id():
+                    langfuse_client.span(id=langfuse_client.get_current_observation_id(), 
                         level="WARNING",
                         status_message=f"ESCA write failed for profile: {e}",
                     )

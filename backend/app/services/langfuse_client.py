@@ -28,10 +28,7 @@ from typing import Any
 
 import langfuse as sdk
 import requests
-from langfuse.api.resources.dataset_run_items.types.create_dataset_run_item_request import (
-    CreateDatasetRunItemRequest,
-)
-from langfuse.decorators import langfuse_context
+from langfuse.api import CreateDatasetRunItemRequest
 
 from app.config import settings
 
@@ -160,7 +157,7 @@ class LangfuseTracer(Connection):
         if self.client:
             try:
                 self.client.flush()
-                langfuse_context.flush()
+                
                 self.logger.info("[LangfuseTracer] Flushed and logged out.")
             except Exception as exc:
                 self.logger.warning(f"[LangfuseTracer] Logout warning: {exc}")
@@ -225,7 +222,7 @@ class LangfuseDatasetService:
     def flush(self) -> None:
         if self._tracer.client:
             self._tracer.client.flush()
-            langfuse_context.flush()
+            
 
     # ── Dataset helpers ────────────────────────────────────────────────────────
 
@@ -233,6 +230,16 @@ class LangfuseDatasetService:
         if not self.enabled:
             raise RuntimeError("Langfuse is not enabled or client not initialized.")
         return self._tracer.client.get_dataset(name)
+
+    def dataset_exists(self, name: str) -> bool:
+        """Check whether a dataset exists in Langfuse."""
+        if not self.enabled:
+            return False
+        try:
+            self._tracer.client.get_dataset(name)
+            return True
+        except Exception:
+            return False
 
     def sync_dataset(self, dataset_name: str, questions: list) -> object:
         """
@@ -512,6 +519,23 @@ class LangfuseDatasetService:
             self.logger.error(
                 f"[LangfuseDatasetService] Error removing questions: {exc}"
             )
+
+    def append_questions_to_dataset(self, dataset_name: str, questions: list) -> bool:
+        """
+        Deprecated — kept for backward compatibility.
+
+        New callers should use sync_dataset() which performs a true bidirectional
+        sync (adds new items, removes stale ones, updates changed items).
+
+        This wrapper delegates to sync_dataset and always returns True unless
+        Langfuse is disabled.
+        """
+        self.logger.warning(
+            "[LangfuseDatasetService] append_questions_to_dataset is deprecated; "
+            "use sync_dataset instead."
+        )
+        result = self.sync_dataset(dataset_name, questions)
+        return result is not None
 
     def wait_for_run_items(
         self,

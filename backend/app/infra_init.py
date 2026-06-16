@@ -24,18 +24,18 @@ from minio.error import S3Error
 
 logger = logging.getLogger(__name__)
 
-# ── Connection params (resolved from environment / compose) ────────────────────
-_MINIO_HOST = "minio:9000"
-_MINIO_ACCESS_KEY = "admin"
-_MINIO_SECRET_KEY = "password123"
+import os
+_MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
+_MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+_MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password123")
 _WAREHOUSE_BUCKET = "warehouse"
 
-_TRINO_HOST = "trino"
-_TRINO_PORT = 8080
-_TRINO_USER = "trino"
+_TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
+_TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+_TRINO_USER = os.getenv("TRINO_USER", "trino")
 
 
-_OM_URL = "http://openmetadata-server:8585"
+_OM_URL = os.getenv("OPENMETADATA_URL", "http://localhost:8585")
 _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
@@ -549,7 +549,7 @@ def _ensure_iceberg_tables() -> None:
     logger.info("[InfraInit] Ensuring Iceberg JDBC catalog tables exist in Postgres …")
 
     # We use psycopg2 directly since it's already installed via pyproject.toml
-    conn_str = "postgresql://postgres:postgres@db:5432/text2sql"
+    conn_str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/text2sql")
     try:
         with psycopg2.connect(conn_str) as conn:
             with conn.cursor() as cur:

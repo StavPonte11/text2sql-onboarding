@@ -12,8 +12,11 @@ dependencies = [
     "trino>=0.328.0",
     "pgvector>=0.2.0",
     "psycopg2-binary==2.9.9",
-    "python-core-utils[postgres,redis] @ git+https://github.com/matzpen-agency/python-core-utils.git@main",
+    "python-core-utils[postgres,redis]",
 ]
+
+[tool.uv.sources]
+python-core-utils = { path = "../python-core-utils" }
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

@@ -31,7 +31,8 @@ from core.models.models import (
     Table,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse.decorators import langfuse_context, observe
+from langfuse import observe
+from app.services.langfuse_client import langfuse_client
 from sqlmodel import Session, select
 
 from app.routers.evaluation import execute_single_table_eval
@@ -55,7 +56,8 @@ def _run_full_pipeline(
     table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
 ):
     """Run evaluation for multiple tables (one run per table)."""
-    langfuse_context.update_current_trace(
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
         tags=["evaluation_run"],
         metadata={
             "table_ids": table_ids,

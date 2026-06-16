@@ -1,7 +1,7 @@
 import logging
 
 import httpx
-from langfuse.decorators import observe
+from langfuse import observe
 from pydantic import BaseModel, Field
 
 from app.services.scoring import ExecutionResult, ExpectedShape, JudgeOutput

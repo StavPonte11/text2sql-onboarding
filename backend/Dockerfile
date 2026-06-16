@@ -10,6 +10,7 @@ WORKDIR /app
 # Copy workspace dependencies
 COPY core /app/core
 COPY backend /app/backend
+COPY python-core-utils /app/python-core-utils
 
 WORKDIR /app/backend
 

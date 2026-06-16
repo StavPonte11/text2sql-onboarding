@@ -9,6 +9,7 @@ WORKDIR /app
 # Copy workspace
 COPY core /app/core
 COPY agent /app/agent
+COPY python-core-utils /app/python-core-utils
 
 WORKDIR /app/agent
 

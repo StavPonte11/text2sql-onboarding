@@ -33,7 +33,7 @@ from core.models.models import (
     TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from langfuse.decorators import langfuse_context, observe
+from langfuse import observe
 from sqlmodel import Session, desc, select
 
 from app.services.evaluator import TextToSQLEvaluator
@@ -110,7 +110,8 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         session.commit()
         return -1.0
 
-    langfuse_context.update_current_trace(
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
         metadata={"table_id": table_id, "run_id": run_id},
         tags=["eval-run", f"table:{table_id}"],
     )
@@ -181,7 +182,8 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         f"exact_exec_accuracy={avg_score_exact} ranking_accuracy={avg_score_ranking} "
         f"({len(questions)} questions, pass_rates=[{pass_rate_contains}, {pass_rate_exact}, {pass_rate_ranking}])"
     )
-    langfuse_context.update_current_trace(
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
         output={"score": avg_score_contains, "pass_rate": pass_rate_contains}
     )
     return avg_score_contains

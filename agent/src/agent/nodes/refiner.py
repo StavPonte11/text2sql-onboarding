@@ -6,7 +6,7 @@ from agent.state import AgentState
 from core import execute_query_sync
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
-from langfuse.decorators import langfuse_context
+from agent.langfuse_client import langfuse_client
 from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
 from agent.utils.sql import clean_sql
@@ -65,8 +65,8 @@ async def refiner_node(state: AgentState):
 
         schema_context = build_refiner_schema_context(state)
 
-        if langfuse_context.get_current_trace_id():
-            langfuse_context.update_current_trace(tags=["schema_context_injected=True"])
+        if langfuse_client and langfuse_client.get_current_trace_id():
+            langfuse_client.trace(id=langfuse_client.get_current_trace_id(), tags=["schema_context_injected=True"])
 
         response = await chain.ainvoke(
             {
@@ -98,8 +98,8 @@ async def refiner_node(state: AgentState):
                 raw_ref = res.get("esca_id")
         except Exception as e:
             esca_write_failed = True
-            if langfuse_context.get_current_trace_id():
-                langfuse_context.update_current_observation(
+            if langfuse_client and langfuse_client.get_current_trace_id():
+                langfuse_client.span(id=langfuse_client.get_current_observation_id(), 
                     level="WARNING", status_message=f"ESCA write failed: {e}"
                 )
             else:

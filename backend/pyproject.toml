@@ -10,7 +10,7 @@ dependencies = [
     "alembic==1.14.0",
     "pydantic==2.10.4",
     "pydantic-settings==2.7.0",
-    "langfuse==2.56.2",
+    "langfuse>=2.0.0",
     "python-dotenv==1.0.1",
     "httpx==0.28.1",
     "apscheduler==3.10.4",
@@ -101,6 +101,7 @@ disable_error_code = [
 
 [tool.uv.sources]
 core = { path = "../core", editable = true }
+python-core-utils = { path = "../python-core-utils" }
 
 [tool.pytest.ini_options]
 pythonpath = "."

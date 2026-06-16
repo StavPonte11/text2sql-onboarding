@@ -8,6 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
+from agent.llm import get_llm
 
 
 # A single piece of enriched context added to the query
@@ -45,12 +46,7 @@ class BaseExtractor(abc.ABC):
 
 class LLMExtractor(BaseExtractor):
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY,
-            temperature=0,
-        )
+        self.llm = get_llm("extractor")
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_EXTRACTOR)
         self.prompt = ChatPromptTemplate.from_messages(
