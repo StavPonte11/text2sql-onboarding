@@ -13,6 +13,14 @@ def query_builder_node(state: AgentState):
     feedback = state.get("feedback")
     feedback_str = f"\nUser Feedback to apply: {feedback}" if feedback else ""
 
+    loaded_skills = state.get("loaded_skills")
+    if loaded_skills:
+        from agent.utils.skill_registry import SkillRegistry
+        _skill_registry = SkillRegistry()
+        skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
+        if skill_prompts:
+            feedback_str += f"\n\n[APPLIED SKILLS]{skill_prompts}"
+
     langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_QUERY_BUILDER)
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
     chain = prompt | llm

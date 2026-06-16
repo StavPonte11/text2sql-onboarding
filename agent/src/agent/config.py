@@ -22,6 +22,12 @@ class AgentSettings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
     LANGFUSE_BASE_URL: str = Field(min_length=1)
 
+    # ── Jeen Integration ──────────────────────────────────────────────────────
+    JEEN_LLM_CORE_URL: str = ""  # If empty, agent gracefully skips fetching
+    JEEN_API_KEY: str = ""       # If empty, agent gracefully skips fetching
+    SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
+
+
     # Langfuse prompt names
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"

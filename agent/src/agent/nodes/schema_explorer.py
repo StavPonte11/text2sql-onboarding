@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # Cache singleton
 _cache = get_cache_service(settings.REDIS_URL)
 
+# Skill Registry
+from agent.utils.skill_registry import SkillRegistry
+from python_core_utils.redis import get_redis_client
+_skill_registry = SkillRegistry()
+
 # G2-02 limits
 MAX_SCHEMA_RETRIES = 3
 
@@ -417,6 +422,17 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                 active_phases.append("SCHEMA_JOIN_GRAPH")
         except Exception as exc:
             logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
+
+    # ── G3: Skill Injection ───────────────────────────────────────────────────
+    loaded_skills = state.get("loaded_skills")
+    if loaded_skills:
+        try:
+            skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
+            if skill_prompts:
+                human_message += f"\n\n[APPLIED SKILLS]{skill_prompts}"
+        except Exception as e:
+            logger.warning(f"Failed to inject skills: {e}")
+
 
     # Phase C: Schema Summarization (replaces profiles_json in prompt)
     profiles_json_str = json.dumps(profile_details, indent=2)

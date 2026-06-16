@@ -20,6 +20,8 @@ class AgentState(TypedDict):
     feedback_route: str | None
     non_interactive: bool | None
     active_extractors: list[dict[str, str]] | None
+    active_skills: list[str] | None
+    loaded_skills: list[dict] | None
     last_error: str | None
     hallucinated_tables: list[str] | None
     esca_write_failed: bool | None

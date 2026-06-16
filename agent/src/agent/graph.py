@@ -20,6 +20,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
 from agent.nodes.extractor import extractor_node
+from agent.nodes.init_skills import init_skills_node
 from agent.nodes.schema_explorer import schema_explorer_node, MAX_SCHEMA_RETRIES
 from agent.nodes.query_builder import query_builder_node
 from agent.nodes.refiner import refiner_node
@@ -192,6 +193,7 @@ def route_rejection(state: AgentState) -> str:
 workflow = StateGraph(AgentState)
 
 workflow.add_node("validate_config", validate_config_node)
+workflow.add_node("init_skills", init_skills_node)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("schema_explorer", schema_explorer_node)
 workflow.add_node("query_builder", query_builder_node)
@@ -203,7 +205,8 @@ workflow.add_node("finalizer", finalizer_node)
 
 # Entry: validate config before anything else (G2-01 fail-fast)
 workflow.add_edge(START, "validate_config")
-workflow.add_edge("validate_config", "extractor")
+workflow.add_edge("validate_config", "init_skills")
+workflow.add_edge("init_skills", "extractor")
 workflow.add_edge("extractor", "schema_explorer")
 
 workflow.add_conditional_edges(
