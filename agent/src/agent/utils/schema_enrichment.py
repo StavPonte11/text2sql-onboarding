@@ -38,15 +38,17 @@ logger = logging.getLogger(__name__)
 # ─── Pydantic schemas for structured LLM calls ────────────────────────────────
 
 
+class SemanticAnnotation(BaseModel):
+    table_column: str = Field(description="The full table_name.column_name identifier")
+    semantic_type: str = Field(description="Must be one of: id | timestamp | category | metric | text | geo | unknown")
+
+
 class SemanticTypingOutput(BaseModel):
     """Maps table_name.column_name → semantic type."""
 
-    annotations: list[dict[str, str]] = Field(
+    annotations: list[SemanticAnnotation] = Field(
         default_factory=list,
-        description=(
-            "List of {table_column, semantic_type} dicts. "
-            "semantic_type must be one of: id | timestamp | category | metric | text | geo | unknown"
-        ),
+        description="List of column annotations."
     )
 
 
@@ -114,9 +116,24 @@ async def run_semantic_typing(
 
     try:
         structured = llm.with_structured_output(SemanticTypingOutput, method="json_schema")
-        result: SemanticTypingOutput = await structured.ainvoke(prompt_text)
-        # Build lookup: "table.col" → semantic_type
-        lookup = {item["table_column"]: item["semantic_type"] for item in result.annotations}
+        result = await structured.ainvoke(prompt_text)
+        
+        # Handle both Pydantic model and raw dict responses (some LLM integrations return dicts when method="json_schema")
+        annotations = getattr(result, "annotations", []) if not isinstance(result, dict) else result.get("annotations", [])
+        
+        lookup = {}
+        for item in annotations:
+            # Item could be a dict or a SemanticAnnotation model
+            if isinstance(item, dict):
+                col = item.get("table_column")
+                sem = item.get("semantic_type")
+            else:
+                col = getattr(item, "table_column", None)
+                sem = getattr(item, "semantic_type", None)
+                
+            if col and sem:
+                lookup[col] = sem
+
         for p in profiles:
             tname = p.get("table_name", "unknown")
             for col in p.get("columns", []):
@@ -124,7 +141,7 @@ async def run_semantic_typing(
                 if key in lookup:
                     col["semantic_type"] = lookup[key]
     except Exception as exc:
-        logger.warning("run_semantic_typing failed: %s", exc)
+        logger.warning("run_semantic_typing failed: %s", exc, exc_info=True)
 
     return profiles
 
@@ -280,26 +297,37 @@ async def run_schema_summarization(
     import asyncio
 
     summaries: list[str] = []
+    # Limit concurrency to 1 to prevent local models like Ollama from crashing
+    sem = asyncio.Semaphore(1)
 
     async def _summarize_one(p: dict[str, Any]) -> str:
-        tname = p.get("table_name", "unknown")
-        columns = p.get("columns", [])
-        col_summary = ", ".join(
-            f"{c['name']} ({c.get('type', '?')})" for c in columns[:20]
-        )
-        prompt = (
-            f"Table: {tname}\n"
-            f"Row count: {p.get('row_count', 'unknown')}\n"
-            f"Columns: {col_summary}\n\n"
-            "Write a ≤3-sentence description of this table's purpose and most important columns."
-        )
-        try:
-            structured = llm.with_structured_output(SummarizationOutput, method="json_schema")
-            result: SummarizationOutput = await structured.ainvoke(prompt)
-            return f"[{tname}] {result.summary}"
-        except Exception as exc:
-            logger.warning("run_schema_summarization failed for %s: %s", tname, exc)
-            return f"[{tname}] (summarization unavailable)"
+        async with sem:
+            tname = p.get("table_name", "unknown")
+            columns = p.get("columns", [])
+            col_summary = ", ".join(
+                f"{c['name']} ({c.get('type', '?')})" for c in columns[:20]
+            )
+            prompt = (
+                f"Table: {tname}\n"
+                f"Row count: {p.get('row_count', 'unknown')}\n"
+                f"Columns: {col_summary}\n\n"
+                "Write a ≤3-sentence description of this table's purpose and most important columns."
+            )
+            try:
+                structured = llm.with_structured_output(SummarizationOutput, method="json_schema")
+                # Handle both Pydantic model and raw dict responses gracefully
+                result = await structured.ainvoke(prompt)
+                
+                # Check if it's a dict or object
+                if isinstance(result, dict):
+                    summary_text = result.get("summary", "(summarization unavailable)")
+                else:
+                    summary_text = getattr(result, "summary", "(summarization unavailable)")
+                    
+                return f"[{tname}] {summary_text}"
+            except Exception as exc:
+                logger.warning("run_schema_summarization failed for %s: %s", tname, exc)
+                return f"[{tname}] (summarization unavailable)"
 
     tasks = [_summarize_one(p) for p in profiles]
     summaries = list(await asyncio.gather(*tasks))
