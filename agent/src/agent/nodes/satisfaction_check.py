@@ -3,7 +3,7 @@ G2-04: Satisfaction Check Module
 =================================
 A quality-control gateway node placed between the refiner's success path
 and the finalizer.  Runs up to four independent verification checks, each
-individually gated by a feature flag.
+individually gated by a feature flag read from runtime_flags (G4).
 
 Graph position:
   [refiner: success] → [satisfaction_check]
@@ -25,7 +25,10 @@ from agent.utils.schema_enrichment import ColumnCoverageOutput, SemanticAlignmen
 
 logger = logging.getLogger(__name__)
 
-llm = get_llm("satisfaction_check")
+
+def _f(runtime_flags: dict, name: str, default):
+    """Read a flag from runtime_flags, falling back to *default*."""
+    return runtime_flags.get(name, default)
 
 
 async def satisfaction_check_node(state: AgentState) -> dict:
@@ -35,9 +38,15 @@ async def satisfaction_check_node(state: AgentState) -> dict:
     Returns a partial state dict.  The conditional edge `route_satisfaction`
     in graph.py inspects `satisfaction_failures` to decide the next node.
     """
+    runtime_flags = state.get("runtime_flags") or {}
+
     # ── Global gate ───────────────────────────────────────────────────────────
-    if not settings.SATISFACTION_CHECK_ENABLED:
+    check_enabled = _f(runtime_flags, "SATISFACTION_CHECK_ENABLED", settings.SATISFACTION_CHECK_ENABLED)
+    if not check_enabled:
         return {}  # route_satisfaction will forward directly to finalizer
+
+    # ── LLM (used for Check C and D) ──────────────────────────────────────────
+    llm = get_llm("satisfaction_check", runtime_flags=runtime_flags)
 
     failures: list[str] = []
     rows = state.get("inline_result_rows") or []
@@ -48,24 +57,26 @@ async def satisfaction_check_node(state: AgentState) -> dict:
         columns = list(rows[0].keys())
 
     # ── Check A: Execution Success ────────────────────────────────────────────
-    if settings.SATISFACTION_CHECK_EXECUTION:
+    if _f(runtime_flags, "SATISFACTION_CHECK_EXECUTION", settings.SATISFACTION_CHECK_EXECUTION):
         if state.get("trino_error"):
             failures.append(f"[CHECK_A] Execution failed: {state['trino_error']}")
 
     # ── Check B: Row Plausibility ─────────────────────────────────────────────
-    if settings.SATISFACTION_CHECK_PLAUSIBILITY:
+    if _f(runtime_flags, "SATISFACTION_CHECK_PLAUSIBILITY", settings.SATISFACTION_CHECK_PLAUSIBILITY):
         n = len(rows)
-        if n < settings.SATISFACTION_MIN_ROWS:
+        min_rows = _f(runtime_flags, "SATISFACTION_MIN_ROWS", settings.SATISFACTION_MIN_ROWS)
+        max_rows = _f(runtime_flags, "SATISFACTION_MAX_ROWS", settings.SATISFACTION_MAX_ROWS)
+        if n < min_rows:
             failures.append(
-                f"[CHECK_B] Result returned {n} rows — below minimum {settings.SATISFACTION_MIN_ROWS}."
+                f"[CHECK_B] Result returned {n} rows — below minimum {min_rows}."
             )
-        elif n > settings.SATISFACTION_MAX_ROWS:
+        elif n > max_rows:
             failures.append(
-                f"[CHECK_B] Result returned {n} rows — exceeds maximum {settings.SATISFACTION_MAX_ROWS}."
+                f"[CHECK_B] Result returned {n} rows — exceeds maximum {max_rows}."
             )
 
     # ── Check C: Structural Column Coverage ───────────────────────────────────
-    if settings.SATISFACTION_CHECK_COLUMNS and columns:
+    if _f(runtime_flags, "SATISFACTION_CHECK_COLUMNS", settings.SATISFACTION_CHECK_COLUMNS) and columns:
         prompt = (
             f"User question: {state.get('user_query', '')}\n"
             f"SQL column headers returned: {', '.join(columns)}\n\n"
@@ -82,7 +93,9 @@ async def satisfaction_check_node(state: AgentState) -> dict:
             logger.warning("satisfaction_check Check C failed: %s", exc)
 
     # ── Check D: Semantic Alignment (LLM judge, scored 0–1) ───────────────────
-    if settings.SATISFACTION_CHECK_SEMANTIC and columns:
+    check_semantic = _f(runtime_flags, "SATISFACTION_CHECK_SEMANTIC", settings.SATISFACTION_CHECK_SEMANTIC)
+    threshold = float(_f(runtime_flags, "SATISFACTION_SEMANTIC_THRESHOLD", settings.SATISFACTION_SEMANTIC_THRESHOLD))
+    if check_semantic and columns:
         prompt = (
             f"User question: {state.get('user_query', '')}\n"
             f"SQL generated: {state.get('sql_query', '')}\n"
@@ -92,10 +105,10 @@ async def satisfaction_check_node(state: AgentState) -> dict:
         try:
             structured = llm.with_structured_output(SemanticAlignmentOutput, method="json_schema")
             result: SemanticAlignmentOutput = await structured.ainvoke(prompt)
-            if result.alignment_score < settings.SATISFACTION_SEMANTIC_THRESHOLD:
+            if result.alignment_score < threshold:
                 failures.append(
                     f"[CHECK_D] Semantic alignment score {result.alignment_score:.2f} "
-                    f"below threshold {settings.SATISFACTION_SEMANTIC_THRESHOLD}: {result.reason}"
+                    f"below threshold {threshold}: {result.reason}"
                 )
         except Exception as exc:
             logger.warning("satisfaction_check Check D failed: %s", exc)
@@ -113,10 +126,10 @@ async def satisfaction_check_node(state: AgentState) -> dict:
                     "satisfaction_failures": failures,
                     "satisfaction_fail_count": fail_count,
                     "satisfaction_checks_run": {
-                        "execution": settings.SATISFACTION_CHECK_EXECUTION,
-                        "plausibility": settings.SATISFACTION_CHECK_PLAUSIBILITY,
-                        "columns": settings.SATISFACTION_CHECK_COLUMNS,
-                        "semantic": settings.SATISFACTION_CHECK_SEMANTIC,
+                        "execution": _f(runtime_flags, "SATISFACTION_CHECK_EXECUTION", settings.SATISFACTION_CHECK_EXECUTION),
+                        "plausibility": _f(runtime_flags, "SATISFACTION_CHECK_PLAUSIBILITY", settings.SATISFACTION_CHECK_PLAUSIBILITY),
+                        "columns": _f(runtime_flags, "SATISFACTION_CHECK_COLUMNS", settings.SATISFACTION_CHECK_COLUMNS),
+                        "semantic": check_semantic,
                     },
                 },
             )

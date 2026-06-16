@@ -27,6 +27,10 @@ class AgentSettings(BaseSettings):
     JEEN_API_KEY: str = ""       # If empty, agent gracefully skips fetching
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
 
+    # ── G4: Feature Flags & Execution Modes ──────────────────────────────────
+    BACKEND_URL: str = ""  # Studio backend URL for flag reads (e.g. http://backend:8000)
+                           # If empty, FlagBridge falls back to env-var defaults
+
 
     # Langfuse prompt names
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"

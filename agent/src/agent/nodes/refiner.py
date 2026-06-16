@@ -6,7 +6,6 @@ from agent.state import AgentState
 from core import execute_query_sync
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
-from agent.langfuse_client import langfuse_client
 from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
 from agent.utils.sql import clean_sql
@@ -33,6 +32,10 @@ async def refiner_node(state: AgentState):
     sql = state.get("sql_query")
     count = state.get("refinement_count", 0)
     error_history = state.get("error_history") or []
+    runtime_flags = state.get("runtime_flags") or {}
+
+    # Resolve per-invocation limit (DS-tunable via flags)
+    max_iterations = int(runtime_flags.get("MAX_REFINER_ITERATIONS", MAX_REFINER_ITERATIONS))
 
     # Execute against Trino
     try:
@@ -49,14 +52,14 @@ async def refiner_node(state: AgentState):
 
     if not success:
         # If we reached the refinement limit, just stop and don't prompt LLM
-        if count >= MAX_REFINER_ITERATIONS:
+        if count >= max_iterations:
             return {
                 "trino_error": trino_error,
                 "last_error": trino_error,
                 "refinement_count": count + 1,
                 "error_history": error_history,
                 "escalation_reason": (
-                    f"Refiner exhausted {MAX_REFINER_ITERATIONS} iterations. "
+                    f"Refiner exhausted {max_iterations} iterations. "
                     f"Last Trino error: {trino_error}"
                 ),
             }
@@ -65,7 +68,8 @@ async def refiner_node(state: AgentState):
         prompt = ChatPromptTemplate.from_messages(
             langfuse_prompt.get_langchain_prompt()
         )
-        chain = prompt | llm
+        _llm = get_llm("refiner", runtime_flags=runtime_flags)
+        chain = prompt | _llm
 
         schema_context = build_refiner_schema_context(state)
 

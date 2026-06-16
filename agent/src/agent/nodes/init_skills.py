@@ -14,13 +14,23 @@ async def init_skills_node(state: AgentState) -> dict:
     keeping reasoning nodes pure and state reproducible.
     """
     active_skills = state.get("active_skills")
+    runtime_flags = state.get("runtime_flags") or {}
     
-    if not active_skills:
+    from agent.config import settings
+    skills_enabled = bool(runtime_flags.get("SKILLS_ENABLED", settings.SKILLS_ENABLED))
+    hot_reload = bool(runtime_flags.get("SKILLS_HOT_RELOAD", settings.SKILLS_HOT_RELOAD))
+    cache_ttl = int(runtime_flags.get("SKILLS_CACHE_TTL", settings.SKILLS_CACHE_TTL))
+    
+    if not skills_enabled or not active_skills:
         return {"loaded_skills": None}
         
     try:
         _skill_registry.redis = get_redis_client()
-        loaded_skills = await _skill_registry.get_skills(active_skills)
+        loaded_skills = await _skill_registry.get_skills(
+            active_skills,
+            hot_reload=hot_reload,
+            cache_ttl=cache_ttl,
+        )
         
         if loaded_skills:
             try:

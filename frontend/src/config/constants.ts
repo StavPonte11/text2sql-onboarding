@@ -26,6 +26,8 @@ export const QUERY_KEYS = {
   ALERTS: 'alerts',
   TRENDS: 'trends',
   TABLE_ANALYTICS: 'table-analytics',
+  FLAGS: 'flags',
+  EXECUTION_MODES: 'execution-modes',
 } as const;
 
 // Default pagination values

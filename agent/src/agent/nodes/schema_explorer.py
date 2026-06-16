@@ -317,9 +317,22 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     allowed_tables = state.get("allowed_tables")
     allowed_statuses = state.get("allowed_statuses")
     feedback = state.get("feedback")
+    runtime_flags = state.get("runtime_flags") or {}
 
-    # ── G2-01: Resolve scoping mode ───────────────────────────────────────────
-    scoping_mode: str = state.get("scoping_mode") or settings.TABLE_SCOPING_MODE
+    # Resolve all flag-tunable parameters for this invocation
+    profile_fetch_concurrency = int(runtime_flags.get("PROFILE_FETCH_CONCURRENCY", settings.PROFILE_FETCH_CONCURRENCY))
+    max_profiles_to_fetch = int(runtime_flags.get("MAX_PROFILES_TO_FETCH", settings.MAX_PROFILES_TO_FETCH))
+    schema_semantic_typing = bool(runtime_flags.get("SCHEMA_SEMANTIC_TYPING", settings.ENABLE_SEMANTIC_TYPING))
+    schema_join_graph = bool(runtime_flags.get("SCHEMA_JOIN_GRAPH", settings.ENABLE_JOIN_GRAPH))
+    schema_summarization = bool(runtime_flags.get("SCHEMA_SUMMARIZATION", settings.ENABLE_SCHEMA_SUMMARIZATION))
+    schema_ambiguity_detect = bool(runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT))
+    scoping_mode_flag = runtime_flags.get("TABLE_SCOPING_MODE", settings.TABLE_SCOPING_MODE)
+
+    # Per-invocation LLM (supports model switching via execution mode)
+    _llm = get_llm("schema_explorer", runtime_flags=runtime_flags)
+
+    # ── G2-01: Resolve scoping mode (state > runtime_flag > env default) ─────────
+    scoping_mode: str = state.get("scoping_mode") or scoping_mode_flag
 
     # ── G2-05: Cache hit/miss counters (pushed to Langfuse at end) ────────────
     cache_hit_count = 0
@@ -338,7 +351,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     # 2. Get profiles for top candidate tables (G2-05 cache-aware)
     import asyncio
 
-    sem = asyncio.Semaphore(settings.PROFILE_FETCH_CONCURRENCY)
+    sem = asyncio.Semaphore(profile_fetch_concurrency)
 
     async def fetch_profile(t_id, t_name):
         nonlocal cache_hit_count, cache_miss_count
@@ -374,7 +387,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                 "description": "",
             }
         )
-        if i < settings.MAX_PROFILES_TO_FETCH:
+        if i < max_profiles_to_fetch:
             fetch_tasks.append(fetch_profile(t.id, t.name))
 
     if fetch_tasks:
@@ -403,15 +416,15 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         )
 
     # Phase A: Semantic Typing
-    if settings.ENABLE_SEMANTIC_TYPING and profile_details:
+    if schema_semantic_typing and profile_details:
         try:
-            profile_details = await run_semantic_typing(profile_details, llm)
+            profile_details = await run_semantic_typing(profile_details, _llm)
             active_phases.append("SCHEMA_SEMANTIC_TYPING")
         except Exception as exc:
             logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
 
     # Phase B: Join Graph
-    if settings.ENABLE_JOIN_GRAPH and len(table_ids) >= 2:
+    if schema_join_graph and len(table_ids) >= 2:
         try:
             join_paths_json = await run_join_graph(table_ids)
             if join_paths_json:
@@ -436,18 +449,18 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     # Phase C: Schema Summarization (replaces profiles_json in prompt)
     profiles_json_str = json.dumps(profile_details, indent=2)
-    if settings.ENABLE_SCHEMA_SUMMARIZATION and profile_details:
+    if schema_summarization and profile_details:
         try:
-            summaries = await run_schema_summarization(profile_details, llm)
+            summaries = await run_schema_summarization(profile_details, _llm)
             profiles_json_str = "\n".join(summaries)
             active_phases.append("SCHEMA_SUMMARIZATION")
         except Exception as exc:
             logger.warning("SCHEMA_SUMMARIZATION phase failed: %s", exc)
 
     # Phase D: Ambiguity Detection
-    if settings.ENABLE_AMBIGUITY_DETECT and profile_details:
+    if schema_ambiguity_detect and profile_details:
         try:
-            notes = await run_ambiguity_detection(profile_details, user_query, llm)
+            notes = await run_ambiguity_detection(profile_details, user_query, _llm)
             if notes:
                 human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
                 active_phases.append("SCHEMA_AMBIGUITY_DETECT")
@@ -476,7 +489,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     )
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
 
-    structured_llm = llm.with_structured_output(
+    structured_llm = _llm.with_structured_output(
         SchemaExplorerOutput, method="json_schema"
     )
     chain = prompt | structured_llm

@@ -36,3 +36,6 @@ class AgentState(TypedDict):
     # G2-04: satisfaction check
     satisfaction_failures: list[str] | None
     satisfaction_fail_count: int | None
+    # G4: feature flags & execution modes
+    execution_mode: str | None          # e.g. "cost_saving", "high_quality", "benchmark"
+    runtime_flags: dict[str, Any] | None  # resolved by init_flags_node

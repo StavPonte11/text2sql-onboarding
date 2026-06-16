@@ -45,8 +45,8 @@ class BaseExtractor(abc.ABC):
 
 
 class LLMExtractor(BaseExtractor):
-    def __init__(self):
-        self.llm = get_llm("extractor")
+    def __init__(self, runtime_flags: dict | None = None):
+        self.llm = get_llm("extractor", runtime_flags=runtime_flags)
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_EXTRACTOR)
         self.prompt = ChatPromptTemplate.from_messages(
@@ -102,10 +102,11 @@ def extractor_node(state: AgentState):
     """Enrich the user query with additional context to help downstream phases."""
     user_query = state["user_query"]
     active_extractors = state.get("active_extractors") or []
+    runtime_flags = state.get("runtime_flags") or {}
 
     import concurrent.futures
 
-    extractors: List[BaseExtractor] = [TimeExtractor(), LLMExtractor()]
+    extractors: List[BaseExtractor] = [TimeExtractor(), LLMExtractor(runtime_flags=runtime_flags)]
 
     for ext_info in active_extractors:
         extractors.append(HTTPExtractor(ext_info["url"], ext_info["name"]))

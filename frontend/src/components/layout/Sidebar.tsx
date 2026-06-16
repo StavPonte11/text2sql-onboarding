@@ -8,6 +8,7 @@ import {
   Database,
   LayoutDashboard,
   Shield,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
@@ -49,7 +50,10 @@ const NAV_GROUPS = [
   },
   {
     label: 'Administration',
-    items: [{ to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' }],
+    items: [
+      { to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' },
+      { to: '/flags', icon: SlidersHorizontal, key: 'nav.flags', label: 'Feature Flags' },
+    ],
   },
 ];
 

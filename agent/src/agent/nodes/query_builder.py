@@ -4,12 +4,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
-
-llm = get_llm("query_builder")
-
-
 def query_builder_node(state: AgentState):
     """Build SQL from plan and pause for user approval."""
+    runtime_flags = state.get("runtime_flags") or {}
     feedback = state.get("feedback")
     feedback_str = f"\nUser Feedback to apply: {feedback}" if feedback else ""
 
@@ -23,7 +20,8 @@ def query_builder_node(state: AgentState):
 
     langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_QUERY_BUILDER)
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
-    chain = prompt | llm
+    _llm = get_llm("query_builder", runtime_flags=runtime_flags)
+    chain = prompt | _llm
     response = chain.invoke(
         {
             "schema_plan": state.get("schema_plan"),

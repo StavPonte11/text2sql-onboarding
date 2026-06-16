@@ -19,6 +19,7 @@ from app.routers import (
     evaluation,
     extractors,
     feedback,
+    flags,
     health,
     orchestration,
     profiling,
@@ -126,6 +127,7 @@ api_router.include_router(health.router)
 api_router.include_router(admin_auth.router)
 api_router.include_router(admin_approval.router)
 api_router.include_router(agent.router)
+api_router.include_router(flags.router)
 
 app.include_router(api_router)
 

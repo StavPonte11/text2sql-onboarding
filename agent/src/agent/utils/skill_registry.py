@@ -16,7 +16,7 @@ class SkillRegistry:
         self.redis = redis_client
         self.cache_ttl = 300  # 5 minutes
 
-    async def get_skills(self, skill_ids: list[str]) -> list[dict[str, Any]]:
+    async def get_skills(self, skill_ids: list[str], hot_reload: bool = False, cache_ttl: int = 300) -> list[dict[str, Any]]:
         """
         Fetch skills by ID, trying Redis cache first, then Jeen API.
         """
@@ -31,7 +31,7 @@ class SkillRegistry:
         missing_ids = []
 
         # 1. Try fetching from Redis
-        if self.redis and not settings.SKILLS_HOT_RELOAD:
+        if self.redis and not hot_reload:
             try:
                 keys = [f"skill:{sid}" for sid in skill_ids]
                 cached_values = await self.redis.mget(keys)
@@ -57,7 +57,7 @@ class SkillRegistry:
                     pipeline = self.redis.pipeline()
                     for skill in fetched:
                         key = f"skill:{skill['id']}"
-                        pipeline.setex(key, self.cache_ttl, json.dumps(skill))
+                        pipeline.setex(key, cache_ttl, json.dumps(skill))
                     await pipeline.execute()
                 except Exception as e:
                     logger.error(f"Redis error while caching skills: {e}")

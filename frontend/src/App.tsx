@@ -16,6 +16,7 @@ import { AgentTestingPage } from './pages/AgentTestingPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { EvaluationsPage } from './pages/EvaluationsPage';
+import { FlagsPage } from './pages/FlagsPage';
 import { LandingPage } from './pages/LandingPage';
 import { ScopesPage } from './pages/ScopesPage';
 import { useAdminStore } from './store/adminStore';
@@ -82,6 +83,14 @@ function AppLayout() {
             element={
               <ProtectedAdminRoute>
                 <AdminPanelPage />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
+            path="/flags"
+            element={
+              <ProtectedAdminRoute>
+                <FlagsPage />
               </ProtectedAdminRoute>
             }
           />

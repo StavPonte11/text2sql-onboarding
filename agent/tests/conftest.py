@@ -48,12 +48,19 @@ class MockLLM(RunnableLambda):
 @pytest.fixture(autouse=True)
 def mock_llm():
     mock_instance = MockLLM()
-    with patch("agent.nodes.schema_explorer.llm", mock_instance), \
-         patch("agent.nodes.refiner.llm", mock_instance), \
-         patch("agent.nodes.query_builder.llm", mock_instance), \
-         patch("agent.graph.llm", mock_instance), \
-         patch("agent.nodes.finalizer.llm", mock_instance), \
-         patch("agent.nodes.satisfaction_check.llm", mock_instance):
+    with patch("agent.llm.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.schema_explorer.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.refiner.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.query_builder.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.extractor.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.satisfaction_check.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.finalizer.get_llm", return_value=mock_instance), \
+         patch("agent.nodes.schema_explorer.llm", mock_instance, create=True), \
+         patch("agent.nodes.refiner.llm", mock_instance, create=True), \
+         patch("agent.nodes.query_builder.llm", mock_instance, create=True), \
+         patch("agent.graph.llm", mock_instance, create=True), \
+         patch("agent.nodes.finalizer.llm", mock_instance, create=True), \
+         patch("agent.nodes.satisfaction_check.llm", mock_instance, create=True):
         yield mock_instance
 
 # --- Mock Redis ---
