@@ -179,10 +179,45 @@ def get_all_health(session: Session = Depends(get_session)):
     ).all()
 
 
-@router.get("/judge/health")
+@router.get("/health/judge")
 def get_judge_health():
     from app.config import settings
     api_key = getattr(settings, "OPENAI_API_KEY", None)
     if not api_key:
         return {"status": "error", "message": "OPENAI_API_KEY is missing"}
     return {"status": "ok", "message": "LLM Judge is configured"}
+
+@router.get("/health/esca")
+async def get_esca_health():
+    import asyncio
+    try:
+        from agent.config import settings as agent_settings
+    except ImportError:
+        # Fallback if running pure backend context
+        from app.config import settings as agent_settings
+        
+    api_key = getattr(agent_settings, "ESCA_API_KEY", "dummy")
+    base_url = getattr(agent_settings, "ESCA_URL", "http://localhost:8000")
+    
+    from esca_sdk import EscaClient
+    client = EscaClient(api_key=api_key, base_url=base_url)
+    
+    async def _ping_esca():
+        if hasattr(client, "ping"):
+            return await client.ping()
+        else:
+            return await client.load_head("health_check_dummy_id")
+            
+    try:
+        await asyncio.wait_for(_ping_esca(), timeout=5.0)
+        return {"status": "ok", "message": "Esca is reachable"}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Esca connection timed out after 5.0s")
+    except Exception as e:
+        err_str = str(e).lower()
+        if "404" in err_str or "not found" in err_str:
+            return {"status": "ok", "message": "Esca is reachable"}
+        raise HTTPException(status_code=503, detail=f"Esca health check failed: {e}")
+    finally:
+        await client.close()
+

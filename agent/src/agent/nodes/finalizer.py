@@ -1,13 +1,13 @@
 import json
 import asyncio
 from agent.state import AgentState
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from esca_sdk import EscaClient
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
+from agent.llm import get_llm
+from agent.utils.esca import get_esca_client
 
-llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
+llm = get_llm("finalizer")
 
 # Prompts will be loaded dynamically from Langfuse inside the node execution
 
@@ -16,30 +16,28 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
     if not esca_id:
         return "No data reference found."
     
-    client = EscaClient(api_key=settings.ESCA_API_KEY, base_url=settings.ESCA_URL)
     try:
-        # TODO: instead of fetching everything from esca and then chunk, get only the chunk
-        data_bytes = await client.load_head(esca_id)
-        data = json.loads(data_bytes.decode())
-        
-        columns = data.get("columns", [])
-        rows = data.get("rows", [])
-        total_rows = len(rows)
-        
-        # Take a slice of the rows to avoid context overload
-        preview_rows = rows[:limit]
-        
-        preview_info = {
-            "columns": columns,
-            "preview_rows": preview_rows,
-            "preview_count": len(preview_rows),
-            "total_rows": total_rows
-        }
-        return json.dumps(preview_info, indent=2)
+        async with get_esca_client() as client:
+            # TODO: instead of fetching everything from esca and then chunk, get only the chunk
+            data_bytes = await client.load_head(esca_id)
+            data = json.loads(data_bytes.decode())
+            
+            columns = data.get("columns", [])
+            rows = data.get("rows", [])
+            total_rows = len(rows)
+            
+            # Take a slice of the rows to avoid context overload
+            preview_rows = rows[:limit]
+            
+            preview_info = {
+                "columns": columns,
+                "preview_rows": preview_rows,
+                "preview_count": len(preview_rows),
+                "total_rows": total_rows
+            }
+            return json.dumps(preview_info, indent=2)
     except Exception as e:
         return f"Error retrieving data preview from Esca: {e}"
-    finally:
-        await client.close()
 
 async def get_sql_explanation(sql_query: str | None) -> str:
     """Ask LLM to explain the SQL query in natural language."""
@@ -56,8 +54,25 @@ async def get_sql_explanation(sql_query: str | None) -> str:
 async def finalizer_node(state: AgentState):
     """Summarize data."""
     raw_data_ref = state.get("raw_data_ref")
+    esca_write_failed = state.get("esca_write_failed", False)
+    inline_result_rows = state.get("inline_result_rows")
+    
     preview_str = ""
-    if raw_data_ref:
+    if esca_write_failed or not raw_data_ref:
+        if inline_result_rows is not None:
+            limit = 5
+            preview_rows = inline_result_rows[:limit]
+            columns = list(preview_rows[0].keys()) if preview_rows and isinstance(preview_rows[0], dict) else []
+            preview_info = {
+                "columns": columns,
+                "preview_rows": preview_rows,
+                "preview_count": len(preview_rows),
+                "total_rows": len(inline_result_rows)
+            }
+            preview_str = json.dumps(preview_info, indent=2)
+        else:
+            preview_str = "No data reference found."
+    else:
         preview_str = await get_esca_preview(raw_data_ref)
         
     langfuse_prompt_summary = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_FINALIZER_SUMMARY)

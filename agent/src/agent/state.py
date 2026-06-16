@@ -22,4 +22,6 @@ class AgentState(TypedDict):
     active_extractors: list[dict[str, str]] | None
     last_error: str | None
     hallucinated_tables: list[str] | None
-
+    esca_write_failed: bool | None
+    inline_result_rows: list[dict[str, Any]] | None
+    error_history: list[str] | None

@@ -31,4 +31,19 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ruff>=0.3.0",
 ]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"langchain_openai.ChatOpenAI" = { msg = "Use get_llm from agent.llm instead of instantiating ChatOpenAI directly." }
+"esca_sdk.EscaClient" = { msg = "Use get_esca_client from agent.utils.esca instead of instantiating EscaClient directly." }
+
+[tool.ruff.lint.per-file-ignores]
+"src/agent/llm.py" = ["TID251"]
+"src/agent/utils/esca.py" = ["TID251"]

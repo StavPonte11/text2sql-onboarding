@@ -16,9 +16,11 @@ from core.models.models import Table, TableProfile, ColumnProfile, EnrichmentVer
 from sqlmodel import Session, select
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
+from agent.llm import get_llm
+from agent.utils.esca import get_esca_client
 
 # Initialize LLM
-llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
+llm = get_llm("schema_explorer")
 logger = logging.getLogger(__name__)
 # Define standardized Schema Explorer Output Type
 class SchemaExplorerOutput(BaseModel):
@@ -204,16 +206,17 @@ async def get_table_profile(table_id: str) -> str:
         # Save heavy data in Esca
         esca_payload = json.dumps(profile_data).encode()
         
-        client = EscaClient(api_key=settings.ESCA_API_KEY, base_url=settings.ESCA_URL)
-        try:
-            res = await client.save_data(esca_payload)
-            esca_id = res.get("esca_id")
-        except Exception as e:
-            esca_id = None
-            logger.error(f"Error: Failed to save profile to Esca for table {table_id}: {e}")
-            # TODO: handle error
-        finally:
-            await client.close()
+        async with get_esca_client() as client:
+            try:
+                res = await client.save_data(esca_payload)
+                esca_id = res.get("esca_id")
+            except Exception as e:
+                esca_id = None
+                from langfuse.decorators import langfuse_context
+                if langfuse_context.get_current_trace_id():
+                    langfuse_context.update_current_observation(level="WARNING", status_message=f"ESCA write failed for profile: {e}")
+                else:
+                    logger.warning(f"Error: Failed to save profile to Esca for table {table_id}: {e}")
         
         # Return only lightweight metadata to LLM, but include categorical options so LLM can map terms
         return json.dumps({
