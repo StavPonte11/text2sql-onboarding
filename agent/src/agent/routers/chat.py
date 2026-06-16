@@ -51,7 +51,7 @@ async def chat_endpoint(request: ChatRequest, langfuse_handler: CallbackHandler 
     thread_id = request.thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},
-        "callbacks": [langfuse_handler]
+        "callbacks": [langfuse_handler] if langfuse_handler else []
     }
 
     if request.resume_value is not None:

@@ -125,22 +125,7 @@ def evaluate_with_llm(
     logger.info(f"LLM Judge evaluating question: {user_question[:50]}...")
 
     from app.config import settings
-
-    api_key = getattr(settings, "OPENAI_API_KEY", None)
-
-    if not api_key:
-        logger.warning(
-            "OPENAI_API_KEY not found. LLM judge cannot run. Returning fallback 0.0 scores."
-        )
-        return JudgeOutput(
-            table_selection_correctness=0.0,
-            sql_semantic_equivalence=0.0,
-            result_correctness=0.0,
-            hallucination_detected=False,
-            failure_type="execution_error" if not execution.success else None,
-            reasoning={"error": "OPENAI_API_KEY is missing. Evaluation skipped."},
-            confidence_in_judgment=0.0,
-        )
+    api_key = settings.OPENAI_API_KEY
 
     try:
         # Real LLM Execution via OpenAI API

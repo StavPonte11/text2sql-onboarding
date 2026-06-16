@@ -355,31 +355,39 @@ async def schema_explorer_node(state: AgentState):
                     parts = t_name.split('.')
                     if len(parts) == 3:
                         cat, sch, tbl = parts
-                        sql = f"SELECT 1 FROM {cat}.information_schema.tables WHERE table_schema = '{sch}' AND table_name = '{tbl}'"
+                        sql = f"SELECT 1 FROM {cat}.information_schema.tables WHERE table_schema = ? AND table_name = ?"
                         try:
-                            res = await asyncio.to_thread(execute_query_sync, sql)
+                            res = await asyncio.to_thread(execute_query_sync, sql, [sch, tbl])
                             if res.success and len(res.rows) > 0:
                                 await redis_client.setex(cache_key, 3600, "1")
                             else:
                                 await redis_client.setex(cache_key, 3600, "0")
                                 hallucinated.append(t_name)
                         except Exception as e:
-                            print(f"Information schema check failed for {t_name}: {e}")
+                            logger.error(f"Information schema check failed for {t_name}: {e}")
+                            hallucinated.append(t_name)
                     else:
                         hallucinated.append(t_name)
                 elif exists == b"0":
                     hallucinated.append(t_name)
         except Exception as e:
-            print(f"Error during Redis/Trino table verification: {e}")
+            logger.error(f"Error during Redis/Trino table verification: {e}")
+            if tables_used:
+                hallucinated.extend(tables_used)
 
+    retry_count = state.get("schema_explorer_retry_count", 0)
     result_state = {"schema_plan": plan}
     
     if hallucinated:
         result_state["hallucinated_tables"] = hallucinated
         result_state["feedback"] = f"Do not use these tables, they do not exist: {', '.join(hallucinated)}"
         result_state["last_error"] = f"Hallucinated tables detected: {', '.join(hallucinated)}"
+        result_state["schema_explorer_retry_count"] = retry_count + 1
     else:
         result_state["hallucinated_tables"] = None
+        result_state["feedback"] = None
+        result_state["last_error"] = None
+        result_state["schema_explorer_retry_count"] = 0
 
     return result_state
 

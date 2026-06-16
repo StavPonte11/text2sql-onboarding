@@ -25,3 +25,4 @@ class AgentState(TypedDict):
     esca_write_failed: bool | None
     inline_result_rows: list[dict[str, Any]] | None
     error_history: list[str] | None
+    schema_explorer_retry_count: int | None

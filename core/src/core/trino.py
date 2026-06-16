@@ -48,7 +48,7 @@ def get_trino_connection():
     )
 
 
-def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
+def execute_query_sync(sql: str, params: tuple | dict | list | None = None, table_id: str = "") -> TrinoExecutionResult:
     """
     Execute a SQL query against the real Trino cluster.
     """
@@ -64,10 +64,15 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
             execution_time_ms=0,
         )
 
+    conn = None
+    cur = None
     try:
         conn = get_trino_connection()
         cur = conn.cursor()
-        cur.execute(sql)
+        if params:
+            cur.execute(sql, params)
+        else:
+            cur.execute(sql)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description] if cur.description else []
         execution_time_ms = int((time.time() - start_time) * 1000)

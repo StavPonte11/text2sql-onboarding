@@ -78,6 +78,8 @@ workflow.add_edge(START, "extractor")
 workflow.add_edge("extractor", "schema_explorer")
 def route_schema_explorer(state: AgentState):
     if state.get("hallucinated_tables"):
+        if state.get("schema_explorer_retry_count", 0) >= 3:
+            return "query_builder"
         return "schema_explorer"
     return "query_builder"
 

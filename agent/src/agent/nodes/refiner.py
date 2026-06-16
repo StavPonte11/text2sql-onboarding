@@ -91,6 +91,7 @@ async def refiner_node(state: AgentState):
 
         return {
             "trino_error": None, 
+            "last_error": None,
             "raw_data_ref": raw_ref, 
             "esca_write_failed": esca_write_failed, 
             "inline_result_rows": inline_result_rows,
