@@ -55,6 +55,10 @@ async def refiner_node(state: AgentState):
                 "last_error": trino_error,
                 "refinement_count": count + 1,
                 "error_history": error_history,
+                "escalation_reason": (
+                    f"Refiner exhausted {MAX_REFINER_ITERATIONS} iterations. "
+                    f"Last Trino error: {trino_error}"
+                ),
             }
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)

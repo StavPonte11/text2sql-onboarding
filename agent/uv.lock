@@ -17,6 +17,7 @@ dependencies = [
     { name = "langfuse" },
     { name = "langgraph" },
     { name = "mcp" },
+    { name = "networkx" },
     { name = "pydantic-settings" },
     { name = "trino" },
     { name = "uvicorn", extra = ["standard"] },
@@ -40,6 +41,7 @@ requires-dist = [
     { name = "langfuse", specifier = ">=2.0.0" },
     { name = "langgraph" },
     { name = "mcp", specifier = ">=1.12.4" },
+    { name = "networkx", specifier = ">=3.3" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },
     { name = "trino", specifier = ">=0.328.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.1" },
@@ -696,6 +698,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/31/88/f6cb7e7c260cd4b4ce375f2b1614b33ce401f63af0f49f7141a2e9bf0a45/mcp-1.12.4.tar.gz", hash = "sha256:0765585e9a3a5916a3c3ab8659330e493adc7bd8b2ca6120c2d7a0c43e034ca5", size = 431148, upload-time = "2025-08-07T20:31:18.082Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/68/316cbc54b7163fa22571dcf42c9cc46562aae0a021b974e0a8141e897200/mcp-1.12.4-py3-none-any.whl", hash = "sha256:7aa884648969fab8e78b89399d59a683202972e12e6bc9a1c88ce7eda7743789", size = 160145, upload-time = "2025-08-07T20:31:15.69Z" },
+]
+
+[[package]]
+name = "networkx"
+version = "3.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
 ]
 
 [[package]]

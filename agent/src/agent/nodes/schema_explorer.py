@@ -12,6 +12,7 @@ import logging
 from agent.state import AgentState
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 
 from langchain_core.tools import tool
 from sqlalchemy import text
@@ -22,10 +23,23 @@ from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
 from agent.utils.esca import get_esca_client
+from agent.utils.schema_enrichment import (
+    run_semantic_typing,
+    run_join_graph,
+    run_schema_summarization,
+    run_ambiguity_detection,
+)
+from core.cache import get_cache_service
 
 # Initialize LLM
 llm = get_llm("schema_explorer")
 logger = logging.getLogger(__name__)
+
+# Cache singleton
+_cache = get_cache_service(settings.REDIS_URL)
+
+# G2-02 limits
+MAX_SCHEMA_RETRIES = 3
 
 
 # Define standardized Schema Explorer Output Type
@@ -73,9 +87,13 @@ def hybrid_search_tables(
     session: Session,
     allowed_tables: list[str] | None = None,
     allowed_statuses: list[str] | None = None,
+    scoping_mode: str = "hybrid",
 ) -> list[Table]:
-    """Hybrid search combining pgvector cosine distance and keyword matching."""
-    # 1. Get all allowed tables
+    """Hybrid search combining pgvector cosine distance and keyword matching.
+
+    G2-01: In strict mode, allowed_tables is a hard allowlist — allowed_statuses
+    is ignored.  In hybrid mode, the union of both filters applies (legacy behaviour).
+    """
     stmt_all = select(Table)
     all_tables = session.exec(stmt_all).all()
 
@@ -83,20 +101,34 @@ def hybrid_search_tables(
     statuses = allowed_statuses or ["production"]
     allowed_tables_set = []
     allowed_ids = set()
+
     for table in all_tables:
-        is_allowed = table.status in statuses or (
-            allowed
-            and (
-                table.id in allowed
-                or table.name in allowed
-                or f"{table.schema_name}.{table.name}" in allowed
+        if scoping_mode == "strict":
+            # Hard allowlist: only tables explicitly named in allowed_tables
+            is_allowed = bool(
+                allowed
+                and (
+                    table.id in allowed
+                    or table.name in allowed
+                    or f"{table.schema_name}.{table.name}" in allowed
+                )
             )
-        )
+        else:
+            # Hybrid: production/status union OR explicit allowed list
+            is_allowed = table.status in statuses or (
+                allowed
+                and (
+                    table.id in allowed
+                    or table.name in allowed
+                    or f"{table.schema_name}.{table.name}" in allowed
+                )
+            )
+
         if is_allowed:
             allowed_tables_set.append(table)
             allowed_ids.add(table.id)
 
-    # 2. Vector Search
+    # Vector Search
     if allowed_ids:
         stmt = text("""
             SELECT id FROM tables
@@ -122,7 +154,7 @@ def hybrid_search_tables(
     else:
         vec_ids = []
 
-    # 3. Keyword Search
+    # Keyword Search
     keyword_matches = []
     query_words = query.lower().split()
     for table in allowed_tables_set:
@@ -153,7 +185,6 @@ def hybrid_search_tables(
     keyword_matches.sort(key=lambda x: x[1], reverse=True)
     kw_ids = [x[0] for x in keyword_matches[: settings.HYBRID_SEARCH_MAX_TABLES]]
 
-    # 4. Combine and limit to settings.HYBRID_SEARCH_MAX_TABLES tables
     combined_ids = list(dict.fromkeys(vec_ids + kw_ids))[
         : settings.HYBRID_SEARCH_MAX_TABLES
     ]
@@ -172,6 +203,8 @@ def hybrid_search_tables(
 @tool
 async def get_table_profile(table_id: str) -> str:
     """Get the lightweight column names/types for a table, and the Esca reference ID for the full profiling statistics. Use this before planning a query."""
+    cache_hit = False
+
     with Session(engine) as session:
         table = session.get(Table, table_id)
         if not table:
@@ -191,6 +224,14 @@ async def get_table_profile(table_id: str) -> str:
                     "error": f"No completed profile found for Table ID {table_id}. Make sure to trigger profiling first."
                 }
             )
+
+        # ── G2-05: Redis cache lookup ─────────────────────────────────────────
+        cache_key = _cache.profile_key(table_id, profile.id)
+        cached = await _cache.get_json(cache_key)
+        if cached is not None:
+            cache_hit = True
+            # Lightweight wrapper returned from cache
+            return json.dumps(cached)
 
         columns = session.exec(
             select(ColumnProfile).where(ColumnProfile.profile_id == profile.id)
@@ -230,7 +271,7 @@ async def get_table_profile(table_id: str) -> str:
                 from agent.langfuse_client import langfuse_client
 
                 if langfuse_client and langfuse_client.get_current_observation_id():
-                    langfuse_client.span(id=langfuse_client.get_current_observation_id(), 
+                    langfuse_client.span(id=langfuse_client.get_current_observation_id(),
                         level="WARNING",
                         status_message=f"ESCA write failed for profile: {e}",
                     )
@@ -239,55 +280,80 @@ async def get_table_profile(table_id: str) -> str:
                         f"Error: Failed to save profile to Esca for table {table_id}: {e}"
                     )
 
-        # Return only lightweight metadata to LLM, but include categorical options so LLM can map terms
-        return json.dumps(
-            {
-                "table_id": table_id,
-                "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
-                "row_count": profile.row_count,
-                "columns": [
-                    {
-                        "name": cp.column_name,
-                        "type": cp.data_type,
-                        "is_categorical": cp.is_categorical,
-                        "top_values": [v.get("value") for v in cp.top_values]
-                        if cp.is_categorical and cp.top_values
-                        else None,
-                    }
-                    for cp in columns
-                ],
-                "esca_reference_id": esca_id,
-            },
-            indent=2,
-        )
+        # Lightweight response to cache and return to LLM
+        lightweight = {
+            "table_id": table_id,
+            "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
+            "row_count": profile.row_count,
+            "columns": [
+                {
+                    "name": cp.column_name,
+                    "type": cp.data_type,
+                    "is_categorical": cp.is_categorical,
+                    "top_values": [v.get("value") for v in cp.top_values]
+                    if cp.is_categorical and cp.top_values
+                    else None,
+                }
+                for cp in columns
+            ],
+            "esca_reference_id": esca_id,
+        }
+
+        # ── G2-05: Populate cache ─────────────────────────────────────────────
+        await _cache.set_json(cache_key, lightweight, settings.PROFILE_CACHE_TTL)
+
+        return json.dumps(lightweight, indent=2)
 
 
-async def schema_explorer_node(state: AgentState):
-    """RAG Schema Explorer sub-agent node, pausing for table selection if ambiguous."""
+async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
+    """RAG Schema Explorer sub-agent node — with G2-01 scoping, G2-03 enrichment, G2-05 caching."""
     user_query = state["user_query"]
     enrichments = state.get("query_enrichments", [])
     allowed_tables = state.get("allowed_tables")
     allowed_statuses = state.get("allowed_statuses")
     feedback = state.get("feedback")
 
+    # ── G2-01: Resolve scoping mode ───────────────────────────────────────────
+    scoping_mode: str = state.get("scoping_mode") or settings.TABLE_SCOPING_MODE
+
+    # ── G2-05: Cache hit/miss counters (pushed to Langfuse at end) ────────────
+    cache_hit_count = 0
+    cache_miss_count = 0
+
     # 1. Automatically run hybrid search to find candidates
     emb = get_query_embedding(user_query)
     with Session(engine) as session:
         candidate_tables = hybrid_search_tables(
-            user_query, emb, session, allowed_tables, allowed_statuses
+            user_query, emb, session, allowed_tables, allowed_statuses, scoping_mode
         )
 
     tables_info = []
     profile_details = []
 
-    # 2. Automatically get profiles for the top candidate tables (up to MAX_PROFILES_TO_FETCH) to seed the prompt
+    # 2. Get profiles for top candidate tables (G2-05 cache-aware)
     import asyncio
 
     sem = asyncio.Semaphore(settings.PROFILE_FETCH_CONCURRENCY)
 
     async def fetch_profile(t_id, t_name):
+        nonlocal cache_hit_count, cache_miss_count
         async with sem:
             try:
+                # Quick cache check at this level for hit/miss accounting
+                with Session(engine) as s:
+                    profile_row = s.exec(
+                        select(TableProfile)
+                        .where(TableProfile.table_id == t_id, TableProfile.status == "completed")
+                        .order_by(TableProfile.created_at.desc())
+                    ).first()
+                    if profile_row:
+                        ck = _cache.profile_key(t_id, profile_row.id)
+                        hit = await _cache.get(ck)
+                        if hit is not None:
+                            cache_hit_count += 1
+                        else:
+                            cache_miss_count += 1
+
                 profile_res = await get_table_profile.ainvoke({"table_id": t_id})
                 return json.loads(profile_res)
             except Exception as e:
@@ -312,18 +378,87 @@ async def schema_explorer_node(state: AgentState):
             if res and not isinstance(res, Exception):
                 profile_details.append(res)
 
-    # TODO: Make more dynamic - allow LLM to search other tables if the first pass is not enough
-    # TODO: Support multi-turn conversation
+    # ── G2-03: Advanced Schema Enrichment phases ──────────────────────────────
+    active_phases: list[str] = []
+    table_ids = [t.id for t in candidate_tables]
+
+    human_message = (
+        f"Question: {user_query}\n"
+        f"Query Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
+    )
+    if feedback:
+        human_message += f"\nUser Feedback on previous plan/query: {feedback}"
+
+    # G2-01 strict mode prompt injection
+    if scoping_mode == "strict":
+        human_message += (
+            "\n\n[STRICT MODE] Only use tables from the approved list. "
+            "Do not suggest alternatives.\n"
+            f"Approved tables: {json.dumps(allowed_tables)}"
+        )
+
+    # Phase A: Semantic Typing
+    if settings.ENABLE_SEMANTIC_TYPING and profile_details:
+        try:
+            profile_details = await run_semantic_typing(profile_details, llm)
+            active_phases.append("SCHEMA_SEMANTIC_TYPING")
+        except Exception as exc:
+            logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
+
+    # Phase B: Join Graph
+    if settings.ENABLE_JOIN_GRAPH and len(table_ids) >= 2:
+        try:
+            join_paths_json = await run_join_graph(table_ids)
+            if join_paths_json:
+                human_message += (
+                    "\n\n[JOIN GRAPH] Shortest join paths between candidate tables:\n"
+                    + join_paths_json
+                )
+                active_phases.append("SCHEMA_JOIN_GRAPH")
+        except Exception as exc:
+            logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
+
+    # Phase C: Schema Summarization (replaces profiles_json in prompt)
+    profiles_json_str = json.dumps(profile_details, indent=2)
+    if settings.ENABLE_SCHEMA_SUMMARIZATION and profile_details:
+        try:
+            summaries = await run_schema_summarization(profile_details, llm)
+            profiles_json_str = "\n".join(summaries)
+            active_phases.append("SCHEMA_SUMMARIZATION")
+        except Exception as exc:
+            logger.warning("SCHEMA_SUMMARIZATION phase failed: %s", exc)
+
+    # Phase D: Ambiguity Detection
+    if settings.ENABLE_AMBIGUITY_DETECT and profile_details:
+        try:
+            notes = await run_ambiguity_detection(profile_details, user_query, llm)
+            if notes:
+                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
+                active_phases.append("SCHEMA_AMBIGUITY_DETECT")
+        except Exception as exc:
+            logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
+
+    # ── Langfuse trace metadata ───────────────────────────────────────────────
+    try:
+        trace_id = langfuse_client.get_current_trace_id()
+        if trace_id:
+            langfuse_client.trace(
+                id=trace_id,
+                tags=[f"scoping_mode={scoping_mode}"],
+                metadata={
+                    "active_schema_phases": active_phases,
+                    "cache_hit_count": cache_hit_count,
+                    "cache_miss_count": cache_miss_count,
+                },
+            )
+    except Exception as exc:
+        logger.warning("Langfuse trace update failed in schema_explorer: %s", exc)
 
     # 3. Present all metadata to the LLM to construct a query plan
     langfuse_prompt = langfuse_client.get_prompt(
         settings.LANGFUSE_PROMPT_SCHEMA_EXPLORER
     )
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
-
-    human_message = f"Question: {user_query}\nQuery Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
-    if feedback:
-        human_message += f"\nUser Feedback on previous plan/query: {feedback}"
 
     structured_llm = llm.with_structured_output(
         SchemaExplorerOutput, method="json_schema"
@@ -334,7 +469,7 @@ async def schema_explorer_node(state: AgentState):
         data = await chain.ainvoke(
             {
                 "tables_json": json.dumps(tables_info, indent=2),
-                "profiles_json": json.dumps(profile_details, indent=2),
+                "profiles_json": profiles_json_str,
                 "human_message": human_message,
             }
         )
@@ -365,7 +500,7 @@ async def schema_explorer_node(state: AgentState):
             data = await chain.ainvoke(
                 {
                     "tables_json": json.dumps(tables_info, indent=2),
-                    "profiles_json": json.dumps(profile_details, indent=2),
+                    "profiles_json": profiles_json_str,
                     "human_message": clarified_message,
                 }
             )
@@ -430,10 +565,11 @@ async def schema_explorer_node(state: AgentState):
             if tables_used:
                 hallucinated.extend(tables_used)
 
-    retry_count = state.get("schema_explorer_retry_count", 0)
-    result_state = {"schema_plan": plan}
+    retry_count = state.get("schema_explorer_retry_count", 0) or 0
+    result_state: dict = {"schema_plan": plan}
 
     if hallucinated:
+        new_retry = retry_count + 1
         result_state["hallucinated_tables"] = hallucinated
         result_state["feedback"] = (
             f"Do not use these tables, they do not exist: {', '.join(hallucinated)}"
@@ -441,7 +577,14 @@ async def schema_explorer_node(state: AgentState):
         result_state["last_error"] = (
             f"Hallucinated tables detected: {', '.join(hallucinated)}"
         )
-        result_state["schema_explorer_retry_count"] = retry_count + 1
+        result_state["schema_explorer_retry_count"] = new_retry
+
+        # G2-02: set escalation_reason when approaching the limit
+        if new_retry >= MAX_SCHEMA_RETRIES:
+            result_state["escalation_reason"] = (
+                f"Schema explorer failed {new_retry} times due to hallucinated tables: "
+                f"{', '.join(hallucinated)}"
+            )
     else:
         result_state["hallucinated_tables"] = None
         result_state["feedback"] = None

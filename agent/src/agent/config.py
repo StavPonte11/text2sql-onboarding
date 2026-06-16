@@ -1,5 +1,6 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Literal
 
 
 class AgentSettings(BaseSettings):
@@ -31,6 +32,30 @@ class AgentSettings(BaseSettings):
         "text2sql/finalizer_sql_explanation"
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
+
+    # ── G2-01: Table Scoping ──────────────────────────────────────────────────
+    TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
+
+    # ── G2-03: Advanced Schema Explorer phases ────────────────────────────────
+    ENABLE_SEMANTIC_TYPING: bool = False
+    ENABLE_JOIN_GRAPH: bool = False
+    ENABLE_SCHEMA_SUMMARIZATION: bool = False
+    ENABLE_AMBIGUITY_DETECT: bool = True
+
+    # ── G2-04: Satisfaction Check ─────────────────────────────────────────────
+    SATISFACTION_CHECK_ENABLED: bool = True
+    SATISFACTION_CHECK_EXECUTION: bool = True
+    SATISFACTION_CHECK_PLAUSIBILITY: bool = True
+    SATISFACTION_CHECK_COLUMNS: bool = True
+    SATISFACTION_CHECK_SEMANTIC: bool = False  # LLM-heavy, off by default
+    SATISFACTION_MIN_ROWS: int = 1
+    SATISFACTION_MAX_ROWS: int = 50_000
+    SATISFACTION_SEMANTIC_THRESHOLD: float = 0.75
+    SATISFACTION_MAX_FAILURES: int = 2  # escalate to HITL after this many check failures
+
+    # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────
+    SCHEMA_CACHE_TTL: int = 600    # seconds — DDL content
+    PROFILE_CACHE_TTL: int = 1800  # seconds — table profile statistics
 
 
 settings = AgentSettings()

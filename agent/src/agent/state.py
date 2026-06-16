@@ -26,3 +26,11 @@ class AgentState(TypedDict):
     inline_result_rows: list[dict[str, Any]] | None
     error_history: list[str] | None
     schema_explorer_retry_count: int | None
+    # G2-01: table scoping
+    scoping_mode: str | None  # 'strict' | 'hybrid'
+    # G2-02: HITL escalation
+    escalated: bool | None
+    escalation_reason: str | None
+    # G2-04: satisfaction check
+    satisfaction_failures: list[str] | None
+    satisfaction_fail_count: int | None
