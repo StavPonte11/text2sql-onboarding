@@ -13,7 +13,7 @@ COPY agent /app/agent
 WORKDIR /app/agent
 
 # Sync dependencies via HTTPS
-RUN uv sync
+RUN uv sync --no-dev
 
 # Add virtualenv bin to PATH to run uvicorn
 ENV PATH="/app/agent/.venv/bin:$PATH"

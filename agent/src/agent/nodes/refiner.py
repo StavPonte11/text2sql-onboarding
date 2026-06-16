@@ -92,18 +92,18 @@ async def refiner_node(state: AgentState):
         esca_write_failed = False
         inline_result_rows = result.rows
 
-        async with get_esca_client() as client:
-            try:
+        try:
+            async with get_esca_client() as client:
                 res = await client.save_data(payload)
                 raw_ref = res.get("esca_id")
-            except Exception as e:
-                esca_write_failed = True
-                if langfuse_context.get_current_trace_id():
-                    langfuse_context.update_current_observation(
-                        level="WARNING", status_message=f"ESCA write failed: {e}"
-                    )
-                else:
-                    logging.warning(f"ESCA write failed: {e}")
+        except Exception as e:
+            esca_write_failed = True
+            if langfuse_context.get_current_trace_id():
+                langfuse_context.update_current_observation(
+                    level="WARNING", status_message=f"ESCA write failed: {e}"
+                )
+            else:
+                logging.warning(f"ESCA write failed: {e}")
 
         return {
             "trino_error": None,

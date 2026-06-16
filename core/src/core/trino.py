@@ -48,7 +48,7 @@ def get_trino_connection():
     )
 
 
-def execute_query_sync(sql: str, params: tuple | dict | list | None = None, table_id: str = "") -> TrinoExecutionResult:
+def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list | None = None) -> TrinoExecutionResult:
     """
     Execute a SQL query against the real Trino cluster.
     """

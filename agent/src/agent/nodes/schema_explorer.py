@@ -1,5 +1,8 @@
 from langgraph.types import interrupt
 import json
+import re
+
+IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
@@ -399,10 +402,13 @@ async def schema_explorer_node(state: AgentState):
                     parts = t_name.split(".")
                     if len(parts) == 3:
                         cat, sch, tbl = parts
-                        sql = f"SELECT 1 FROM {cat}.information_schema.tables WHERE table_schema = ? AND table_name = ?"
+                        if not IDENT_RE.fullmatch(cat):
+                            hallucinated.append(t_name)
+                            continue
+                        sql = f'SELECT 1 FROM "{cat}".information_schema.tables WHERE table_schema = ? AND table_name = ?'
                         try:
                             res = await asyncio.to_thread(
-                                execute_query_sync, sql, [sch, tbl]
+                                execute_query_sync, sql, "", [sch, tbl]
                             )
                             if res.success and len(res.rows) > 0:
                                 await redis_client.setex(cache_key, 3600, "1")

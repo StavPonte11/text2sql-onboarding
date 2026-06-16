@@ -9,10 +9,9 @@ def clean_sql(query: str) -> str:
     if not query:
         return ""
 
-    # Remove markdown code fences if present
-    cleaned = re.sub(r"^```sql\s*", "", query, flags=re.IGNORECASE)
-    cleaned = re.sub(r"^```\s*", "", cleaned)
-    cleaned = re.sub(r"```$", "", cleaned.strip())
+    cleaned = query.strip()
+    cleaned = re.sub(r"^```(?:sql)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
 
     # Strip trailing semicolon if present
     cleaned = cleaned.strip()
