@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
-
+    EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
     APP_ENV: str = "development"

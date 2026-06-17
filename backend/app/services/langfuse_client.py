@@ -402,6 +402,7 @@ class LangfuseDatasetService:
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
+                    id=q["question_id"],
                     input={
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],
