@@ -7,7 +7,9 @@ const api = axios.create({
 
 export interface QueryApproval {
   approved: boolean;
+  rejection_category?: string;
   feedback?: string;
+  suggested_fix?: string;
 }
 
 export interface ChatRequest {
@@ -34,4 +36,8 @@ export interface ChatResponse {
 export const agentApi = {
   chat: (payload: ChatRequest): Promise<ChatResponse> =>
     api.post<ChatResponse>('/chat', payload).then((r) => r.data),
+  suggestFixes: async (threadId: string, category: string): Promise<string[]> => {
+    const response = await api.post<string[]>('/suggest_fixes', { thread_id: threadId, category });
+    return response.data;
+  },
 };

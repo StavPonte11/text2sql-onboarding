@@ -40,3 +40,8 @@ agent/scratch/*
 fix_agent_langfuse.py
 fix_langfuse.py
 python-core-utils/
+
+# Playwright
+playwright-report/
+test-results/
+junit.xml

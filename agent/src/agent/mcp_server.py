@@ -139,4 +139,41 @@ async def chat_with_agent(
 
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="stdio")
+
+@mcp.tool()
+async def suggest_fixes(thread_id: str, category: str) -> str:
+    """Generate quick fix suggestions during an interruption."""
+    from agent.llm import get_llm
+    from pydantic import BaseModel, Field
+    
+    state_snapshot = await agent_graph.aget_state({"configurable": {"thread_id": thread_id}})
+    if not state_snapshot.values:
+        return "[]"
+    
+    sql_query = state_snapshot.values.get("sql_query", "")
+    schema_plan = state_snapshot.values.get("schema_plan", "")
+    user_query = state_snapshot.values.get("user_query", "")
+    runtime_flags = state_snapshot.values.get("runtime_flags", {})
+    
+    llm = get_llm(node="routing", runtime_flags=runtime_flags)
+    
+    class Fixes(BaseModel):
+        suggestions: list[str] = Field(description="2-3 short, actionable suggested fixes (under 60 chars each)")
+        
+    prompt = f"""
+    The user rejected the agent's Text2SQL output with category '{category}'.
+    User Query: {user_query}
+    Current SQL: {sql_query}
+    Current Plan: {schema_plan}
+    
+    Provide 2-3 short, distinct button labels for the user to quickly apply a fix.
+    For example: "GROUP BY date instead of month", "Include cancelled orders", "Filter by region".
+    """
+    
+    structured_llm = llm.with_structured_output(Fixes, method="json_schema")
+    try:
+        res = structured_llm.invoke(prompt)
+        return json.dumps(res.suggestions)
+    except Exception as e:
+        return json.dumps([])

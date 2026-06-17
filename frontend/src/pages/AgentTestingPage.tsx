@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Card, Divider, Input, Select, Space, Spin, Switch, Tag } from 'antd';
+import { Alert, Button, Card, Divider, Input, Modal, Select, Space, Spin, Switch, Tag } from 'antd';
 import { Bot, CheckCircle, Play, Send, ShieldAlert, XCircle } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 
 import { agentApi } from '../api/agent';
+import { AgentGraph } from '../components/AgentGraph';
+import { TraceTimeline } from '../components/TraceTimeline';
 
 import type { ChatRequest, ChatResponse } from '../api/agent';
 
@@ -16,6 +18,10 @@ export function AgentTestingPage() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [feedback, setFeedback] = useState('');
+  const [rejectionCategory, setRejectionCategory] = useState<string | undefined>(undefined);
+  const [suggestedFixes, setSuggestedFixes] = useState<string[]>([]);
+  const [loadingFixes, setLoadingFixes] = useState(false);
+  const [traceModalVisible, setTraceModalVisible] = useState(false);
 
   const chatMutation = useMutation({
     mutationFn: (req: ChatRequest) => agentApi.chat(req),
@@ -49,7 +55,8 @@ export function AgentTestingPage() {
     if (!threadId) return;
     chatMutation.mutate({
       thread_id: threadId,
-      resume_value: { approved: false, feedback },
+      resume_value: { approved: false, feedback, rejection_category: rejectionCategory },
+      hitl_enabled: hitlEnabled,
     });
   };
 
@@ -147,6 +154,12 @@ export function AgentTestingPage() {
         </div>
       )}
 
+      {(chatMutation.isPending || chatResponse || threadId) && (
+        <div style={{ marginBottom: 20 }}>
+          <AgentGraph threadId={threadId} />
+        </div>
+      )}
+
       {chatResponse && !chatMutation.isPending && (
         <div className="agent-result">
           {chatResponse.status === 'interrupted' && (
@@ -219,22 +232,68 @@ export function AgentTestingPage() {
               <Divider style={{ borderColor: 'rgba(250, 173, 20, 0.2)' }} />
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 13 }}>Rejection Category</div>
+                  <Select
+                    style={{ width: '100%' }}
+                    placeholder="Select rejection reason..."
+                    allowClear
+                    value={rejectionCategory}
+                    onChange={(val) => {
+                      setRejectionCategory(val);
+                      if (val && threadId) {
+                        setLoadingFixes(true);
+                        agentApi.suggestFixes(threadId, val)
+                          .then(setSuggestedFixes)
+                          .finally(() => setLoadingFixes(false));
+                      } else {
+                        setSuggestedFixes([]);
+                      }
+                    }}
+                    options={[
+                      { label: 'Wrong Tables', value: 'Wrong Tables' },
+                      { label: 'Wrong Logic', value: 'Wrong Logic' },
+                      { label: 'Other', value: 'Other' },
+                    ]}
+                  />
+                </div>
+
+                {loadingFixes && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Spin size="small" /> Generating suggestions...</div>}
+                
+                {!loadingFixes && suggestedFixes.length > 0 && (
+                  <div>
+                    <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 13 }}>Suggested Fixes</div>
+                    <Space wrap>
+                      {suggestedFixes.map(fix => (
+                        <Button 
+                          key={fix} 
+                          size="small" 
+                          onClick={() => setFeedback(fix)}
+                        >
+                          {fix}
+                        </Button>
+                      ))}
+                    </Space>
+                  </div>
+                )}
+
                 <Input.TextArea
                   rows={3}
                   placeholder="Provide feedback if rejecting, or optional notes for approval..."
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
                 />
+                
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                   <Button
                     danger
                     icon={<XCircle size={16} />}
                     onClick={handleReject}
-                    disabled={!feedback || isResuming}
+                    disabled={!feedback && !rejectionCategory || isResuming}
                     loading={isResuming}
-                    title={!feedback ? 'Feedback is required to reject' : undefined}
+                    title={(!feedback && !rejectionCategory) ? 'Feedback or Category is required to reject' : undefined}
                   >
-                    Reject with Feedback
+                    Reject
                   </Button>
                   <Button
                     type="primary"
@@ -317,15 +376,30 @@ export function AgentTestingPage() {
               )}
 
               <Divider />
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
                 <Button onClick={handleReset} icon={<Send size={14} />}>
                   Start New Request
                 </Button>
+                {threadId && (
+                  <Button onClick={() => setTraceModalVisible(true)}>
+                    View Full Trace
+                  </Button>
+                )}
               </div>
             </Card>
           )}
         </div>
       )}
+
+      <Modal
+        title="Execution Trace"
+        open={traceModalVisible}
+        onCancel={() => setTraceModalVisible(false)}
+        footer={null}
+        width={800}
+      >
+        {threadId && <TraceTimeline traceId={threadId} />}
+      </Modal>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import json
 import asyncio
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
 from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
@@ -58,7 +60,7 @@ async def get_sql_explanation(sql_query: str | None) -> str:
     return response.content
 
 
-async def finalizer_node(state: AgentState):
+async def finalizer_node(state: AgentState, config: RunnableConfig | None = None):
     """Summarize data."""
     raw_data_ref = state.get("raw_data_ref")
     esca_write_failed = state.get("esca_write_failed", False)
@@ -108,4 +110,8 @@ async def finalizer_node(state: AgentState):
 
     summary_response, sql_explanation = await asyncio.gather(summary_task, sql_task)
 
-    return {"summary": summary_response.content, "sql_explanation": sql_explanation}
+    return {
+        "summary": summary_response.content,
+        "sql_explanation": sql_explanation,
+        "execution_path": (state.get("execution_path", []) or []) + ["finalizer"],
+    }

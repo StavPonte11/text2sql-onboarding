@@ -1,10 +1,12 @@
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event_sync
 from agent.state import AgentState
 from agent.llm import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
-def query_builder_node(state: AgentState):
+def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
     """Build SQL from plan and pause for user approval."""
     runtime_flags = state.get("runtime_flags") or {}
     feedback = state.get("feedback")
@@ -22,10 +24,12 @@ def query_builder_node(state: AgentState):
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
     _llm = get_llm("query_builder", runtime_flags=runtime_flags)
     chain = prompt | _llm
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "query_builder")
     response = chain.invoke(
         {
             "schema_plan": state.get("schema_plan"),
-            "user_query": state["user_query"],
+            "user_query": state.get("user_query"),
             "feedback_str": feedback_str,
         }
     )

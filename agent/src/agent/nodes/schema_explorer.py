@@ -312,7 +312,12 @@ async def get_table_profile(table_id: str) -> str:
 
 async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
     """RAG Schema Explorer sub-agent node — with G2-01 scoping, G2-03 enrichment, G2-05 caching."""
-    user_query = state["user_query"]
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    import asyncio
+    from agent.utils.redis_publisher import publish_node_event
+    asyncio.create_task(publish_node_event(thread_id, "schema_explorer"))
+
+    user_query = state.get("user_query")
     enrichments = state.get("query_enrichments", [])
     allowed_tables = state.get("allowed_tables")
     allowed_statuses = state.get("allowed_statuses")
@@ -619,5 +624,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         result_state["feedback"] = None
         result_state["last_error"] = None
         result_state["schema_explorer_retry_count"] = 0
+
+    result_state["execution_path"] = (state.get("execution_path") or []) + ["schema_explorer"]
 
     return result_state

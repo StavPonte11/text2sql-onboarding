@@ -17,8 +17,10 @@ from agent.nodes.refiner import MAX_REFINER_ITERATIONS
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from langchain_core.runnables.config import RunnableConfig
 from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
+from agent.utils.redis_publisher import publish_node_event_sync
 from agent.nodes.extractor import extractor_node
 from agent.nodes.init_flags import init_flags_node
 from agent.nodes.init_skills import init_skills_node
@@ -48,7 +50,7 @@ class InvalidConfigurationException(ValueError):
 # ── G2-01: Config validator node ──────────────────────────────────────────────
 
 
-def validate_config_node(state: AgentState) -> dict:
+def validate_config_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     First node after START.  Resolves scoping_mode from state (or falls back
     to the env default) and enforces strict-mode preconditions.
@@ -57,6 +59,9 @@ def validate_config_node(state: AgentState) -> dict:
         InvalidConfigurationException: if scoping_mode='strict' and
             allowed_tables is null or empty.
     """
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "validate_config")
+
     mode: str = state.get("scoping_mode") or settings.TABLE_SCOPING_MODE
 
     if mode == "strict":
@@ -67,13 +72,13 @@ def validate_config_node(state: AgentState) -> dict:
                 "Execution aborted to prevent unrestricted table access."
             )
 
-    return {"scoping_mode": mode}
+    return {"scoping_mode": mode, "execution_path": ["validate_config"]}
 
 
 # ── G2-02: HITL escalation node ───────────────────────────────────────────────
 
 
-def hitl_escalation_node(state: AgentState) -> dict:
+def hitl_escalation_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     Execution pauses HERE via LangGraph interrupt_before before this node runs.
     The human then calls graph.update_state() to inject corrected state and
@@ -84,6 +89,9 @@ def hitl_escalation_node(state: AgentState) -> dict:
     This node body only performs observability work — it does NOT call interrupt()
     itself (interrupt_before handles the pause at compile time).
     """
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "hitl_escalation")
+
     reason = state.get("escalation_reason", "Maximum retries exhausted.")
 
     try:
@@ -97,7 +105,7 @@ def hitl_escalation_node(state: AgentState) -> dict:
     except Exception:
         pass
 
-    return {"escalated": True}
+    return {"escalated": True, "execution_path": ["hitl_escalation"]}
 
 
 # ── Rejection router ──────────────────────────────────────────────────────────
@@ -109,9 +117,19 @@ class RejectionRoute(BaseModel):
     )
 
 
-def rejection_router_node(state: AgentState):
+def rejection_router_node(state: AgentState, config: RunnableConfig | None = None):
     """Classify user rejection feedback and select the appropriate phase to return to."""
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "rejection_router")
+
     feedback = state.get("feedback")
+    category = state.get("rejection_category")
+
+    if category == "Wrong Tables":
+        return {"feedback_route": "schema_explorer"}
+    elif category == "Wrong Logic":
+        return {"feedback_route": "query_builder"}
+
     if not feedback:
         return {"feedback_route": "query_builder"}
 
@@ -135,6 +153,7 @@ def rejection_router_node(state: AgentState):
         "schema_plan": "",
         "raw_data_ref": None,
         "trino_error": None,
+        "execution_path": ["rejection_router"]
     }
 
 

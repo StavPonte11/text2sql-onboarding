@@ -5,6 +5,8 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event_sync
 from agent.state import AgentState
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
@@ -98,11 +100,14 @@ class HTTPExtractor(BaseExtractor):
             return []
 
 
-def extractor_node(state: AgentState):
+def extractor_node(state: AgentState, config: RunnableConfig | None = None):
     """Enrich the user query with additional context to help downstream phases."""
     user_query = state["user_query"]
     active_extractors = state.get("active_extractors") or []
     runtime_flags = state.get("runtime_flags") or {}
+
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "extractor")
 
     import concurrent.futures
 

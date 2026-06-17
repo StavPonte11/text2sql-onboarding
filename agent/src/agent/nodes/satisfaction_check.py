@@ -20,6 +20,8 @@ import logging
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
 from agent.utils.schema_enrichment import ColumnCoverageOutput, SemanticAlignmentOutput
 
@@ -31,19 +33,23 @@ def _f(runtime_flags: dict, name: str, default):
     return runtime_flags.get(name, default)
 
 
-async def satisfaction_check_node(state: AgentState) -> dict:
+async def satisfaction_check_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     Multi-stage satisfaction judge.
 
     Returns a partial state dict.  The conditional edge `route_satisfaction`
     in graph.py inspects `satisfaction_failures` to decide the next node.
     """
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    import asyncio
+    asyncio.create_task(publish_node_event(thread_id, "satisfaction_check"))
+
     runtime_flags = state.get("runtime_flags") or {}
 
     # ── Global gate ───────────────────────────────────────────────────────────
     check_enabled = _f(runtime_flags, "SATISFACTION_CHECK_ENABLED", settings.SATISFACTION_CHECK_ENABLED)
     if not check_enabled:
-        return {}  # route_satisfaction will forward directly to finalizer
+        return {"satisfaction_failures": [], "execution_path": ["satisfaction_check"]}
 
     # ── LLM (used for Check C and D) ──────────────────────────────────────────
     llm = get_llm("satisfaction_check", runtime_flags=runtime_flags)

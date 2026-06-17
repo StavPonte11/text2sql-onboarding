@@ -2,6 +2,8 @@ import json
 
 import asyncio
 import logging
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
 from core import execute_query_sync
 from agent.config import settings
@@ -27,12 +29,13 @@ def build_refiner_schema_context(state: AgentState) -> str:
     return json.dumps(capped_profiles, indent=2)
 
 
-async def refiner_node(state: AgentState):
+async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
     """Refine SQL against Trino."""
     sql = state.get("sql_query")
     count = state.get("refinement_count", 0)
     error_history = state.get("error_history") or []
     runtime_flags = state.get("runtime_flags") or {}
+    execution_path = state.get("execution_path") or []
 
     # Resolve per-invocation limit (DS-tunable via flags)
     max_iterations = int(runtime_flags.get("MAX_REFINER_ITERATIONS", MAX_REFINER_ITERATIONS))
@@ -49,6 +52,9 @@ async def refiner_node(state: AgentState):
         trino_error = str(e)
         error_history.append(trino_error)
         result = None
+
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    asyncio.create_task(publish_node_event(thread_id, "refiner"))
 
     if not success:
         # If we reached the refinement limit, just stop and don't prompt LLM
@@ -91,6 +97,7 @@ async def refiner_node(state: AgentState):
             "last_error": trino_error,
             "refinement_count": count + 1,
             "error_history": error_history,
+            "execution_path": execution_path + ["refiner"],
         }
     else:
         # Success, save payload via Esca

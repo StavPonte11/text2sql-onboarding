@@ -13,6 +13,8 @@ Responsibilities:
 import logging
 
 from agent.langfuse_client import langfuse_client
+from langchain_core.runnables.config import RunnableConfig
+from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
 from agent.utils.flag_bridge import FlagBridge
 
@@ -21,7 +23,7 @@ logger = logging.getLogger(__name__)
 _flag_bridge = FlagBridge()
 
 
-async def init_flags_node(state: AgentState) -> dict:
+async def init_flags_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     Resolve all runtime configuration flags for this invocation.
 
@@ -30,8 +32,14 @@ async def init_flags_node(state: AgentState) -> dict:
     This guarantees that:
       - DS team changes in the Studio UI take effect within the cache TTL (30s).
       - Execution mode overrides are applied consistently to all nodes.
-      - Every Langfuse trace carries the exact config used for that query.
+       Execution mode overrides take precedence over dynamic flags, which override
+    the agent's default `settings`.
     """
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    import asyncio
+    asyncio.create_task(publish_node_event(thread_id, "init_flags"))
+
+    mode_name = state.get("execution_mode")
     execution_mode: str | None = state.get("execution_mode")
 
     try:
