@@ -42,7 +42,7 @@ class SchemaExplorerOutput(BaseModel):
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
     # TODO: support secret
-    url = f"{settings.EMBEDDER_URL}/api/embeddings"
+    url = f"{settings.EMBEDDER_URL}"
     data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
