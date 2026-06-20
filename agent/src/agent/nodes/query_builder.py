@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
-def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
+async def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
     """Build SQL from plan and pause for user approval."""
     runtime_flags = state.get("runtime_flags") or {}
     feedback = state.get("feedback")
@@ -26,14 +26,35 @@ def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
     chain = prompt | _llm
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     publish_node_event_sync(thread_id, "query_builder")
-    response = chain.invoke(
+    response = await chain.ainvoke(
         {
             "schema_plan": state.get("schema_plan"),
             "user_query": state.get("user_query"),
             "feedback_str": feedback_str,
         }
     )
-    sql = response.content.replace("```sql", "").replace("```", "").strip()
+    import re
+    content = response.content
+    
+    # Check for built-in reasoning content in model metadata (additional_kwargs)
+    explanation = response.additional_kwargs.get("reasoning_content") or response.additional_kwargs.get("reasonig_content") or ""
+    
+    # Extract SQL from the response content
+    sql_match = re.search(r"```sql\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE)
+    if sql_match:
+        sql = sql_match.group(1).strip()
+        if not explanation:
+            explanation = content.replace(sql_match.group(0), "").strip()
+    else:
+        # Check for general code block
+        block_match = re.search(r"```\s*(.*?)\s*```", content, re.DOTALL)
+        if block_match:
+            sql = block_match.group(1).strip()
+            if not explanation:
+                explanation = content.replace(block_match.group(0), "").strip()
+        else:
+            sql = content.strip()
+
     if sql.endswith(";"):
         sql = sql[:-1].strip()
 
@@ -43,6 +64,7 @@ def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
             "refinement_count": 0,
             "trino_error": None,
             "feedback": None,
+            "execution_path": ["query_builder"],
         }
 
     approval_result = interrupt(
@@ -50,6 +72,7 @@ def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
             "type": "query_approval",
             "schema_plan": state.get("schema_plan"),
             "sql_query": sql,
+            "sql_explanation": explanation,
         }
     )
 
@@ -59,9 +82,11 @@ def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
             "refinement_count": 0,
             "trino_error": None,
             "feedback": None,
+            "execution_path": ["query_builder"],
         }
     else:
         return {
             "feedback": approval_result.get("feedback", "Query rejected by user"),
             "sql_query": None,
+            "execution_path": ["query_builder"],
         }

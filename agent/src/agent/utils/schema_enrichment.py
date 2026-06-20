@@ -88,6 +88,15 @@ class SemanticAlignmentOutput(BaseModel):
     reason: str = Field(default="")
 
 
+class PlausibleZeroRowsOutput(BaseModel):
+    """Used by G2-04 satisfaction check to verify if a 0-row result is plausible."""
+
+    is_plausible: bool = Field(
+        description="True if returning 0 rows is normal/plausible for this query if no matching data exists in the database. False if the query contains structural logic bugs (e.g. invalid join keys, mismatched filters)."
+    )
+    reason: str = Field(default="", description="Detailed rationale of why the query is logically correct or has a bug.")
+
+
 # ─── Phase A: Semantic Typing ─────────────────────────────────────────────────
 
 

@@ -23,7 +23,11 @@ from agent.llm import get_llm
 from langchain_core.runnables.config import RunnableConfig
 from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
-from agent.utils.schema_enrichment import ColumnCoverageOutput, SemanticAlignmentOutput
+from agent.utils.schema_enrichment import (
+    ColumnCoverageOutput,
+    SemanticAlignmentOutput,
+    PlausibleZeroRowsOutput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +45,7 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
     in graph.py inspects `satisfaction_failures` to decide the next node.
     """
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    import asyncio
-    asyncio.create_task(publish_node_event(thread_id, "satisfaction_check"))
+    await publish_node_event(thread_id, "satisfaction_check")
 
     runtime_flags = state.get("runtime_flags") or {}
 
@@ -72,7 +75,32 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
         n = len(rows)
         min_rows = _f(runtime_flags, "SATISFACTION_MIN_ROWS", settings.SATISFACTION_MIN_ROWS)
         max_rows = _f(runtime_flags, "SATISFACTION_MAX_ROWS", settings.SATISFACTION_MAX_ROWS)
-        if n < min_rows:
+        if n == 0:
+            # If the query returned 0 rows successfully, verify if it is plausible or a logic error
+            prompt = (
+                f"User Question: {state.get('user_query', '')}\n"
+                f"Generated SQL: {state.get('sql_query', '')}\n\n"
+                "The SQL query executed successfully on the database but returned 0 rows.\n"
+                "Analyze the generated SQL structure against the User Question:\n"
+                "1. Check for logical flaws: Are there incorrect JOIN keys, contradictory filters (e.g. WHERE status='completed' AND status='pending'), or mismatched table aliases?\n"
+                "2. Check for empty set plausibility: Is it plausible to return 0 rows if the database simply doesn't contain matching rows (e.g., filtering for a specific country or date range that might not have entries)?\n\n"
+                "Provide your decision on whether 0 rows is a plausible result for a correct query or if the query contains a logic error."
+            )
+            try:
+                structured = llm.with_structured_output(PlausibleZeroRowsOutput, method="json_schema")
+                result: PlausibleZeroRowsOutput = await structured.ainvoke(prompt)
+                if not result.is_plausible:
+                    failures.append(
+                        f"[CHECK_B] Zero-row result is implausible: {result.reason}"
+                    )
+            except Exception as exc:
+                logger.warning("satisfaction_check Check B zero-row evaluation failed: %s", exc)
+                # Fallback to direct row comparison if LLM judge fails
+                if n < min_rows:
+                    failures.append(
+                        f"[CHECK_B] Result returned {n} rows — below minimum {min_rows}."
+                    )
+        elif n < min_rows:
             failures.append(
                 f"[CHECK_B] Result returned {n} rows — below minimum {min_rows}."
             )
@@ -145,6 +173,7 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
     partial: dict = {
         "satisfaction_failures": failures if failures else None,
         "satisfaction_fail_count": fail_count,
+        "execution_path": ["satisfaction_check"],
     }
 
     if failures:

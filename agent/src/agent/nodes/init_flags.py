@@ -36,8 +36,7 @@ async def init_flags_node(state: AgentState, config: RunnableConfig | None = Non
     the agent's default `settings`.
     """
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    import asyncio
-    asyncio.create_task(publish_node_event(thread_id, "init_flags"))
+    await publish_node_event(thread_id, "init_flags")
 
     mode_name = state.get("execution_mode")
     execution_mode: str | None = state.get("execution_mode")
@@ -71,4 +70,4 @@ async def init_flags_node(state: AgentState, config: RunnableConfig | None = Non
         execution_mode or "default",
     )
 
-    return {"runtime_flags": runtime_flags}
+    return {"runtime_flags": runtime_flags, "execution_path": ["init_flags"]}

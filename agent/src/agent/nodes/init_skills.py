@@ -16,8 +16,7 @@ async def init_skills_node(state: AgentState, config: RunnableConfig | None = No
     keeping reasoning nodes pure and state reproducible.
     """
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    import asyncio
-    asyncio.create_task(publish_node_event(thread_id, "init_skills"))
+    await publish_node_event(thread_id, "init_skills")
 
     active_skills = state.get("active_skills")
     runtime_flags = state.get("runtime_flags") or {}
@@ -40,10 +39,12 @@ async def init_skills_node(state: AgentState, config: RunnableConfig | None = No
         
         if loaded_skills:
             try:
-                from agent.langfuse_client import langfuse_client
-                trace_id = langfuse_client.get_current_trace_id()
+                from core.langfuse import get_langfuse_handler
+                langfuse_handler = get_langfuse_handler()
+                trace_id = getattr(langfuse_handler, "last_trace_id", None)
                 if trace_id:
                     skill_names = [s.get("displayName") or s.get("name", "Unknown") for s in loaded_skills]
+                    from agent.langfuse_client import langfuse_client
                     langfuse_client.trace(
                         id=trace_id,
                         metadata={"skills_loaded": skill_names}

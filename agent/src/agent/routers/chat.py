@@ -151,8 +151,8 @@ async def chat_endpoint(
             thread_id=thread_id,
             status="interrupted",
             interrupt_details=interrupt_val,
-            schema_plan=final_state.values.get("schema_plan"),
-            sql_query=final_state.values.get("sql_query"),
+            schema_plan=final_state.values.get("schema_plan") or (interrupt_val.get("schema_plan") if isinstance(interrupt_val, dict) else None),
+            sql_query=final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None),
         )
 
     return ChatResponse(

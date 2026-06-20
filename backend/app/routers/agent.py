@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import redis.asyncio as redis
 import asyncio
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.config import settings
 
@@ -63,11 +63,24 @@ class ChatResponse(BaseModel):
     sql_query: str | None = None
     sql_explanation: str | None = None
     schema_plan: str | None = None
+    trace_id: str | None = None
+    execution_path: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def _get_mcp_client():
+    url = f"{settings.AGENT_URL}/sse"
+    async with sse_client(url, timeout=300.0, sse_read_timeout=300.0) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            yield session
 
 
 async def _call_agent_mcp(tool_arguments: dict) -> dict:
@@ -79,13 +92,15 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
     logger.debug("Connecting to agent MCP: %s  args=%s", url, tool_arguments)
 
     try:
-        async with sse_client(url) as streams:
+        async with sse_client(url, timeout=300.0, sse_read_timeout=300.0) as streams:
             async with ClientSession(*streams) as session:
                 await session.initialize()
 
                 # Call the tool using the MCP client session
                 result = await session.call_tool(
-                    "chat_with_agent", arguments=tool_arguments
+                    "chat_with_agent",
+                    arguments=tool_arguments,
+                    read_timeout_seconds=timedelta(seconds=300.0),
                 )
 
                 if not result.content:
@@ -164,22 +179,55 @@ async def chat(request: ChatRequest) -> ChatResponse:
 async def stream_agent_execution(thread_id: str):
     """Subscribe to Redis PubSub for agent graph execution events and yield them as SSE."""
     async def event_generator():
+        r = None
+        pubsub = None
         try:
-            r = redis.from_url(settings.REDIS_URL)
+            r = redis.from_url(
+                settings.REDIS_URL,
+                health_check_interval=30,
+                retry_on_timeout=True
+            )
             pubsub = r.pubsub()
             await pubsub.subscribe(f"agent_stream:{thread_id}")
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    data = message["data"].decode("utf-8")
-                    yield f"data: {data}\n\n"
+            while True:
+                try:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        data = message["data"].decode("utf-8")
+                        yield f"data: {data}\n\n"
+                    else:
+                        yield ": keep-alive\n\n"
+                except (redis.exceptions.TimeoutError, TimeoutError) as e:
+                    logger.debug("Redis read timeout, retrying... %s", e)
+                    yield ": keep-alive\n\n"
+                    continue
+                except redis.exceptions.ConnectionError as e:
+                    logger.warning("Redis connection error, attempting to reconnect... %s", e)
+                    await asyncio.sleep(1)
+                    try:
+                        if pubsub:
+                            await pubsub.close()
+                        pubsub = r.pubsub()
+                        await pubsub.subscribe(f"agent_stream:{thread_id}")
+                    except Exception as reconnect_err:
+                        logger.error("Failed to reconnect to Redis: %s", reconnect_err)
+                        await asyncio.sleep(2)
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error("Unhandled error in event generator: %s", e, exc_info=True)
         finally:
-            if 'pubsub' in locals():
-                await pubsub.unsubscribe()
-                await pubsub.close()
-            if 'r' in locals():
-                await r.aclose()
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe()
+                    await pubsub.close()
+                except Exception:
+                    pass
+            if r:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -237,6 +285,7 @@ async def suggest_fixes(req: SuggestFixesRequest):
             result = await session.call_tool(
                 "suggest_fixes",
                 arguments={"thread_id": req.thread_id, "category": req.category},
+                read_timeout_seconds=timedelta(seconds=300.0),
             )
             content = result.content[0].text
             return json.loads(content)

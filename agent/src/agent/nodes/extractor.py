@@ -111,7 +111,10 @@ def extractor_node(state: AgentState, config: RunnableConfig | None = None):
 
     import concurrent.futures
 
-    extractors: List[BaseExtractor] = [TimeExtractor(), LLMExtractor(runtime_flags=runtime_flags)]
+    extractors: List[BaseExtractor] = [
+        TimeExtractor(),
+        LLMExtractor(runtime_flags=runtime_flags),
+    ]
 
     for ext_info in active_extractors:
         extractors.append(HTTPExtractor(ext_info["url"], ext_info["name"]))
@@ -128,4 +131,4 @@ def extractor_node(state: AgentState, config: RunnableConfig | None = None):
                 ext = futures[future]
                 print(f"Extractor {type(ext).__name__} failed: {e}")
 
-    return {"query_enrichments": all_enrichments}
+    return {"query_enrichments": all_enrichments, "execution_path": ["extractor"]}

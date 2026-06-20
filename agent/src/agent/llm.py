@@ -65,4 +65,5 @@ def get_llm(
         base_url=settings.LLM_BASE_URL,
         api_key=settings.LLM_API_KEY,
         temperature=temperature,
+        timeout=300.0,
     )

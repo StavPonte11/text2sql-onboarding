@@ -103,16 +103,24 @@ function AppLayout() {
 }
 
 export default function App() {
+  const { i18n } = useTranslation();
+
   return (
     <ConfigProvider
       theme={{
         algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: '#0ea5e9',
-          fontFamily: "'Plus Jakarta Sans', sans-serif",
-          borderRadius: 6,
+          colorPrimary: '#22C55E',
+          fontFamily: '"Fira Sans", system-ui, "Segoe UI", Roboto, sans-serif',
+          colorBgBase: '#020617',
+          colorBgContainer: '#0F172A',
+          colorBgElevated: '#1E293B',
+          colorBorder: '#1E293B',
+          colorTextBase: '#F8FAFC',
+          colorTextSecondary: '#94A3B8',
         },
       }}
+      direction={i18n.language === 'he' ? 'rtl' : 'ltr'}
     >
       <AntApp>
         <QueryClientProvider client={queryClient}>

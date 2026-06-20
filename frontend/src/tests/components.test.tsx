@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { TableList } from '../components/tables/TableList';
 import { EvaluationsPage } from '../pages/EvaluationsPage';
+import { highlightJson } from '../components/TraceTimeline';
 import { renderWithProviders } from './setup';
 
 // Mock useNavigate from react-router-dom
@@ -109,5 +110,39 @@ describe('EvaluationsPage Integration Tests', () => {
     const usersTable = await screen.findByText('users');
     expect(usersTable).toBeInTheDocument();
     expect(await screen.findByText('⚠ Incomplete')).toBeInTheDocument();
+  });
+});
+
+describe('JSON Syntax Highlight Tests', () => {
+  test('correctly highlights keys, strings, booleans, and nulls in JSON text', () => {
+    const rawJson = JSON.stringify({
+      key_str: "hello",
+      key_num: 42.5,
+      key_bool: true,
+      key_null: null
+    }, null, 2);
+
+    const highlighted = highlightJson(rawJson);
+
+    expect(highlighted).toContain('<span class="json-key">&quot;key_str&quot;</span>:');
+    expect(highlighted).toContain('<span class="json-key">&quot;key_num&quot;</span>:');
+    expect(highlighted).toContain('<span class="json-key">&quot;key_bool&quot;</span>:');
+    expect(highlighted).toContain('<span class="json-key">&quot;key_null&quot;</span>:');
+
+    expect(highlighted).toContain('<span class="json-string">&quot;hello&quot;</span>');
+    expect(highlighted).toContain('<span class="json-number">42.5</span>');
+    expect(highlighted).toContain('<span class="json-boolean">true</span>');
+    expect(highlighted).toContain('<span class="json-null">null</span>');
+  });
+
+  test('escapes HTML entities safely', () => {
+    const rawJson = JSON.stringify({
+      malicious: "<script>alert('xss')</script>"
+    }, null, 2);
+
+    const highlighted = highlightJson(rawJson);
+
+    expect(highlighted).not.toContain('<script>');
+    expect(highlighted).toContain('&lt;script&gt;alert(&#39;xss&#39;)&lt;&#x2F;script&gt;');
   });
 });

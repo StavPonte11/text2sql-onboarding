@@ -62,6 +62,9 @@ async def get_sql_explanation(sql_query: str | None) -> str:
 
 async def finalizer_node(state: AgentState, config: RunnableConfig | None = None):
     """Summarize data."""
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    from agent.utils.redis_publisher import publish_node_event
+    await publish_node_event(thread_id, "finalizer")
     raw_data_ref = state.get("raw_data_ref")
     esca_write_failed = state.get("esca_write_failed", False)
     inline_result_rows = state.get("inline_result_rows")
@@ -113,5 +116,5 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
     return {
         "summary": summary_response.content,
         "sql_explanation": sql_explanation,
-        "execution_path": (state.get("execution_path", []) or []) + ["finalizer"],
+        "execution_path": ["finalizer"],
     }

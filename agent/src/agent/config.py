@@ -2,6 +2,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 
+# Reload trigger comment (timeout added)
+
 
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -10,7 +12,7 @@ class AgentSettings(BaseSettings):
     ESCA_URL: str = "http://localhost:7010"
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
-    LLM_MODEL: str = "gemma4:e4b"
+    LLM_MODEL: str = "llama3.2:latest"
     EMBEDDER_URL: str = "http://localhost:11434"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     HYBRID_SEARCH_MAX_TABLES: int = 10
@@ -47,9 +49,9 @@ class AgentSettings(BaseSettings):
     TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
 
     # ── G2-03: Advanced Schema Explorer phases ────────────────────────────────
-    ENABLE_SEMANTIC_TYPING: bool = False
+    ENABLE_SEMANTIC_TYPING: bool = True   # single batched LLM call — adds id/timestamp/category labels
     ENABLE_JOIN_GRAPH: bool = False
-    ENABLE_SCHEMA_SUMMARIZATION: bool = False
+    ENABLE_SCHEMA_SUMMARIZATION: bool = False  # generated once at profile-time, not at runtime
     ENABLE_AMBIGUITY_DETECT: bool = True
 
     # ── G2-04: Satisfaction Check ─────────────────────────────────────────────

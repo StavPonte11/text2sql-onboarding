@@ -281,7 +281,7 @@ export function FlagsPage() {
   const queryClient = useQueryClient();
   const user = useAdminStore((state) => state.user);
   
-  const [activeTab, setActiveTab] = useState<TabKey>('flags');
+  const [activeTab, setActiveTab] = useState<'flags' | 'modes'>('flags');
   const [search, setSearch] = useState('');
   const [modeModalOpen, setModeModalOpen] = useState(false);
   const [editingMode, setEditingMode] = useState<ExecutionMode | null>(null);

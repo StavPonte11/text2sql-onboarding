@@ -42,3 +42,5 @@ class AgentState(TypedDict):
     # G4: feature flags & execution modes
     execution_mode: str | None          # e.g. "cost_saving", "high_quality", "benchmark"
     runtime_flags: dict[str, Any] | None  # resolved by init_flags_node
+    # Enriched table profiles — populated by schema_explorer for reuse by refiner
+    table_profiles: list[dict[str, Any]] | None

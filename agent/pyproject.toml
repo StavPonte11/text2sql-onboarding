@@ -52,3 +52,6 @@ select = ["TID"]
 [tool.ruff.lint.per-file-ignores]
 "src/agent/llm.py" = ["TID251"]
 "src/agent/utils/esca.py" = ["TID251"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

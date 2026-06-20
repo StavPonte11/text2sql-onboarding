@@ -26,7 +26,6 @@ from agent.utils.esca import get_esca_client
 from agent.utils.schema_enrichment import (
     run_semantic_typing,
     run_join_graph,
-    run_schema_summarization,
     run_ambiguity_detection,
 )
 from core.cache import get_cache_service
@@ -45,6 +44,47 @@ _skill_registry = SkillRegistry()
 
 # G2-02 limits
 MAX_SCHEMA_RETRIES = 3
+
+
+def _build_column_context(cp: "ColumnProfile") -> dict:
+    """Build a rich column context dict from a ColumnProfile ORM row.
+
+    Returns all fields the LLM needs to write accurate SQL:
+    - name, type, semantic_type
+    - null_rate, distinct_count
+    - sample_values (top values for categorical/text, or sample values for continuous)
+    - min, max, mean for numeric/time columns
+    """
+    top_vals = cp.top_values or []
+    sample_values = [v.get("value") for v in top_vals[:20] if v.get("value") is not None]
+    stats = cp.stats_json or {}
+
+    col: dict = {
+        "name": cp.column_name,
+        "type": cp.data_type,
+        "semantic_type": cp.semantic_type or "unknown",
+        "null_rate": round(cp.null_rate or 0.0, 4),
+        "distinct_count": cp.distinct_count or 0,
+    }
+
+    if cp.is_categorical:
+        col["sample_values"] = sample_values
+    else:
+        # For numeric/time columns expose range and sample values
+        if cp.min_value is not None:
+            col["min"] = cp.min_value
+        if cp.max_value is not None:
+            col["max"] = cp.max_value
+        if cp.avg_value is not None:
+            col["mean"] = round(float(cp.avg_value), 4)
+        # Pull any sample_values stored in stats_json (continuous columns)
+        stored_samples = stats.get("sample_values", [])
+        if stored_samples:
+            col["sample_values"] = [str(v) for v in stored_samples[:10]]
+        elif sample_values:
+            col["sample_values"] = sample_values[:10]
+
+    return col
 
 
 # Define standardized Schema Explorer Output Type
@@ -285,20 +325,28 @@ async def get_table_profile(table_id: str) -> str:
                         f"Error: Failed to save profile to Esca for table {table_id}: {e}"
                     )
 
+        # ── Fetch table description from EnrichmentVersion ─────────────────────
+        table_description = ""
+        enrichment = session.exec(
+            select(EnrichmentVersion)
+            .where(EnrichmentVersion.table_id == table_id)
+            .order_by(EnrichmentVersion.version.desc())
+        ).first()
+        if enrichment and enrichment.data:
+            # Prefer human annotation, fall back to AI summary
+            table_description = (
+                enrichment.data.get("table_description", "")
+                or enrichment.data.get("ai_summary", "")
+            )
+
         # Lightweight response to cache and return to LLM
         lightweight = {
             "table_id": table_id,
             "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
+            "description": table_description,
             "row_count": profile.row_count,
             "columns": [
-                {
-                    "name": cp.column_name,
-                    "type": cp.data_type,
-                    "is_categorical": cp.is_categorical,
-                    "top_values": [v.get("value") for v in cp.top_values]
-                    if cp.is_categorical and cp.top_values
-                    else None,
-                }
+                _build_column_context(cp)
                 for cp in columns
             ],
             "esca_reference_id": esca_id,
@@ -313,9 +361,8 @@ async def get_table_profile(table_id: str) -> str:
 async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
     """RAG Schema Explorer sub-agent node — with G2-01 scoping, G2-03 enrichment, G2-05 caching."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    import asyncio
     from agent.utils.redis_publisher import publish_node_event
-    asyncio.create_task(publish_node_event(thread_id, "schema_explorer"))
+    await publish_node_event(thread_id, "schema_explorer")
 
     user_query = state.get("user_query")
     enrichments = state.get("query_enrichments", [])
@@ -456,7 +503,10 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     profiles_json_str = json.dumps(profile_details, indent=2)
     if schema_summarization and profile_details:
         try:
-            summaries = await run_schema_summarization(profile_details, _llm)
+            summaries = [
+                f"[{p.get('table_name', 'unknown')}] {p.get('description', '') or '(no description available)'}"
+                for p in profile_details
+            ]
             profiles_json_str = "\n".join(summaries)
             active_phases.append("SCHEMA_SUMMARIZATION")
         except Exception as exc:
@@ -576,21 +626,32 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                             hallucinated.append(t_name)
                             continue
                         sql = f'SELECT 1 FROM "{cat}".information_schema.tables WHERE table_schema = ? AND table_name = ?'
-                        try:
-                            res = await asyncio.to_thread(
-                                execute_query_sync, sql, "", [sch, tbl]
-                            )
-                            if res.success and len(res.rows) > 0:
-                                await redis_client.setex(cache_key, 3600, "1")
-                            else:
-                                await redis_client.setex(cache_key, 3600, "0")
-                                hallucinated.append(t_name)
-                        except Exception as e:
-                            logger.error(
-                                f"Information schema check failed for {t_name}: {e}"
-                            )
-                            hallucinated.append(t_name)
+                        params = [sch, tbl]
+                    elif len(parts) == 2:
+                        sch, tbl = parts
+                        sql = 'SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?'
+                        params = [sch, tbl]
+                    elif len(parts) == 1:
+                        tbl = parts[0]
+                        sql = 'SELECT 1 FROM information_schema.tables WHERE table_name = ?'
+                        params = [tbl]
                     else:
+                        hallucinated.append(t_name)
+                        continue
+
+                    try:
+                        res = await asyncio.to_thread(
+                            execute_query_sync, sql, "", params
+                        )
+                        if res.success and len(res.rows) > 0:
+                            await redis_client.setex(cache_key, 3600, "1")
+                        else:
+                            await redis_client.setex(cache_key, 3600, "0")
+                            hallucinated.append(t_name)
+                    except Exception as e:
+                        logger.error(
+                            f"Information schema check failed for {t_name}: {e}"
+                        )
                         hallucinated.append(t_name)
                 elif exists == b"0":
                     hallucinated.append(t_name)
@@ -625,6 +686,9 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         result_state["last_error"] = None
         result_state["schema_explorer_retry_count"] = 0
 
-    result_state["execution_path"] = (state.get("execution_path") or []) + ["schema_explorer"]
+    result_state["execution_path"] = ["schema_explorer"]
+    # Store enriched profiles for downstream nodes (refiner re-uses without re-fetch)
+    result_state["table_profiles"] = profile_details if profile_details else None
 
     return result_state
+

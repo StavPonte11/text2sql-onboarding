@@ -39,8 +39,17 @@ async def chat_with_agent(
         hitl_enabled:   If False, skip all human-in-the-loop interrupts.
     """
     thread_id = thread_id or str(uuid.uuid4())
+    
+    try:
+        from core.langfuse import get_langfuse_handler
+        langfuse_handler = get_langfuse_handler()
+        callbacks = [langfuse_handler] if langfuse_handler else []
+    except Exception:
+        callbacks = []
+
     config = {
         "configurable": {"thread_id": thread_id},
+        "callbacks": callbacks,
     }
 
     if resume_value is not None:
@@ -112,7 +121,15 @@ async def chat_with_agent(
             config=config,
         )
 
+    # Get trace_id from the Langfuse handler if available
+    trace_id = getattr(langfuse_handler, "last_trace_id", None) if langfuse_handler else None
+    
+    from agent.langfuse_client import langfuse_client
+    langfuse_client.flush()
+
     final_state = await agent_graph.aget_state(config)
+    
+    # Check if interrupted by `interrupt()` function
     if final_state.interrupts:
         interrupt_val = final_state.interrupts[-1].value
         return json.dumps(
@@ -120,8 +137,31 @@ async def chat_with_agent(
                 "thread_id": thread_id,
                 "status": "interrupted",
                 "interrupt_details": interrupt_val,
+                "schema_plan": final_state.values.get("schema_plan") or (interrupt_val.get("schema_plan") if isinstance(interrupt_val, dict) else None),
+                "sql_query": final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None),
+                "sql_explanation": interrupt_val.get("sql_explanation") if isinstance(interrupt_val, dict) else None,
+                "trace_id": trace_id,
+                "execution_path": final_state.values.get("execution_path", []),
+            }
+        )
+        
+    # Check if interrupted by `interrupt_before` breakpoint
+    if final_state.next:
+        next_node = final_state.next[0]
+        # Build an artificial interrupt detail based on state
+        interrupt_val = {
+            "type": "hitl_escalation",
+            "reason": final_state.values.get("escalation_reason", f"Paused before {next_node}"),
+        }
+        return json.dumps(
+            {
+                "thread_id": thread_id,
+                "status": "interrupted",
+                "interrupt_details": interrupt_val,
                 "schema_plan": final_state.values.get("schema_plan"),
                 "sql_query": final_state.values.get("sql_query"),
+                "trace_id": trace_id,
+                "execution_path": final_state.values.get("execution_path", []),
             }
         )
 
@@ -134,9 +174,10 @@ async def chat_with_agent(
             "sql_query": result.get("sql_query"),
             "sql_explanation": result.get("sql_explanation"),
             "schema_plan": result.get("schema_plan"),
+            "trace_id": trace_id,
+            "execution_path": result.get("execution_path", []),
         }
     )
-
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

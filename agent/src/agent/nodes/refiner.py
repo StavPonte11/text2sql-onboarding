@@ -54,7 +54,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
         result = None
 
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    asyncio.create_task(publish_node_event(thread_id, "refiner"))
+    await publish_node_event(thread_id, "refiner")
 
     if not success:
         # If we reached the refinement limit, just stop and don't prompt LLM
@@ -68,6 +68,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                     f"Refiner exhausted {max_iterations} iterations. "
                     f"Last Trino error: {trino_error}"
                 ),
+                "execution_path": ["refiner"],
             }
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
@@ -97,7 +98,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             "last_error": trino_error,
             "refinement_count": count + 1,
             "error_history": error_history,
-            "execution_path": execution_path + ["refiner"],
+            "execution_path": ["refiner"],
         }
     else:
         # Success, save payload via Esca
@@ -127,4 +128,5 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             "esca_write_failed": esca_write_failed,
             "inline_result_rows": inline_result_rows,
             "error_history": error_history,
+            "execution_path": ["refiner"],
         }

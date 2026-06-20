@@ -31,6 +31,8 @@ export interface ChatResponse {
   sql_query?: string;
   sql_explanation?: string;
   schema_plan?: string;
+  trace_id?: string;
+  execution_path?: string[];
 }
 
 export const agentApi = {
