@@ -49,6 +49,13 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       key: 'columns',
       render: (record: any) => {
         const columns = record.columns || record.column_names || record.columnNames || [];
+        if (!columns || columns.length === 0) {
+          return (
+            <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '12px' }}>
+              No columns selected / empty
+            </span>
+          );
+        }
         return (
           <Space size={[0, 4]} wrap>
             {columns?.map((col: any, idx: number) => {
@@ -161,7 +168,7 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
         </div>
       )}
 
-      {planData.tables && planData.tables.length > 0 && (
+      {planData.tables !== undefined && (
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
             <Database size={16} /> <span>Tables & Columns</span>
