@@ -13,7 +13,7 @@ health_status:
   <  0.45 → critical
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from core.db.engine import get_session
 from core.models.models import (
@@ -130,7 +130,7 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
         existing.failure_wrong_sql = failure_wrong_sql
         existing.failure_empty_result = failure_empty_result
         existing.failure_execution_error = failure_exec_error
-        existing.updated_at = datetime.now(UTC)
+        existing.updated_at = datetime.now()
         session.add(existing)
         session.commit()
         session.refresh(existing)

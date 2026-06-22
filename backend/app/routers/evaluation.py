@@ -14,7 +14,7 @@ On fail  → table.status = sandbox   + alert created
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 import requests
@@ -186,7 +186,7 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     run.fail_rate = metrics.fail_rate
     run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now()
     run.dimension_averages = {
         "contains_execution_accuracy": metrics.contains_execution_accuracy,
         "exact_execution_accuracy": metrics.exact_execution_accuracy,
@@ -300,7 +300,7 @@ def _run_production_dataset_eval(
     run.fail_rate = metrics.fail_rate
     run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now()
     run.dimension_averages = {
         "contains_execution_accuracy": metrics.contains_execution_accuracy,
         "exact_execution_accuracy": metrics.exact_execution_accuracy,
@@ -383,7 +383,7 @@ def _run_candidate_eval(
     run.fail_rate = metrics.fail_rate
     run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now()
     run.dimension_averages = {
         "contains_execution_accuracy": metrics.contains_execution_accuracy,
         "exact_execution_accuracy": metrics.exact_execution_accuracy,
@@ -467,7 +467,7 @@ def _run_regression_eval(
     run.fail_rate = metrics.fail_rate
     run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now()
     run.dimension_averages = {
         "contains_execution_accuracy": metrics.contains_execution_accuracy,
         "exact_execution_accuracy": metrics.exact_execution_accuracy,

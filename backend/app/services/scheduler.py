@@ -4,7 +4,7 @@ Reads EvaluationSchedule rows from the DB on startup and registers cron jobs.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -67,7 +67,7 @@ def _run_scheduled_evaluation(schedule_id: str):
             valid_table_ids.append(table_id)
 
         # Update schedule timestamps
-        schedule.last_run_at = datetime.now(UTC)
+        schedule.last_run_at = datetime.now()
         session.add(schedule)
         session.commit()
 

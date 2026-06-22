@@ -7,7 +7,7 @@ New endpoint: GET /tables/{id}/profile/context — LLM-ready context blob.
 
 import logging
 import traceback
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from core.db.engine import engine, get_session
@@ -86,8 +86,8 @@ def _run_profile_job(table_id: str):
         profile.auto_insights = result.auto_insights
         profile.sample_data = result.sample_data
         profile.profile_json = result.profile_json
-        profile.cached_until = datetime.now(UTC) + timedelta(hours=24)
-        profile.updated_at = datetime.now(UTC)
+        profile.cached_until = datetime.now() + timedelta(hours=24)
+        profile.updated_at = datetime.now()
         session.add(profile)
         session.commit()
         session.refresh(profile)

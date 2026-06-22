@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 import httpx
 from core.db.engine import get_session
@@ -248,7 +248,7 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
     table.catalog = catalog_name
     table.service = service_name
     table.openmetadata_json = data
-    table.updated_at = datetime.now(UTC)
+    table.updated_at = datetime.now()
 
     session.add(table)
 
@@ -305,7 +305,7 @@ def update_table_status(
 
     previous_status = table.status
     table.status = status
-    table.updated_at = datetime.now(UTC)
+    table.updated_at = datetime.now()
     session.add(table)
     session.commit()
     session.refresh(table)
@@ -385,7 +385,7 @@ def create_foreign_key(
     if existing:
         existing.target_table_id = payload.target_table_id
         existing.target_column = payload.target_column
-        existing.updated_at = datetime.now(UTC)
+        existing.updated_at = datetime.now()
         session.add(existing)
         session.commit()
         session.refresh(existing)

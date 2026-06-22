@@ -20,7 +20,7 @@ def get_embedding(
     req = urllib.request.Request(embedder_url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
-            resp_data = json.loads(res.read().decode())[data][0]
+            resp_data = json.loads(res.read().decode())["data"][0]
             embedding = resp_data.get("embedding")
             if not embedding or len(embedding) != EXPECTED_EMBEDDING_DIM:
                 raise ValueError(

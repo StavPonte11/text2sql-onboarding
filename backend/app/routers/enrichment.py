@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from core.db.engine import get_session
 from core.models.models import (
@@ -60,7 +60,7 @@ def create_enrichment(
                 f"({', '.join(changed_keys)}) → degraded."
             )
             table.status = TableStatus.degraded
-            table.updated_at = datetime.now(UTC)
+            table.updated_at = datetime.now()
             session.add(table)
 
     ev = EnrichmentVersion(
