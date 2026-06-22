@@ -11,7 +11,7 @@ New endpoints:
 """
 
 import random
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from core.db.engine import engine, get_session
 from core.models.models import (
@@ -464,7 +464,7 @@ def get_trends(
     session: Session = Depends(get_session),
 ):
     """Score and pass_rate over time. Returns one data point per completed run."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     query = (
         select(EvalRun)
         .where(EvalRun.status == EvalStatus.completed, EvalRun.created_at >= since)
@@ -777,7 +777,7 @@ def system_health(session: Session = Depends(get_session)):
         "total_tables": len(total_tables),
         "production_tables": len(production_tables),
         "total_runs_today": sum(
-            1 for r in all_runs if r.created_at.date() == datetime.utcnow().date()
+            1 for r in all_runs if r.created_at.date() == datetime.now(UTC).date()
         ),
         "top_failing_tables": failing_tables[:5],
         "recent_runs": recent_runs,

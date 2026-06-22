@@ -13,10 +13,7 @@ health_status:
   <  0.45 → critical
 """
 
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from datetime import UTC, datetime
 
 from core.db.engine import get_session
 from core.models.models import (
@@ -32,6 +29,8 @@ from core.models.models import (
     TableHealthRead,
     TableProfile,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
 
 router = APIRouter(tags=["health"])
 
@@ -131,7 +130,7 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
         existing.failure_wrong_sql = failure_wrong_sql
         existing.failure_empty_result = failure_empty_result
         existing.failure_execution_error = failure_exec_error
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(UTC)
         session.add(existing)
         session.commit()
         session.refresh(existing)

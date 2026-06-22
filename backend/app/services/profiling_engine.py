@@ -9,7 +9,7 @@ ready for PostgreSQL persistence and LLM context injection.
 import concurrent.futures
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -865,7 +865,7 @@ def run_table_profiling(
     Never does full column scans for numeric stats.
     """
     fqn = _fqn(catalog, schema, table)
-    computed_at = datetime.utcnow()
+    computed_at = datetime.now(UTC)
     result = TableProfilingResult(
         table_id=table_id,
         table_fqn=fqn,

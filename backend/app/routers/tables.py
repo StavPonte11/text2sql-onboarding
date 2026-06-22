@@ -1,8 +1,9 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from core.db.engine import get_session
+from core.embeddings import get_embedding as core_get_embedding
 from core.models.models import (
     EnrichmentVersion,
     ForeignKeyMapping,
@@ -20,7 +21,6 @@ from sqlmodel import Session, col, select
 
 from app.config import settings
 from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
-from app.seed import EXPECTED_EMBEDDING_DIM
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,15 @@ def get_fqn_from_source_id(oasis_source_id: str, default_fqn: str | None = None)
 
 def get_table_fqn(table: Table) -> str:
     return f"{table.service}.{table.catalog}.{table.schema_name}.{table.name}"
+
+
+def get_embedding(text: str) -> list[float] | None:
+    return core_get_embedding(
+        text=text,
+        embedder_url=settings.EMBEDDER_URL,
+        embedder_model=settings.EMBEDDER_MODEL,
+        embedder_key=settings.EMBEDDER_KEY,
+    )
 
 
 @router.get("", response_model=list[TableRead])
@@ -129,27 +138,7 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
 
     # Generate embedding
     text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
-    embedding = None
-    try:
-        headers = {}
-        if settings.EMBEDDER_KEY:
-            headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
-        embed_resp = httpx.post(
-            settings.EMBEDDER_URL,
-            json={"model": settings.EMBEDDER_MODEL, "input": text_to_embed},
-            headers=headers,
-            timeout=10.0,
-        )
-        if embed_resp.status_code == 200:
-            resp_data = embed_resp.json()["data"][0]
-            embedding = resp_data.get("embedding")
-            if len(embedding) != EXPECTED_EMBEDDING_DIM:
-                raise ValueError(
-                    f"Embedder returned embedding of length {len(embedding)}, "
-                    f"expected {EXPECTED_EMBEDDING_DIM}"
-                )
-    except Exception as e:
-        logger.warning(f"Failed to generate embedding for table {name}: {e}")
+    embedding = get_embedding(text_to_embed)
 
     # Create the table
     table = Table(
@@ -249,29 +238,9 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
 
     # Generate embedding
     text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
-    try:
-        headers = {}
-        if settings.EMBEDDER_KEY:
-            headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
-        embed_resp = httpx.post(
-            settings.EMBEDDER_URL,
-            json={"model": settings.EMBEDDER_MODEL, "input": text_to_embed},
-            headers=headers,
-            timeout=10.0,
-        )
-        if embed_resp.status_code == 200:
-            resp_data = embed_resp.json()["data"][0]
-            embedding = resp_data.get("embedding")
-            if len(embedding) != EXPECTED_EMBEDDING_DIM:
-                raise ValueError(
-                    f"Embedder returned embedding of length {len(embedding)}, "
-                    f"expected {EXPECTED_EMBEDDING_DIM}"
-                )
-            table.embedding = embedding
-    except Exception as e:
-        logger.warning(
-            f"Failed to generate embedding for table {name} during sync: {e}"
-        )
+    embedding = get_embedding(text_to_embed)
+    if embedding:
+        table.embedding = embedding
 
     # Update the table
     table.name = name
@@ -279,7 +248,7 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
     table.catalog = catalog_name
     table.service = service_name
     table.openmetadata_json = data
-    table.updated_at = datetime.utcnow()
+    table.updated_at = datetime.now(UTC)
 
     session.add(table)
 
@@ -336,7 +305,7 @@ def update_table_status(
 
     previous_status = table.status
     table.status = status
-    table.updated_at = datetime.utcnow()
+    table.updated_at = datetime.now(UTC)
     session.add(table)
     session.commit()
     session.refresh(table)
@@ -416,7 +385,7 @@ def create_foreign_key(
     if existing:
         existing.target_table_id = payload.target_table_id
         existing.target_column = payload.target_column
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(UTC)
         session.add(existing)
         session.commit()
         session.refresh(existing)

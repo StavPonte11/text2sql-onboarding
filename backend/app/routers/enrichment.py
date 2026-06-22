@@ -1,8 +1,5 @@
 import logging
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, col, select
+from datetime import UTC, datetime
 
 from core.db.engine import get_session
 from core.models.models import (
@@ -12,6 +9,8 @@ from core.models.models import (
     Table,
     TableStatus,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, col, select
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ def create_enrichment(
                 f"({', '.join(changed_keys)}) → degraded."
             )
             table.status = TableStatus.degraded
-            table.updated_at = datetime.utcnow()
+            table.updated_at = datetime.now(UTC)
             session.add(table)
 
     ev = EnrichmentVersion(

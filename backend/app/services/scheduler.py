@@ -4,12 +4,10 @@ Reads EvaluationSchedule rows from the DB on startup and registers cron jobs.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlmodel import Session, select
-
 from core.db.engine import engine
 from core.models.models import (
     EvalRun,
@@ -17,6 +15,7 @@ from core.models.models import (
     GoldenQuestion,
     Table,
 )
+from sqlmodel import Session, select
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +67,7 @@ def _run_scheduled_evaluation(schedule_id: str):
             valid_table_ids.append(table_id)
 
         # Update schedule timestamps
-        schedule.last_run_at = datetime.utcnow()
+        schedule.last_run_at = datetime.now(UTC)
         session.add(schedule)
         session.commit()
 

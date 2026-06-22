@@ -16,6 +16,7 @@ from core.models.models import Table, TableProfile, ColumnProfile, EnrichmentVer
 from sqlmodel import Session, select
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
+from core.embeddings import get_embedding
 
 # Initialize LLM
 llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
@@ -39,21 +40,19 @@ class SchemaExplorerOutput(BaseModel):
         description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
     )
 
+
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
-    url = settings.EMBEDDER_URL
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "input": text}).encode()
-    headers = {"Content-Type": "application/json"}
-    if settings.EMBEDDER_KEY:
-        headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
-    req = urllib.request.Request(url, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            resp_data = json.loads(res.read().decode())["data"][0]
-            return resp_data["embedding"]
-    except Exception as e:
-        print(f"Error getting query embedding: {e}")
+    emb = get_embedding(
+        text=text,
+        embedder_url=settings.EMBEDDER_URL,
+        embedder_model=settings.EMBEDDER_MODEL,
+        embedder_key=settings.EMBEDDER_KEY
+    )
+    if emb is None:
+        print("Error getting query embedding for text")
         return [0.0] * 768
+    return emb
 
 def hybrid_search_tables(query: str, query_embedding: list[float], session: Session, allowed_tables: list[str] | None = None, allowed_statuses: list[str] | None = None) -> list[Table]:
     """Hybrid search combining pgvector cosine distance and keyword matching."""
