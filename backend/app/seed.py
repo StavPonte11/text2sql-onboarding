@@ -23,13 +23,15 @@ EXPECTED_EMBEDDING_DIM = 768
 
 def get_embedding(text: str) -> list[float]:
     url = settings.EMBEDDER_URL
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
-    )
+    data = json.dumps({"model": settings.EMBEDDER_MODEL, "input": text}).encode()
+    headers = {"Content-Type": "application/json"}
+    if settings.EMBEDDER_KEY:
+        headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
-            embedding = json.loads(res.read().decode())["embedding"]
+            resp_data = json.loads(res.read().decode())
+            embedding = resp_data["data"][0]["embedding"]
             if len(embedding) != EXPECTED_EMBEDDING_DIM:
                 raise ValueError(
                     f"Embedder returned embedding of length {len(embedding)}, "

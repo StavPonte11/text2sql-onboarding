@@ -9,8 +9,9 @@ class AgentSettings(BaseSettings):
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "gemma4:e4b"
-    EMBEDDER_URL: str = "http://localhost:11434"
+    EMBEDDER_URL: str = "http://localhost:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+    EMBEDDER_KEY: str = ""
     HYBRID_SEARCH_MAX_TABLES: int = 10
     MAX_PROFILES_TO_FETCH: int = 3
 

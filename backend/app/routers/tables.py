@@ -131,13 +131,18 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
     text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
     embedding = None
     try:
+        headers = {}
+        if settings.EMBEDDER_KEY:
+            headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
         embed_resp = httpx.post(
             settings.EMBEDDER_URL,
-            json={"model": settings.EMBEDDER_MODEL, "prompt": text_to_embed},
+            json={"model": settings.EMBEDDER_MODEL, "input": text_to_embed},
+            headers=headers,
             timeout=10.0,
         )
         if embed_resp.status_code == 200:
-            embedding = embed_resp.json().get("embedding")
+            resp_data = embed_resp.json()["data"][0]
+            embedding = resp_data.get("embedding")
             if len(embedding) != EXPECTED_EMBEDDING_DIM:
                 raise ValueError(
                     f"Embedder returned embedding of length {len(embedding)}, "
@@ -245,13 +250,18 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
     # Generate embedding
     text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
     try:
+        headers = {}
+        if settings.EMBEDDER_KEY:
+            headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
         embed_resp = httpx.post(
             settings.EMBEDDER_URL,
-            json={"model": settings.EMBEDDER_MODEL, "prompt": text_to_embed},
+            json={"model": settings.EMBEDDER_MODEL, "input": text_to_embed},
+            headers=headers,
             timeout=10.0,
         )
         if embed_resp.status_code == 200:
-            embedding = embed_resp.json().get("embedding")
+            resp_data = embed_resp.json()["data"][0]
+            embedding = resp_data.get("embedding")
             if len(embedding) != EXPECTED_EMBEDDING_DIM:
                 raise ValueError(
                     f"Embedder returned embedding of length {len(embedding)}, "

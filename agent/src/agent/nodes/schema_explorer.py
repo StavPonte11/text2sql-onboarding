@@ -41,13 +41,16 @@ class SchemaExplorerOutput(BaseModel):
 
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
-    # TODO: support secret
     url = settings.EMBEDDER_URL
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    data = json.dumps({"model": settings.EMBEDDER_MODEL, "input": text}).encode()
+    headers = {"Content-Type": "application/json"}
+    if settings.EMBEDDER_KEY:
+        headers["Authorization"] = f"Bearer {settings.EMBEDDER_KEY}"
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
-            return json.loads(res.read().decode())["embedding"]
+            resp_data = json.loads(res.read().decode())["data"][0]
+            return resp_data["embedding"]
     except Exception as e:
         print(f"Error getting query embedding: {e}")
         return [0.0] * 768
