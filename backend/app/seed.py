@@ -1,7 +1,5 @@
-import json
-import urllib.request
-
 from core.db.engine import create_db_and_tables, engine
+from core.embeddings import EXPECTED_EMBEDDING_DIM, get_embedding as core_get_embedding
 from core.models.models import (
     DifficultyLevel,
     EnrichmentVersion,
@@ -18,27 +16,18 @@ from sqlmodel import Session, select
 
 from app.config import settings
 
-EXPECTED_EMBEDDING_DIM = 768
-
 
 def get_embedding(text: str) -> list[float]:
-    url = settings.EMBEDDER_URL
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
+    emb = core_get_embedding(
+        text=text,
+        embedder_url=settings.EMBEDDER_URL,
+        embedder_model=settings.EMBEDDER_MODEL,
+        embedder_key=settings.EMBEDDER_KEY,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            embedding = json.loads(res.read().decode())["embedding"]
-            if len(embedding) != EXPECTED_EMBEDDING_DIM:
-                raise ValueError(
-                    f"Embedder returned embedding of length {len(embedding)}, "
-                    f"expected {EXPECTED_EMBEDDING_DIM}"
-                )
-            return embedding
-    except Exception as e:
-        print(f"Error getting embedding: {e}")
+    if emb is None:
+        print("Error getting embedding for text")
         return [0.0] * EXPECTED_EMBEDDING_DIM
+    return emb
 
 
 def seed():

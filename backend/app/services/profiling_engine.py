@@ -865,7 +865,7 @@ def run_table_profiling(
     Never does full column scans for numeric stats.
     """
     fqn = _fqn(catalog, schema, table)
-    computed_at = datetime.utcnow()
+    computed_at = datetime.now()
     result = TableProfilingResult(
         table_id=table_id,
         table_fqn=fqn,

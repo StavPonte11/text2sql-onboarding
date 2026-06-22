@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
 from app.config import settings
@@ -60,15 +60,15 @@ class ChatResponse(BaseModel):
 
 async def _call_agent_mcp(tool_arguments: dict) -> dict:
     """
-    Connects to the agent MCP server over SSE, initializes the session,
+    Connects to the agent MCP server over Streamable HTTP, initializes the session,
     calls the 'chat_with_agent' tool, and returns the parsed result.
     """
-    url = f"{settings.AGENT_URL}/sse"
+    url = f"{settings.AGENT_URL}/mcp"
     logger.debug("Connecting to agent MCP: %s  args=%s", url, tool_arguments)
 
     try:
-        async with sse_client(url) as streams:
-            async with ClientSession(*streams) as session:
+        async with streamablehttp_client(url) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
                 # Call the tool using the MCP client session

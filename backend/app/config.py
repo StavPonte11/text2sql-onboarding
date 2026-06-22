@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
-
+    EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
     APP_ENV: str = "development"
@@ -52,8 +52,9 @@ class Settings(BaseSettings):
     JWT_EXPIRE_HOURS: int = 8
 
     # Embedder Config
-    EMBEDDER_URL: str = "http://host.docker.internal:11434/api/embeddings"
+    EMBEDDER_URL: str = "http://host.docker.internal:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+    EMBEDDER_KEY: str = ""
 
 
 settings = Settings()

@@ -29,8 +29,8 @@ class Table(SQLModel, table=True):
     service: str = Field(default="trino_ingestion")
     openmetadata_json: Any | None = Field(default=None, sa_column=Column(JSON))
     embedding: Any | None = Field(default=None, sa_column=Column(Vector(768)))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class TableCreate(SQLModel):
@@ -63,7 +63,7 @@ class EnrichmentVersion(SQLModel, table=True):
     )
     version: int = Field(default=1)
     data: Any | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class EnrichmentCreate(SQLModel):
@@ -109,7 +109,7 @@ class GoldenQuestion(SQLModel, table=True):
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.simple)
     question_type: QuestionType = Field(default=QuestionType.simple)
     coverage_tags: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class GoldenQuestionCreate(SQLModel):
@@ -155,7 +155,7 @@ class EvalRun(SQLModel, table=True):
     duration_seconds: float | None = None
     triggered_by: str = Field(default="user")  # "user" | "scheduler" | "system"
     status: EvalStatus = Field(default=EvalStatus.running)
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
     failure_breakdown: Any | None = Field(default=None, sa_column=Column(JSON))
     dimension_averages: Any | None = Field(default=None, sa_column=Column(JSON))
@@ -164,7 +164,7 @@ class EvalRun(SQLModel, table=True):
     promotion_run_id: str | None = Field(
         default=None, index=True
     )  # set on regression runs
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class EvalRunRead(SQLModel):
@@ -205,7 +205,7 @@ class EvaluationSchedule(SQLModel, table=True):
     cron_expression: str = Field(default="0 2 * * *")  # daily at 2am
     enabled: bool = Field(default=True)
     created_by: str = Field(default="user")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
 
@@ -254,7 +254,7 @@ class EvaluationHistoryMetric(SQLModel, table=True):
     )
     metric_name: str  # e.g. "score", "pass_rate", "wrong_table_count"
     metric_value: float
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class EvaluationHistoryMetricRead(SQLModel):
@@ -293,7 +293,7 @@ class EvaluationAlert(SQLModel, table=True):
     message: str
     details: Any | None = Field(default=None, sa_column=Column(JSON))
     acknowledged: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class EvaluationAlertRead(SQLModel):
@@ -393,7 +393,7 @@ class AuditQuery(SQLModel, table=True):
     confidence_score: float | None = None
     explanation_text: str | None = None
     warnings_json: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class AuditQueryRead(SQLModel):
@@ -456,8 +456,8 @@ class TableProfile(SQLModel, table=True):
         default=None, sa_column=Column(JSON)
     )  # full structured profile
     cached_until: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class TableProfileRead(SQLModel):
@@ -511,7 +511,7 @@ class ColumnProfile(SQLModel, table=True):
     stats_json: Any | None = Field(
         default=None, sa_column=Column(JSON)
     )  # full stats blob
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class ColumnProfileRead(SQLModel):
@@ -552,7 +552,7 @@ class CrossTableProfile(SQLModel, table=True):
     join_suggestion: str | None = None  # e.g. "source.user_id = target.id"
     match_strength: str = Field(default="weak")  # "strong" | "weak"
     common_columns: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class CrossTableProfileRead(SQLModel):
@@ -596,7 +596,7 @@ class QueryFeedback(SQLModel, table=True):
     rating: FeedbackRating
     comment: str | None = None
     suggested_correction: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class QueryFeedbackCreate(SQLModel):
@@ -652,7 +652,7 @@ class TableHealth(SQLModel, table=True):
     failure_wrong_sql: int = Field(default=0)
     failure_empty_result: int = Field(default=0)
     failure_execution_error: int = Field(default=0)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class TableHealthRead(SQLModel):
@@ -685,8 +685,8 @@ class SecurityUser(SQLModel, table=True):
     name: str
     is_active: bool = Field(default=True)
     is_admin: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class SecurityUserRead(SQLModel):
@@ -719,8 +719,8 @@ class ForeignKeyMapping(SQLModel, table=True):
         sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")]
     )
     target_column: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class ForeignKeyMappingCreate(SQLModel):
@@ -758,8 +758,8 @@ class HttpExtractor(SQLModel, table=True):
     url: str
     description: str | None = None
     status: ExtractorStatus = Field(default=ExtractorStatus.draft)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 class HttpExtractorCreate(SQLModel):
     name: str
