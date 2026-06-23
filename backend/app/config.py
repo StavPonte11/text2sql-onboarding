@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"
     OPENMETADATA_SERVICE_NAME: str = "local_trino"
+    RUN_SEED: bool = True
+    RUN_INFRA_INIT: bool = True
     # Trino connection
     TRINO_HOST: str = "localhost"
     TRINO_PORT: int = 8080

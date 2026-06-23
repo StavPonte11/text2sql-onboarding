@@ -23,6 +23,8 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.config import settings
+
 import httpx
 import trino
 import trino.dbapi
@@ -835,6 +837,9 @@ def _ensure_openmetadata_registration() -> None:
         columns = _OM_TABLE_COLUMNS.get(col_key, [])
         _ensure_om_table(token, table_fqn, table["name"], schema_fqn, columns)
 
+    # 4. Ingestion Pipeline
+    _ensure_om_ingestion_pipeline(token, svc_id)
+
 
 def _ensure_om_service(token: str) -> str | None:
     status, data = _om_get(f"services/databaseServices/name/{_OM_SERVICE_NAME}", token)
@@ -854,7 +859,6 @@ def _ensure_om_service(token: str) -> str | None:
                     "type": "Trino",
                     "hostPort": "trino:8080",
                     "username": "trino",
-                    "catalog": "minio",
                 }
             },
         },
@@ -867,6 +871,57 @@ def _ensure_om_service(token: str) -> str | None:
 
     logger.error("[InfraInit] Failed to create OM service (HTTP %s): %s", status, data)
     return None
+
+
+def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
+    pipeline_name = "local_trino_metadata"
+    pipeline_fqn = f"{_OM_SERVICE_NAME}.{pipeline_name}"
+
+    status, data = _om_get(f"services/ingestionPipelines/name/{pipeline_fqn}", token)
+    if status == "200":
+        logger.info("[InfraInit] OM ingestion pipeline '%s' already exists — OK", pipeline_name)
+        pid = data["id"]
+        # Trigger it on startup to ensure latest data
+        _om_post(f"services/ingestionPipelines/trigger/{pid}", {}, token)
+        return
+
+    status, data = _om_post(
+        "services/ingestionPipelines",
+        {
+            "name": pipeline_name,
+            "displayName": "Local Trino Metadata Ingestion",
+            "pipelineType": "metadata",
+            "sourceConfig": {
+                "config": {
+                    "type": "DatabaseMetadata",
+                    "markDeletedTables": True
+                }
+            },
+            "airflowConfig": {
+                "startDate": "2023-01-01T00:00:00Z"
+            },
+            "service": {
+                "id": svc_id,
+                "type": "databaseService"
+            }
+        },
+        token,
+    )
+
+    if status in ("200", "201"):
+        logger.info("[InfraInit] OM ingestion pipeline '%s' created ✓", pipeline_name)
+        pid = data["id"]
+        
+        # Deploy it to Airflow
+        status_deploy, data_deploy = _om_post(f"services/ingestionPipelines/deploy/{pid}", {}, token)
+        logger.info("[InfraInit] Deployed pipeline: %s", status_deploy)
+        
+        # We can't trigger it immediately because Airflow takes a few seconds to load the new DAG.
+        # But Airflow will pick it up and run it on schedule. 
+        # Alternatively, the user can manually trigger it from the UI.
+        return
+
+    logger.error("[InfraInit] Failed to create OM ingestion pipeline (HTTP %s): %s", status, data)
 
 
 def _ensure_om_database(token: str, db_fqn: str, svc_id: str) -> str | None:
@@ -1242,5 +1297,8 @@ def init_infrastructure() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    init_infrastructure()
+    if getattr(settings, "RUN_INFRA_INIT", True):
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+        init_infrastructure()
+    else:
+        print("Skipping infrastructure initialization (RUN_INFRA_INIT is False)")
