@@ -1,16 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useEffect,useState } from 'react';
+import { useFieldArray,useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import { Check, CheckCircle2, CloudDownload } from 'lucide-react';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 
 import { enrichmentApi, questionsApi, tablesApi } from '../../api/client';
 
-import type { Table, GoldenQuestionCreate, EnrichmentData } from '../../types';
+import type { EnrichmentData,GoldenQuestionCreate, Table } from '../../types';
 
 const STEPS = ['select', 'schema', 'enrichment', 'validate', 'questions', 'submit'] as const;
 

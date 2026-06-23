@@ -15,10 +15,15 @@ All steps are fully idempotent. Running this multiple times is safe.
 """
 
 import base64
+import concurrent.futures
 import logging
+import re
+import threading
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
+import httpx
 import trino
 import trino.dbapi
 from minio import Minio
@@ -672,7 +677,6 @@ def _delete_minio_prefix(prefix: str) -> None:
 
 def _ensure_trino_tables() -> None:
     """Create all required Trino tables (IF NOT EXISTS — idempotent)."""
-    import re
     for table in _TABLES:
         try:
             _trino_exec(table["create_sql"])
@@ -722,7 +726,7 @@ def _seed_trino_data() -> None:
             except Exception as e:
                 # If DELETE is not supported (e.g. some Iceberg configs require specific formats), we ignore and fall back to count checks
                 logger.debug("DELETE on %s failed: %s", table["fqn"], e)
-                
+
             _trino_exec(table["seed_sql"])
             logger.info("[InfraInit] Seeded sample data into '%s' ✓", table["fqn"])
         except Exception as exc:
@@ -738,8 +742,6 @@ def _seed_trino_data() -> None:
 
 def _om_login() -> str:
     """Log in to OpenMetadata and return an access token."""
-    import httpx
-
     b64_password = base64.b64encode(b"admin").decode()
     try:
         r = httpx.post(
@@ -759,8 +761,6 @@ def _om_login() -> str:
 
 
 def _om_get(path: str, token: str) -> tuple[str, dict]:
-    import httpx
-
     try:
         r = httpx.get(
             f"{_OM_URL}/api/v1/{path}",
@@ -773,8 +773,6 @@ def _om_get(path: str, token: str) -> tuple[str, dict]:
 
 
 def _om_post(path: str, body: dict, token: str) -> tuple[str, dict]:
-    import httpx
-
     try:
         r = httpx.post(
             f"{_OM_URL}/api/v1/{path}",
@@ -964,7 +962,7 @@ def _ensure_om_table(
 def _verify_custom_catalogs() -> None:
     """
     Detect all non-default catalogs loaded in Trino (excluding system, minio, tpch)
-    and verify their connectivity by running SHOW SCHEMAS.
+    and verify their connectivity by running SHOW SCHEMAS in parallel.
     """
     logger.info("[InfraInit] Scanning Trino for custom Snowflake/external catalogs...")
     try:
@@ -974,16 +972,17 @@ def _verify_custom_catalogs() -> None:
             name = row[0]
             if name not in ("system", "minio", "tpch"):
                 custom_catalogs.append(name)
-        
+
         if not custom_catalogs:
             logger.info("[InfraInit] No custom catalogs detected in Trino.")
             return
 
         logger.info(
-            "[InfraInit] Found custom catalog(s): %s. Verifying connections...",
-            custom_catalogs,
+            "[InfraInit] Found %d custom catalog(s). Verifying connections in parallel...",
+            len(custom_catalogs),
         )
-        for catalog in custom_catalogs:
+
+        def verify_one(catalog: str) -> None:
             logger.info("[InfraInit] Verifying connection to catalog '%s'...", catalog)
             schemas = _trino_exec(f"SHOW SCHEMAS FROM {catalog}")
             logger.info(
@@ -992,6 +991,10 @@ def _verify_custom_catalogs() -> None:
                 len(schemas),
                 [s[0] for s in schemas],
             )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            list(executor.map(verify_one, custom_catalogs))
+
     except Exception as exc:
         logger.error("[InfraInit] Verification of custom catalogs failed: %s", exc)
         raise
@@ -1006,11 +1009,6 @@ def _ensure_airlines_registered() -> None:
     To add more Snowflake databases/schemas in the future, simply append entries
     to the _AIRLINES_TABLES list at the top of this file.
     """
-    import threading
-    from datetime import datetime, timedelta
-
-    from sqlmodel import Session, select
-
     from core.db.engine import engine
     from core.models.models import (
         ColumnProfile,
@@ -1019,6 +1017,8 @@ def _ensure_airlines_registered() -> None:
         TableProfile,
         TableStatus,
     )
+    from sqlmodel import Session, select
+
     from app.services.profiling_engine import run_table_profiling
 
     logger.info("[InfraInit] Registering airlines Snowflake tables...")
@@ -1210,7 +1210,9 @@ def init_infrastructure() -> None:
     try:
         _ensure_iceberg_tables()
         _wait_for_trino()
-        _verify_custom_catalogs()
+        logger.info("[InfraInit] Starting custom catalog verification in background thread...")
+        t = threading.Thread(target=_verify_custom_catalogs, daemon=True, name="verify-custom-catalogs")
+        t.start()
         _ensure_trino_schemas()
         _ensure_trino_tables()
         _seed_trino_data()

@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 
 from core.db.engine import create_db_and_tables, engine
 from core.models.models import AuditQuery
-from fastapi import APIRouter, FastAPI, Request, Depends
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session
+from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import settings
+from app.config import auth_settings, settings
+from app.core.auth import get_current_user
+from app.api import auth as auth_api
 from app.routers import (
     admin_approval,
     admin_auth,
@@ -28,9 +30,6 @@ from app.routers import (
     scopes,
     tables,
 )
-from app.api import auth as auth_api
-from app.core.auth import get_current_user
-from app.config import settings, auth_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 from python_core_utils import setup_logging

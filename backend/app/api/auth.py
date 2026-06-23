@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Request, Depends
+from core.db.engine import engine
+from core.models.models import AuthConfigRead, SecurityUserRead
+from fastapi import APIRouter, Depends, Request
+from python_core_utils.auth import create_sso_router
 from sqlmodel import Session
 
-from python_core_utils.auth import create_sso_router
 from app.config import auth_settings
-from core.db.engine import engine
-from app.core.auth import sync_user_from_payload, get_current_user
-from core.models.models import AuthConfigRead, SecurityUserRead
+from app.core.auth import get_current_user, sync_user_from_payload
 
 router = APIRouter()
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider, theme } from 'antd';
 import { Globe } from 'lucide-react';
 
+import { AuthProvider } from './components/layout/AuthProvider';
 import { ScopeBanner } from './components/layout/ScopeBanner';
 import { Sidebar } from './components/layout/Sidebar';
 import { MonitoringPage } from './components/monitoring/MonitoringPage';
@@ -16,10 +17,9 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { EvaluationsPage } from './pages/EvaluationsPage';
 import { LandingPage } from './pages/LandingPage';
-import { ScopesPage } from './pages/ScopesPage';
 import { LoginPage } from './pages/LoginPage';
+import { ScopesPage } from './pages/ScopesPage';
 import { useAuthStore } from './store/authStore';
-import { AuthProvider } from './components/layout/AuthProvider';
 
 import './styles/globals.css';
 

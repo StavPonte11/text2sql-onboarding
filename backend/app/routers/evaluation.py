@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
 from app.config import settings
+from app.services.evaluator import TextToSQLEvaluator
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)

@@ -1,3 +1,6 @@
+import json
+import urllib.request
+
 from core.db.engine import create_db_and_tables, engine
 from core.embeddings import EXPECTED_EMBEDDING_DIM, get_embedding as core_get_embedding
 from core.models.models import (

@@ -9,11 +9,11 @@ import {
   LayoutDashboard,
   Shield,
 } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 
+import { authApi } from '../../api/auth';
 import { orchestrationApi } from '../../api/orchestration';
 import { useAuthStore } from '../../store/authStore';
-import { authApi } from '../../api/auth';
-import { LogOut } from 'lucide-react';
 
 import './Sidebar.css';
 

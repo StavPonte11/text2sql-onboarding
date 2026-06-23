@@ -13,10 +13,8 @@ from core.models.models import (
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
-
-from app.services.auth import require_admin
-from app.services.langfuse_client import langfuse_client
 from app.core.auth import check_admin
+from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 

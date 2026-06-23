@@ -1,16 +1,16 @@
 import urllib.parse
 
+import core.db.engine
 import psycopg2
 import pytest
+from core.db.engine import get_session
+from core.models.models import SecurityUser
 from fastapi.testclient import TestClient
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlmodel import Session, SQLModel, create_engine
 
-import core.db.engine
-from app.core.auth import get_current_user
-from core.models.models import SecurityUser
 from app.config import settings
-from core.db.engine import get_session
+from app.core.auth import get_current_user
 from app.main import app as fastapi_app
 
 # Parse the database URL from settings
@@ -114,7 +114,7 @@ def client(test_engine):
         with Session(test_engine) as session:
             yield session
 
-    
+
 
     def override_get_current_user():
         return SecurityUser(

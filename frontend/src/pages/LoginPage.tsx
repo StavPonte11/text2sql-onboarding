@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Typography, Spin } from 'antd';
 import { Navigate } from 'react-router-dom';
+import { Button, Card, Spin,Typography } from 'antd';
+
 import { authApi, type AuthConfig } from '../api/auth';
-import { useAuthStore } from '../store/authStore';
 import { API_BASE_URL } from '../config/constants';
+import { useAuthStore } from '../store/authStore';
 
 const { Title, Text } = Typography;
 
