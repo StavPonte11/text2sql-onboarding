@@ -7,10 +7,13 @@ from langgraph.types import Command
 from sqlmodel import Session, select
 from core.db.engine import engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
+from langfuse import observe
+from langfuse.langchain import CallbackHandler
 
 mcp = FastMCP("Text2SQL Agent")
 
 @mcp.tool()
+@observe()
 async def chat_with_agent(
     query: str | None = None,
     thread_id: str | None = None,
@@ -24,6 +27,7 @@ async def chat_with_agent(
     thread_id = thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},
+        "callbacks": [CallbackHandler()],
     }
 
     if resume_value is not None:
