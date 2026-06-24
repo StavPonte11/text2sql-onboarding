@@ -1068,6 +1068,7 @@ def _ensure_airlines_registered() -> None:
     from core.models.models import (
         ColumnProfile,
         ProfilingStatus,
+        SecurityUser,
         Table,
         TableProfile,
         TableStatus,
@@ -1081,6 +1082,19 @@ def _ensure_airlines_registered() -> None:
     registered_ids: list[str] = []
 
     with Session(engine) as session:
+        # Seed the system user if it doesn't exist
+        system_user = session.get(SecurityUser, _SYSTEM_OWNER_ID)
+        if not system_user:
+            system_user = SecurityUser(
+                id=_SYSTEM_OWNER_ID,
+                email="system@text2sql.ai",
+                name="System Account",
+                is_admin=True,
+            )
+            session.add(system_user)
+            session.commit()
+            logger.info("[InfraInit] Seeded system user (id=%s) ✓", _SYSTEM_OWNER_ID)
+
         for tdef in _AIRLINES_TABLES:
             # Check whether this table already exists in the DB
             existing = session.exec(
