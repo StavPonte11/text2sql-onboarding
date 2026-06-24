@@ -144,9 +144,9 @@ export function OnboardingWizard() {
       }
       if (step === 'questions' && createdTableId) {
         const qs = getValues('questions') || [];
-        for (const q of qs) {
-          await createQuestionMutation.mutateAsync({ id: createdTableId, q });
-        }
+        await Promise.all(
+          qs.map(q => createQuestionMutation.mutateAsync({ id: createdTableId, q }))
+        );
         message.success('Golden questions added');
         qc.invalidateQueries({ queryKey: ['tables'] });
         setDone(true);

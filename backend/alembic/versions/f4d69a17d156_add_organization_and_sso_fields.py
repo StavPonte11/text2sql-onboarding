@@ -1,7 +1,7 @@
 """Add Organization and SSO fields
 
 Revision ID: f4d69a17d156
-Revises: d35412e44b34
+Revises: aeb0e2695517
 Create Date: 2026-06-09 14:35:40.420571
 
 """

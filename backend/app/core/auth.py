@@ -22,6 +22,10 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
     if not user and email:
         user = db.exec(select(SecurityUser).where(SecurityUser.email == email)).first()
 
+    if not user and not email:
+        # current implementation: allow invalid email in such cases, but we might want to change that
+        email = f"{sso_id}@{provider}.sso"
+
     if not user:
         user = SecurityUser(
             email=email,
@@ -52,6 +56,8 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
             if org.id not in user_org_ids:
                 user.organizations.append(org)
                 user_org_ids.add(org.id)
+
+        user.organizations = [org for org in user.organizations if org.name in cleaned_groups]
 
     db.commit()
     db.refresh(user)

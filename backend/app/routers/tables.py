@@ -36,11 +36,12 @@ def get_om_token(force_refresh: bool = False) -> str:
         return _cached_om_token
 
     try:
-        b64_password = base64.b64encode(b"admin").decode()
+        b64_password = base64.b64encode(settings.OPENMETADATA_ADMIN_PASSWORD.encode()).decode()
         r = httpx.post(
             f"{settings.OPENMETADATA_URL}/api/v1/users/login",
-            json={"email": "admin@open-metadata.org", "password": b64_password},
+            json={"email": settings.OPENMETADATA_ADMIN_EMAIL, "password": b64_password},
             timeout=10.0,
+            verify=settings.OPENMETADATA_VERIFY_SSL,
         )
         r.raise_for_status()
         token = r.json().get("accessToken") or r.json().get("token", "")
@@ -56,13 +57,13 @@ def get_om_token(force_refresh: bool = False) -> str:
 def om_get_request(url: str) -> httpx.Response:
     token = get_om_token()
     headers = {"Authorization": f"Bearer {token}"}
-    response = httpx.get(url, headers=headers, timeout=10.0, verify=False)
+    response = httpx.get(url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL)
 
     if response.status_code == 401:
         logger.info("OpenMetadata request returned 401. Retrying with a refreshed token...")
         token = get_om_token(force_refresh=True)
         headers = {"Authorization": f"Bearer {token}"}
-        response = httpx.get(url, headers=headers, timeout=10.0, verify=False)
+        response = httpx.get(url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL)
 
     return response
 

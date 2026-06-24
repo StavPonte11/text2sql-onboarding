@@ -1,5 +1,5 @@
 from core.db.engine import engine
-from core.models.models import AuthConfigRead, SecurityUserRead
+from core.models.models import AuthConfigRead, SecurityUser, SecurityUserRead
 from fastapi import APIRouter, Depends, Request
 from python_core_utils.auth import create_sso_router
 from sqlmodel import Session
@@ -27,6 +27,6 @@ def get_auth_config():
     }
 
 @router.get("/me", response_model=SecurityUserRead)
-def get_me(user = Depends(get_current_user)):
+def get_me(user: SecurityUser = Depends(get_current_user)):
     return user
 

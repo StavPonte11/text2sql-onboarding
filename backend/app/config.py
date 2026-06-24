@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8080", "http://host.docker.internal:5173"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080", "http://host.docker.internal:5173"]
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"
+    OPENMETADATA_ADMIN_EMAIL: str = "admin@open-metadata.org"
+    OPENMETADATA_ADMIN_PASSWORD: str = "admin"
+    OPENMETADATA_VERIFY_SSL: bool = False
     OPENMETADATA_SERVICE_NAME: str = "local_trino"
     RUN_SEED: bool = True
     RUN_INFRA_INIT: bool = True

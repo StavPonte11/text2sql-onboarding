@@ -212,6 +212,7 @@ export function Sidebar() {
                 e.currentTarget.style.opacity = '0.8';
               }}
               title="Sign Out"
+              aria-label="Sign Out"
             >
               <LogOut size={14} />
             </button>

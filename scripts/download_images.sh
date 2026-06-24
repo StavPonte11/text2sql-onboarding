@@ -1,6 +1,6 @@
 #!/bin/bash
-# build_openshift.sh
-# Builds the images for linux/amd64 so they can be run on OpenShift
+# download_images.sh
+# Downloads the images for linux/amd64 so they can be run on OpenShift
 
 set -e
 
