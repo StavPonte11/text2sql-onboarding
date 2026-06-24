@@ -432,7 +432,7 @@ services:
       - TRINO_CATALOG=minio
       - TRINO_SCHEMA=simple_retail
       - TRINO_HTTP_SCHEME=http
-      - TRINO_REQUEST_TIMEOUT=30.0
+      - TRINO_REQUEST_TIMEOUT=600.0
       - TRINO_ENABLED=true
       - OPENMETADATA_URL=http://openmetadata-server:8585
       - OPENMETADATA_SERVICE_NAME=local_trino
@@ -490,7 +490,7 @@ services:
       - EMBEDDER_URL=http://host.docker.internal:11434
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
-      - MAX_PROFILES_TO_FETCH=4
+      - MAX_PROFILES_TO_FETCH=10
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino
