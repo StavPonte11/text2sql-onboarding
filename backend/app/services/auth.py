@@ -1,8 +1,7 @@
-from fastapi import Depends, HTTPException, status
-from sqlmodel import Session, select
-
 from core.db.engine import get_session
 from core.models.models import SecurityUser
+from fastapi import Depends, HTTPException, status
+from sqlmodel import Session, select
 
 
 def get_user_by_email(email: str, session: Session) -> SecurityUser | None:

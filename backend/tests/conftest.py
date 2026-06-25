@@ -1,14 +1,14 @@
 import urllib.parse
 
+import core.db.engine
 import psycopg2
 import pytest
+from core.db.engine import get_session
 from fastapi.testclient import TestClient
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlmodel import Session, SQLModel, create_engine
 
-import core.db.engine
 from app.config import settings
-from core.db.engine import get_session
 from app.main import app as fastapi_app
 
 # Parse the database URL from settings

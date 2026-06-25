@@ -2,11 +2,11 @@ from unittest.mock import MagicMock, patch
 
 from core.models.models import (
     AuditQuery,
+    EnrichmentVersion,
     EvalStatus,
     GoldenQuestion,
     Table,
     TableStatus,
-    EnrichmentVersion
 )
 
 # ── Mock objects for testing ──────────────────────────────────────────────────
@@ -212,3 +212,72 @@ def test_list_audit_queries(client, db_session):
     response = client.get("/api/audit/queries")
     assert response.status_code == 200
     assert len(response.json()) >= 1
+
+
+# ── Query API Tests ────────────────────────────────────────────────────────────
+@patch("app.routers.query.settings")
+def test_execute_query_disabled(mock_settings, client):
+    mock_settings.TRINO_ENABLED = False
+    payload = {"sql": "SELECT * FROM users LIMIT 10"}
+    response = client.post("/api/query/execute", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["rows"] == []
+    assert data["columns"] == []
+    assert data["row_count"] == 0
+    assert data["error"] is not None
+    assert "disabled" in data["error"]
+
+
+@patch("app.routers.query.get_trino_connection")
+@patch("app.routers.query.settings")
+def test_execute_query_success(mock_settings, mock_get_conn, client):
+    mock_settings.TRINO_ENABLED = True
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.description = [("id",), ("name",), ("email",)]
+    mock_cur.fetchall.return_value = [
+        (1, "Alice", "alice@example.com"),
+        (2, "Bob", "bob@example.com"),
+    ]
+    mock_conn.cursor.return_value = mock_cur
+    mock_get_conn.return_value = mock_conn
+
+    payload = {"sql": "SELECT id, name, email FROM users"}
+    response = client.post("/api/query/execute", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["columns"] == ["id", "name", "email"]
+    assert data["rows"] == [
+        [1, "Alice", "alice@example.com"],
+        [2, "Bob", "bob@example.com"],
+    ]
+    assert data["row_count"] == 2
+    assert data["error"] is None
+    assert isinstance(data["execution_time_ms"], float)
+
+
+@patch("app.routers.query.get_trino_connection")
+@patch("app.routers.query.settings")
+def test_execute_query_failure(mock_settings, mock_get_conn, client):
+    mock_settings.TRINO_ENABLED = True
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.execute.side_effect = Exception("Syntax error near 'LIMIT'")
+    mock_conn.cursor.return_value = mock_cur
+    mock_get_conn.return_value = mock_conn
+
+    payload = {"sql": "SELECT id FROM users LIMIT"}
+    response = client.post("/api/query/execute", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert data["rows"] == []
+    assert data["columns"] == []
+    assert data["row_count"] == 0
+    assert data["error"] is not None
+    assert "Syntax error" in data["error"]

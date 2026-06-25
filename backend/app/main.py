@@ -23,6 +23,7 @@ from app.routers import (
     orchestration,
     profiling,
     publish,
+    query,
     questions,
     scopes,
     tables,
@@ -123,6 +124,7 @@ api_router.include_router(health.router)
 api_router.include_router(admin_auth.router)
 api_router.include_router(admin_approval.router)
 api_router.include_router(agent.router)
+api_router.include_router(query.router)
 
 app.include_router(api_router)
 
