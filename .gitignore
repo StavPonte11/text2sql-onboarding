@@ -25,6 +25,7 @@ dist-ssr
 .venv
 *.python-version
 *.env
+openshift-images/
 
 # Python cache
 __pycache__/

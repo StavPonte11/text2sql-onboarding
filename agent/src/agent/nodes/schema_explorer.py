@@ -16,6 +16,7 @@ from core.models.models import Table, TableProfile, ColumnProfile, EnrichmentVer
 from sqlmodel import Session, select
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
+from core.embeddings import get_embedding
 
 # Initialize LLM
 llm = ChatOpenAI(model=settings.LLM_MODEL, base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, temperature=0)
@@ -39,18 +40,19 @@ class SchemaExplorerOutput(BaseModel):
         description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
     )
 
+
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
-    # TODO: support secret
-    url = f"{settings.EMBEDDER_URL}/api/embeddings"
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            return json.loads(res.read().decode())["embedding"]
-    except Exception as e:
-        print(f"Error getting query embedding: {e}")
+    emb = get_embedding(
+        text=text,
+        embedder_url=settings.EMBEDDER_URL,
+        embedder_model=settings.EMBEDDER_MODEL,
+        embedder_key=settings.EMBEDDER_KEY
+    )
+    if emb is None:
+        print("Error getting query embedding for text")
         return [0.0] * 768
+    return emb
 
 def hybrid_search_tables(query: str, query_embedding: list[float], session: Session, allowed_tables: list[str] | None = None, allowed_statuses: list[str] | None = None) -> list[Table]:
     """Hybrid search combining pgvector cosine distance and keyword matching."""
@@ -207,7 +209,24 @@ async def get_table_profile(table_id: str) -> str:
         except Exception as e:
             esca_id = None
             logger.error(f"Error: Failed to save profile to Esca for table {table_id}: {e}")
-            # TODO: handle error
+            try:
+                from core.metrics import esca_write_failures_total
+                esca_write_failures_total.labels(failure_type=type(e).__name__).inc()
+            except:
+                pass
+            
+            try:
+                from core.splunk import splunk_log
+                from structlog.contextvars import get_contextvars
+                ctx = get_contextvars()
+                await splunk_log({
+                    "failure_type": type(e).__name__,
+                    "error_message": str(e),
+                    "session_id": ctx.get("session_id"),
+                    "request_id": ctx.get("request_id")
+                }, "esca_failure")
+            except:
+                pass
         finally:
             await client.close()
         

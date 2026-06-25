@@ -70,8 +70,20 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
         cur.execute(sql)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description] if cur.description else []
-        execution_time_ms = int((time.time() - start_time) * 1000)
+        duration_sec = time.time() - start_time
+        execution_time_ms = int(duration_sec * 1000)
         logger.info(f"[CoreTrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms")
+        
+        # Observe duration metric
+        try:
+            from core.metrics import trino_query_duration_seconds
+            trino_query_duration_seconds.labels(
+                catalog=settings.TRINO_CATALOG,
+                schema=settings.TRINO_SCHEMA
+            ).observe(duration_sec)
+        except Exception as e:
+            logger.warning(f"Failed to record Trino latency metric: {e}")
+            
         cur.close()
         conn.close()
         return TrinoExecutionResult(
@@ -82,8 +94,48 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
             execution_time_ms=execution_time_ms,
         )
     except Exception as exc:
-        execution_time_ms = int((time.time() - start_time) * 1000)
-        logger.error(f"[CoreTrinoClient] FAILED in {execution_time_ms}ms: {exc}")
+        duration_sec = time.time() - start_time
+        execution_time_ms = int(duration_sec * 1000)
+        error_message = str(exc)
+        logger.error(f"[CoreTrinoClient] FAILED in {execution_time_ms}ms: {error_message}")
+        
+        # Observe duration metric even for failures
+        try:
+            from core.metrics import trino_query_duration_seconds
+            trino_query_duration_seconds.labels(
+                catalog=settings.TRINO_CATALOG,
+                schema=settings.TRINO_SCHEMA
+            ).observe(duration_sec)
+        except Exception as e:
+            pass
+
+        # Detect schema hallucinations
+        if "TABLE_NOT_FOUND" in error_message or "does not exist" in error_message:
+            import re
+            match = re.search(r"Table '([^']+)'", error_message)
+            table_name = match.group(1) if match else "unknown"
+            
+            try:
+                from core.metrics import schema_hallucinated_tables_total
+                schema_hallucinated_tables_total.labels(table_name=table_name).inc()
+            except Exception as e:
+                logger.warning(f"Failed to record schema hallucination metric: {e}")
+                
+            try:
+                from core.splunk import get_splunk_logger
+                from structlog.contextvars import get_contextvars
+                splunk_logger = get_splunk_logger("text2sql:schema_hallucination")
+                if splunk_logger:
+                    ctx = get_contextvars()
+                    splunk_logger.info({
+                        "table_name": table_name,
+                        "query": sql,
+                        "session_id": ctx.get("session_id"),
+                        "request_id": ctx.get("request_id")
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to send schema hallucination log to Splunk: {e}")
+
         if cur is not None:
             try:
                 cur.close()
@@ -100,5 +152,5 @@ def execute_query_sync(sql: str, table_id: str = "") -> TrinoExecutionResult:
             columns=[],
             row_count=0,
             execution_time_ms=execution_time_ms,
-            error_message=str(exc),
+            error_message=error_message,
         )

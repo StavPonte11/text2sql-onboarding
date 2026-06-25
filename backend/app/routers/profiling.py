@@ -86,8 +86,8 @@ def _run_profile_job(table_id: str):
         profile.auto_insights = result.auto_insights
         profile.sample_data = result.sample_data
         profile.profile_json = result.profile_json
-        profile.cached_until = datetime.utcnow() + timedelta(hours=24)
-        profile.updated_at = datetime.utcnow()
+        profile.cached_until = datetime.now() + timedelta(hours=24)
+        profile.updated_at = datetime.now()
         session.add(profile)
         session.commit()
         session.refresh(profile)

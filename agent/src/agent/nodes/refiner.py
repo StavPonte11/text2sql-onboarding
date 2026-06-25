@@ -22,8 +22,21 @@ async def refiner_node(state: AgentState):
 
     if not result.success:
         trino_error = result.error_message or "Unknown Trino error"
+        
+        # Increment Prometheus refiner iteration count
+        try:
+            from core.metrics import refiner_iterations_total
+            refiner_iterations_total.inc()
+        except Exception as e:
+            pass
+
         # If we reached the refinement limit, just stop and don't prompt LLM
         if count >= MAX_REFINER_ITERATIONS:
+            try:
+                from core.metrics import refiner_max_loop_fallbacks_total
+                refiner_max_loop_fallbacks_total.inc()
+            except Exception as e:
+                pass
             return {"trino_error": trino_error, "refinement_count": count + 1}
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
@@ -35,6 +48,24 @@ async def refiner_node(state: AgentState):
             new_sql = new_sql[:-1].strip()
         return {"sql_query": new_sql, "trino_error": trino_error, "refinement_count": count + 1}
     else:
+        # Log successful query execution to Splunk HEC
+        try:
+            from core.splunk import splunk_log
+            from structlog.contextvars import get_contextvars
+            ctx = get_contextvars()
+            event_data = {
+                "session_id": ctx.get("session_id"),
+                "request_id": ctx.get("request_id"),
+                "user_id": ctx.get("user_id"),
+                "final_sql": sql,
+                "refiner_iterations": count,
+                "execution_duration_ms": result.execution_time_ms,
+                "langfuse_trace_id": ctx.get("langfuse_trace_id")
+            }
+            await splunk_log(event_data, "query_execution")
+        except Exception as e:
+            pass
+
         # Success, save payload via Esca
         client = EscaClient(api_key=settings.ESCA_API_KEY, base_url=settings.ESCA_URL)
         payload_data = {
@@ -45,6 +76,26 @@ async def refiner_node(state: AgentState):
         try:
             res = await client.save_data(payload)
             raw_ref = res.get("esca_id")
+        except Exception as esca_exc:
+            try:
+                from core.metrics import esca_write_failures_total
+                esca_write_failures_total.labels(failure_type=type(esca_exc).__name__).inc()
+            except:
+                pass
+            
+            try:
+                from core.splunk import splunk_log
+                from structlog.contextvars import get_contextvars
+                ctx = get_contextvars()
+                await splunk_log({
+                    "failure_type": type(esca_exc).__name__,
+                    "error_message": str(esca_exc),
+                    "session_id": ctx.get("session_id"),
+                    "request_id": ctx.get("request_id")
+                }, "esca_failure")
+            except:
+                pass
+            raise esca_exc
         finally:
             await client.close()
 

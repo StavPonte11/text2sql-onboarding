@@ -59,14 +59,29 @@ def route_rejection(state: AgentState):
         return route
     return "extractor"
 
+import asyncio
+from core.metrics import track_node_execution
+
+def instrument_node(name, node_func):
+    if asyncio.iscoroutinefunction(node_func):
+        async def async_wrapper(state):
+            async with track_node_execution(name):
+                return await node_func(state)
+        return async_wrapper
+    else:
+        def sync_wrapper(state):
+            with track_node_execution(name):
+                return node_func(state)
+        return sync_wrapper
+
 workflow = StateGraph(AgentState)
 
-workflow.add_node("extractor", extractor_node)
-workflow.add_node("schema_explorer", schema_explorer_node)
-workflow.add_node("query_builder", query_builder_node)
-workflow.add_node("rejection_router", rejection_router_node)
-workflow.add_node("refiner", refiner_node)
-workflow.add_node("finalizer", finalizer_node)
+workflow.add_node("extractor", instrument_node("extractor", extractor_node))
+workflow.add_node("schema_explorer", instrument_node("schema_explorer", schema_explorer_node))
+workflow.add_node("query_builder", instrument_node("query_builder", query_builder_node))
+workflow.add_node("rejection_router", instrument_node("rejection_router", rejection_router_node))
+workflow.add_node("refiner", instrument_node("refiner", refiner_node))
+workflow.add_node("finalizer", instrument_node("finalizer", finalizer_node))
 
 workflow.add_edge(START, "extractor")
 workflow.add_edge("extractor", "schema_explorer")

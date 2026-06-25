@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: 'text2sql-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:8000']
+
+  - job_name: 'text2sql-agent'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['agent:8001']

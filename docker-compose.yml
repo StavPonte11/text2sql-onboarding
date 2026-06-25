@@ -414,6 +414,10 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
       - POSTGRES_HOST=db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=text2sql
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino
@@ -431,6 +435,11 @@ services:
       - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
       - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
       - LANGFUSE_HOST=https://cloud.langfuse.com
+      - SPLUNK_HEC_HOST=splunk
+      - SPLUNK_HEC_PORT=8088
+      - SPLUNK_HEC_TOKEN=adb8356d-f421-4f10-911b-c6b85d66edab
+      - SPLUNK_HEC_SSL_VERIFY=false
+      - SPLUNK_HEC_PROTO=https
     depends_on:
       db:
         condition: service_healthy
@@ -465,7 +474,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - REDIS_SSL=false
       - LLM_BASE_URL=http://host.docker.internal:11434/v1
-      - LLM_MODEL=gemma4:e4b
+      - LLM_MODEL=llama3.2
       - LLM_API_KEY=ollama
       - EMBEDDER_URL=http://host.docker.internal:11434
       - EMBEDDER_MODEL=nomic-embed-text:latest
@@ -480,6 +489,11 @@ services:
       - TRINO_HTTP_SCHEME=http
       - TRINO_REQUEST_TIMEOUT=30.0
       - TRINO_ENABLED=true
+      - SPLUNK_HEC_HOST=splunk
+      - SPLUNK_HEC_PORT=8088
+      - SPLUNK_HEC_TOKEN=adb8356d-f421-4f10-911b-c6b85d66edab
+      - SPLUNK_HEC_SSL_VERIFY=false
+      - SPLUNK_HEC_PROTO=https
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -502,6 +516,38 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: text2sql-prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    depends_on:
+      - backend
+      - agent
+
+  splunk:
+    image: splunk/splunk:latest
+    platform: linux/amd64
+    container_name: text2sql-splunk
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=adminpassword
+      - SPLUNK_HEC_ENABLE=true
+      - SPLUNK_HEC_PORT=8088
+      - SPLUNK_HEC_TOKEN=adb8356d-f421-4f10-911b-c6b85d66edab
+    ports:
+      - "8002:8000"
+      - "8088:8088"
 
 volumes:
   pg_data: null

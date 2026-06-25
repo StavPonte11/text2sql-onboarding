@@ -1,12 +1,17 @@
 import logging
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from core.db.engine import create_db_and_tables, engine
+from core.logging import bind_request_context, clear_request_context
+from core.metrics import PROMETHEUS_REGISTRY
+from core.metrics_middleware import PrometheusMiddleware
 from core.models.models import AuditQuery
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlmodel import Session
 
 from app.config import settings
@@ -57,12 +62,51 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register Prometheus metrics tracking middleware
+app.add_middleware(PrometheusMiddleware)
+
+
+@app.middleware("http")
+async def context_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    session_id = (
+        request.headers.get("x-session-id")
+        or request.query_params.get("session_id")
+        or str(uuid.uuid4())
+    )
+    user_id = request.headers.get("x-user-id") or "user-1"
+    langfuse_trace_id = request.headers.get("x-langfuse-trace-id")
+
+    bind_request_context(
+        session_id=session_id,
+        user_id=user_id,
+        request_id=request_id,
+        langfuse_trace_id=langfuse_trace_id,
+    )
+    try:
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        return response
+    finally:
+        clear_request_context()
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """
+    Exposes Prometheus metrics gathered from the custom isolated collector registry.
+    """
+    return Response(
+        content=generate_latest(PROMETHEUS_REGISTRY), media_type=CONTENT_TYPE_LATEST
+    )
 
 
 @app.middleware("http")

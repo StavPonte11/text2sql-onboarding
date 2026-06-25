@@ -1,0 +1,72 @@
+groups:
+  - name: text2sql_sla
+    rules:
+      - alert: RequestLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(text2sql_request_duration_seconds_bucket[5m])) by (le, route)) > 15
+        for: 3m
+        labels:
+          severity: warning
+          tier: api
+        annotations:
+          summary: "High request latency detected on route {{ $labels.route }}"
+          description: "The 95th percentile request latency on route {{ $labels.route }} has exceeded 15 seconds (current: {{ $value | humanizeDuration }})."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/latency-high"
+
+      - alert: RequestLatencyCritical
+        expr: histogram_quantile(0.95, sum(rate(text2sql_request_duration_seconds_bucket[5m])) by (le, route)) > 30
+        for: 3m
+        labels:
+          severity: critical
+          tier: api
+        annotations:
+          summary: "Critical request latency detected on route {{ $labels.route }}"
+          description: "The 95th percentile request latency on route {{ $labels.route }} has exceeded 30 seconds (current: {{ $value | humanizeDuration }})."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/latency-critical"
+
+      - alert: HighErrorRate
+        expr: (sum(rate(text2sql_requests_total{status_code=~"5.."}[5m])) by (route) / sum(rate(text2sql_requests_total[5m])) by (route)) * 100 > 5
+        for: 3m
+        labels:
+          severity: critical
+          tier: api
+        annotations:
+          summary: "High HTTP error rate detected on route {{ $labels.route }}"
+          description: "HTTP error rate (5xx responses) on route {{ $labels.route }} has exceeded 5% (current: {{ $value | printf \"%.2f\" }}%)."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/error-rate-high"
+
+  - name: text2sql_accuracy
+    rules:
+      - alert: HallucinationRateHigh
+        expr: sum(rate(schema_hallucinated_tables_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          tier: agent
+        annotations:
+          summary: "High table schema hallucination rate detected"
+          description: "Table schema hallucination rate is currently exceeding 0.1 per second (current rate: {{ $value | printf \"%.2f\" }}/s). The agent might be hallucinating database table structures."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/hallucination-high"
+
+      - alert: RefinerFallbackRateHigh
+        expr: (sum(rate(refiner_max_loop_fallbacks_total[5m])) / sum(rate(refiner_iterations_total[5m]))) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          tier: agent
+        annotations:
+          summary: "High SQL refiner fallback rate"
+          description: "More than 10% of SQL refinement loops are hitting the maximum iteration limit and falling back to default queries (current: {{ $value | printf \"%.2f\" }}%)."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/refiner-fallback-high"
+
+  - name: text2sql_infrastructure
+    rules:
+      - alert: ESCAFailureRateHigh
+        expr: sum(rate(esca_write_failures_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          tier: storage
+        annotations:
+          summary: "High ESCA tiered storage write failure rate"
+          description: "The write failure rate to ESCA has exceeded 0.05 per second (current failure rate: {{ $value | printf \"%.2f\" }}/s)."
+          runbook_url: "https://wiki.internal.text2sql/ops/runbooks/esca-failure-high"
