@@ -6,7 +6,9 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "sqlite:///./text2sql.db"
     REDIS_URL: str = "redis://localhost:6379"
-    OPENAI_API_KEY: str | None = None
+    LLM_API_KEY: str = "ollama"
+    LLM_BASE_URL: str = "http://localhost:11434/v1"
+    LLM_MODEL: str = "gemma4:e4b"
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
@@ -14,7 +16,7 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
-
+    EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
     APP_ENV: str = "development"
@@ -54,8 +56,9 @@ class Settings(BaseSettings):
     JWT_EXPIRE_HOURS: int = 8
 
     # Embedder Config
-    EMBEDDER_URL: str = "http://host.docker.internal:11434/api/embeddings"
+    EMBEDDER_URL: str = "http://host.docker.internal:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+    EMBEDDER_KEY: str = ""
 
 
 settings = Settings()

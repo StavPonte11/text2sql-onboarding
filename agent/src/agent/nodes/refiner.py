@@ -81,7 +81,10 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
         schema_context = build_refiner_schema_context(state)
 
         if langfuse_client and langfuse_client.get_current_trace_id():
-            langfuse_client.trace(id=langfuse_client.get_current_trace_id(), tags=["schema_context_injected=True"])
+            langfuse_client._create_trace_tags_via_ingestion(
+                trace_id=langfuse_client.get_current_trace_id(),
+                tags=["schema_context_injected=True"],
+            )
 
         response = await chain.ainvoke(
             {
@@ -115,7 +118,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
         except Exception as e:
             esca_write_failed = True
             if langfuse_client and langfuse_client.get_current_trace_id():
-                langfuse_client.span(id=langfuse_client.get_current_observation_id(), 
+                langfuse_client.update_current_span(
                     level="WARNING", status_message=f"ESCA write failed: {e}"
                 )
             else:

@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
-  ReactFlow,
-  Controls,
   Background,
-  useNodesState,
-  useEdgesState,
+  Controls,
   MarkerType,
   Position,
+  ReactFlow,
+  useEdgesState,
+  useNodesState,
 } from '@xyflow/react';
+
 import '@xyflow/react/dist/style.css';
 
 interface AgentGraphProps {
@@ -17,7 +18,10 @@ interface AgentGraphProps {
 }
 
 const formatLabel = (str: string) => {
-  return str.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  return str
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 };
 
 const getStartNodeStyle = () => {
@@ -109,9 +113,9 @@ export function AgentGraph({ executionPath = [], onNodeClick }: AgentGraphProps)
         source: sourceId,
         target: id,
         animated: isActive,
-        markerEnd: { 
+        markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: isActive ? '#38BDF8' : '#10B981'
+          color: isActive ? '#38BDF8' : '#10B981',
         },
         style: {
           stroke: isActive ? '#38BDF8' : '#10B981',
@@ -141,7 +145,7 @@ export function AgentGraph({ executionPath = [], onNodeClick }: AgentGraphProps)
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={(event, node) => {
+        onNodeClick={(_, node) => {
           if (node.id === 'START') return;
           const [stepName, indexStr] = node.id.split('-');
           const index = parseInt(indexStr, 10);

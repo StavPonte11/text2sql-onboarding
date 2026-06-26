@@ -97,9 +97,10 @@ def hitl_escalation_node(state: AgentState, config: RunnableConfig | None = None
     try:
         trace_id = langfuse_client.get_current_trace_id()
         if trace_id:
-            langfuse_client.trace(
-                id=trace_id,
-                tags=["escalated=True"],
+            langfuse_client._create_trace_tags_via_ingestion(
+                trace_id=trace_id, tags=["escalated=True"]
+            )
+            langfuse_client.update_current_span(
                 metadata={"escalation_reason": reason},
             )
     except Exception:

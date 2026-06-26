@@ -25,6 +25,7 @@ dist-ssr
 .venv
 *.python-version
 *.env
+openshift-images/
 
 # Python cache
 __pycache__/
@@ -39,7 +40,6 @@ deploy_key
 agent/scratch/*
 fix_agent_langfuse.py
 fix_langfuse.py
-python-core-utils/
 
 # Playwright
 playwright-report/

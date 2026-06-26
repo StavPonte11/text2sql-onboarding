@@ -1,8 +1,9 @@
 import React from 'react';
-import { Card, Tag, Table, Typography, Space } from 'antd';
-import { Database, Filter, Link, ListOrdered, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { Card, Space, Table, Tag, Typography } from 'antd';
+import { Database, Filter, Link, ListOrdered, Sparkles } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
+
 import styles from './SchemaPlanDisplay.module.css';
 
 const { Text } = Typography;
@@ -32,7 +33,12 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
     );
   }
 
-  const explanationText = planData.description || planData.explanation || planData.strategy || planData.reasoning || planData.logic;
+  const explanationText =
+    planData.description ||
+    planData.explanation ||
+    planData.strategy ||
+    planData.reasoning ||
+    planData.logic;
 
   // Define columns for Tables
   const tableColumns = [
@@ -41,7 +47,11 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       key: 'name',
       render: (record: any) => {
         const name = record.name || record.table_name || record.tableName || record.table || '';
-        return <Text strong style={{ color: 'var(--primary)' }}>{renderCellSafe(name)}</Text>;
+        return (
+          <Text strong style={{ color: 'var(--primary)' }}>
+            {renderCellSafe(name)}
+          </Text>
+        );
       },
     },
     {
@@ -70,7 +80,8 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
                 const type = col.data_type || col.type || '';
                 return (
                   <Tag key={`${name}_${idx}`} color="blue" bordered={false}>
-                    {name} {type ? <span style={{ opacity: 0.6, fontSize: '11px' }}>({type})</span> : ''}
+                    {name}{' '}
+                    {type ? <span style={{ opacity: 0.6, fontSize: '11px' }}>({type})</span> : ''}
                   </Tag>
                 );
               }
@@ -88,33 +99,53 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       title: 'Source Table',
       key: 'source_table',
       render: (record: any) => {
-        const val = record.source_table || record.sourceTable || record.srcTable || record.src_table || '';
+        const val =
+          record.source_table || record.sourceTable || record.srcTable || record.src_table || '';
         return <Tag color="cyan">{renderCellSafe(val)}</Tag>;
-      }
+      },
     },
     {
       title: 'Source Column',
       key: 'source_column',
       render: (record: any) => {
-        const val = record.source_column || record.sourceColumn || record.srcColumn || record.src_column || '';
+        const val =
+          record.source_column ||
+          record.sourceColumn ||
+          record.srcColumn ||
+          record.src_column ||
+          '';
         return renderCellSafe(val);
-      }
+      },
     },
     {
       title: 'Target Table',
       key: 'target_table',
       render: (record: any) => {
-        const val = record.target_table || record.targetTable || record.destTable || record.dest_table || record.tgtTable || record.tgt_table || '';
+        const val =
+          record.target_table ||
+          record.targetTable ||
+          record.destTable ||
+          record.dest_table ||
+          record.tgtTable ||
+          record.tgt_table ||
+          '';
         return <Tag color="geekblue">{renderCellSafe(val)}</Tag>;
-      }
+      },
     },
     {
       title: 'Target Column',
       key: 'target_column',
       render: (record: any) => {
-        const val = record.target_column || record.targetColumn || record.destColumn || record.dest_column || record.tgtColumn || record.tgt_column || '';
+        const val =
+          record.target_column ||
+          record.targetColumn ||
+          record.destColumn ||
+          record.dest_column ||
+          record.tgtColumn ||
+          record.tgt_column ||
+          '';
         return renderCellSafe(val);
-      }
+      },
     },
     {
       title: 'Join Type',
@@ -122,8 +153,8 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       render: (record: any) => {
         const val = record.type || record.join_type || record.joinType || 'INNER';
         return <Text code>{renderCellSafe(val).toUpperCase()}</Text>;
-      }
-    }
+      },
+    },
   ];
 
   // Define columns for Filters
@@ -134,7 +165,7 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       render: (record: any) => {
         const val = record.column || record.column_name || record.columnName || record.col || '';
         return <Text strong>{renderCellSafe(val)}</Text>;
-      }
+      },
     },
     {
       title: 'Operator',
@@ -142,7 +173,7 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       render: (record: any) => {
         const val = record.operator || record.op || '';
         return <Tag color="orange">{renderCellSafe(val)}</Tag>;
-      }
+      },
     },
     {
       title: 'Value',
@@ -150,20 +181,38 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       render: (record: any) => {
         const val = record.value || record.val || '';
         return <Text code>{renderCellSafe(val)}</Text>;
-      }
-    }
+      },
+    },
   ];
 
   return (
     <div className={styles.schemaPlanContainer}>
       {explanationText && (
         <div className={styles.section} style={{ marginBottom: 20 }}>
-          <Card size="small" className={styles.infoCard} style={{ borderLeft: '3px solid var(--primary)', background: 'rgba(22, 119, 255, 0.02)' }}>
-            <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--text-h)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Card
+            size="small"
+            className={styles.infoCard}
+            style={{
+              borderLeft: '3px solid var(--primary)',
+              background: 'rgba(22, 119, 255, 0.02)',
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 600,
+                marginBottom: 6,
+                color: 'var(--text-h)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
               <Sparkles size={14} color="var(--primary)" />
               <span>Query Logic & Strategy</span>
             </div>
-            <Text style={{ color: 'var(--text)', fontSize: '13px' }}>{renderCellSafe(explanationText)}</Text>
+            <Text style={{ color: 'var(--text)', fontSize: '13px' }}>
+              {renderCellSafe(explanationText)}
+            </Text>
           </Card>
         </div>
       )}
@@ -173,10 +222,10 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
           <div className={styles.sectionHeader}>
             <Database size={16} /> <span>Tables & Columns</span>
           </div>
-          <Table 
-            dataSource={planData.tables} 
-            columns={tableColumns} 
-            rowKey={(r, i) => (r.name || r.table_name || r.tableName || r.table || i.toString())}
+          <Table
+            dataSource={planData.tables}
+            columns={tableColumns}
+            rowKey={(r, i) => r.name || r.table_name || r.tableName || r.table || i.toString()}
             pagination={false}
             size="small"
             bordered
@@ -190,10 +239,10 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
           <div className={styles.sectionHeader}>
             <Link size={16} /> <span>Joins</span>
           </div>
-          <Table 
-            dataSource={planData.joins} 
-            columns={joinColumns} 
-            rowKey={(r, i) => i.toString()}
+          <Table
+            dataSource={planData.joins}
+            columns={joinColumns}
+            rowKey={(_, i) => i.toString()}
             pagination={false}
             size="small"
             bordered
@@ -207,10 +256,10 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
           <div className={styles.sectionHeader}>
             <Filter size={16} /> <span>Filters</span>
           </div>
-          <Table 
-            dataSource={planData.filters} 
-            columns={filterColumns} 
-            rowKey={(r, i) => i.toString()}
+          <Table
+            dataSource={planData.filters}
+            columns={filterColumns}
+            rowKey={(_, i) => i.toString()}
             pagination={false}
             size="small"
             bordered
@@ -229,7 +278,10 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
               <div style={{ marginBottom: planData.limit ? 8 : 0 }}>
                 <Text strong>Order By: </Text>
                 {planData.order_by.map((ob: any, i: number) => (
-                  <Tag key={i} color="purple">{renderCellSafe(ob.column)} {renderCellSafe(ob.direction)?.toUpperCase() || 'ASC'}</Tag>
+                  <Tag key={i} color="purple">
+                    {renderCellSafe(ob.column)}{' '}
+                    {renderCellSafe(ob.direction)?.toUpperCase() || 'ASC'}
+                  </Tag>
                 ))}
               </div>
             )}

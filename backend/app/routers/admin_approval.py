@@ -178,7 +178,7 @@ def approve_table(
 
     # 1. Promote status
     table.status = TableStatus.production
-    table.updated_at = datetime.utcnow()
+    table.updated_at = datetime.now()
     session.add(table)
     session.commit()
 
@@ -216,7 +216,7 @@ def reject_table(
         )
 
     table.status = TableStatus.sandbox
-    table.updated_at = datetime.utcnow()
+    table.updated_at = datetime.now()
     session.add(table)
     session.commit()
 

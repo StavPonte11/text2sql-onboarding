@@ -7,11 +7,13 @@ from langgraph.types import Command
 from sqlmodel import Session, select
 from core.db.engine import engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
+from langfuse import observe
 
 mcp = FastMCP("Text2SQL Agent")
 
 
 @mcp.tool()
+@observe()
 async def chat_with_agent(
     query: str | None = None,
     thread_id: str | None = None,

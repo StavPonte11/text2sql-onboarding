@@ -13,8 +13,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.config import settings
 from core import execute_query_sync
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -865,7 +866,7 @@ def run_table_profiling(
     Never does full column scans for numeric stats.
     """
     fqn = _fqn(catalog, schema, table)
-    computed_at = datetime.utcnow()
+    computed_at = datetime.now()
     result = TableProfilingResult(
         table_id=table_id,
         table_fqn=fqn,
@@ -1065,6 +1066,7 @@ def build_context_for_llm(
 
 # ── One-time LLM Table Summarization (called during profiling) ─────────────────
 
+
 def generate_table_summary(result: "TableProfilingResult") -> str:
     """
     Generate a ≤3-sentence plain-English description of a table using the LLM.
@@ -1087,20 +1089,20 @@ def generate_table_summary(result: "TableProfilingResult") -> str:
                 vals = [str(v["value"]) for v in c.top_values[:5]]
                 parts.append(f"values: {', '.join(vals)}")
             elif c.min_value or c.max_value:
-                parts.append(f"range: {c.min_value}–{c.max_value}")
+                parts.append(f"range: {c.min_value}-{c.max_value}")
             col_lines.append(" — ".join(parts))
 
         prompt = (
             f"Table: {result.table_fqn}\n"
             f"Row count: {result.row_count:,}\n"
             f"Columns ({result.column_count} total):\n"
-            + "\n".join(f"  • {l}" for l in col_lines)
+            + "\n".join(f"  • {line}" for line in col_lines)
             + "\n\nWrite a concise ≤3-sentence description of this table's purpose, "
             "what business domain it represents, and which columns are most important "
             "for querying. Be specific about what the table contains."
         )
 
-        import httpx, json as _json
+        import httpx
 
         payload = {
             "model": llm_model,

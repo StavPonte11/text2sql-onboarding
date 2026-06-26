@@ -130,7 +130,7 @@ def _compute_health(table_id: str, session: Session) -> TableHealth:
         existing.failure_wrong_sql = failure_wrong_sql
         existing.failure_empty_result = failure_empty_result
         existing.failure_execution_error = failure_exec_error
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now()
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -178,34 +178,31 @@ def get_all_health(session: Session = Depends(get_session)):
     ).all()
 
 
-@router.get("/health/judge")
-def get_judge_health():
-    from app.config import settings
-
-    api_key = getattr(settings, "OPENAI_API_KEY", None)
-    if not api_key:
-        return {"status": "error", "message": "OPENAI_API_KEY is missing"}
-    return {"status": "ok", "message": "LLM Judge is configured"}
-
-
 @router.get("/health/esca")
 async def get_esca_health():
     import asyncio
 
     try:
         from agent.config import settings as agent_settings
+
         api_key = getattr(agent_settings, "ESCA_API_KEY", None)
         base_url = getattr(agent_settings, "ESCA_URL", None)
     except Exception:
         try:
             from app.config import settings as agent_settings
+
             api_key = getattr(agent_settings, "ESCA_API_KEY", None)
             base_url = getattr(agent_settings, "ESCA_URL", None)
         except Exception:
             api_key = None
             base_url = None
 
-    if not api_key or not base_url or api_key == "dummy" or base_url == "http://localhost:8000":
+    if (
+        not api_key
+        or not base_url
+        or api_key == "dummy"
+        or base_url == "http://localhost:8000"
+    ):
         return {"status": "config_error", "message": "ESCA is not properly configured"}
 
     from esca_sdk import EscaClient

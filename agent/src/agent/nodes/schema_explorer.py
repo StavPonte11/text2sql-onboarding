@@ -29,6 +29,7 @@ from agent.utils.schema_enrichment import (
     run_ambiguity_detection,
 )
 from core.cache import get_cache_service
+from core.embeddings import get_embedding
 
 # Initialize LLM
 llm = get_llm("schema_explorer")
@@ -102,7 +103,7 @@ class SchemaExplorerOutput(BaseModel):
     )
     candidate_options: List[str] = Field(
         default_factory=list,
-        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false.",
+        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
     )
     tables_used: List[str] = Field(
         default_factory=list,
@@ -112,18 +113,16 @@ class SchemaExplorerOutput(BaseModel):
 
 def get_query_embedding(text: str) -> list[float]:
     """Generate 768-dimensional embedding from nomic-embed-text."""
-    # TODO: support secret
-    url = f"{settings.EMBEDDER_URL}/api/embeddings"
-    data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
+    emb = get_embedding(
+        text=text,
+        embedder_url=settings.EMBEDDER_URL,
+        embedder_model=settings.EMBEDDER_MODEL,
+        embedder_key=settings.EMBEDDER_KEY
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            return json.loads(res.read().decode())["embedding"]
-    except Exception as e:
-        print(f"Error getting query embedding: {e}")
+    if emb is None:
+        print("Error getting query embedding for text")
         return [0.0] * 768
+    return emb
 
 
 def hybrid_search_tables(
@@ -315,8 +314,8 @@ async def get_table_profile(table_id: str) -> str:
                 esca_id = None
                 from agent.langfuse_client import langfuse_client
 
-                if langfuse_client and langfuse_client.get_current_observation_id():
-                    langfuse_client.span(id=langfuse_client.get_current_observation_id(),
+                if langfuse_client and langfuse_client.get_current_trace_id():
+                    langfuse_client.update_current_span(
                         level="WARNING",
                         status_message=f"ESCA write failed for profile: {e}",
                     )
@@ -452,10 +451,11 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     active_phases: list[str] = []
     table_ids = [t.id for t in candidate_tables]
 
-    human_message = (
-        f"Question: {user_query}\n"
-        f"Query Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
-    )
+    # human_message = (
+    #     f"Question: {user_query}\n"
+    #     f"Query Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
+    # )
+    human_message = user_query
     if feedback:
         human_message += f"\nUser Feedback on previous plan/query: {feedback}"
 
@@ -468,35 +468,35 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         )
 
     # Phase A: Semantic Typing
-    if schema_semantic_typing and profile_details:
-        try:
-            profile_details = await run_semantic_typing(profile_details, _llm)
-            active_phases.append("SCHEMA_SEMANTIC_TYPING")
-        except Exception as exc:
-            logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
+    # if schema_semantic_typing and profile_details:
+    #     try:
+    #         profile_details = await run_semantic_typing(profile_details, _llm)
+    #         active_phases.append("SCHEMA_SEMANTIC_TYPING")
+    #     except Exception as exc:
+    #         logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
 
     # Phase B: Join Graph
-    if schema_join_graph and len(table_ids) >= 2:
-        try:
-            join_paths_json = await run_join_graph(table_ids)
-            if join_paths_json:
-                human_message += (
-                    "\n\n[JOIN GRAPH] Shortest join paths between candidate tables:\n"
-                    + join_paths_json
-                )
-                active_phases.append("SCHEMA_JOIN_GRAPH")
-        except Exception as exc:
-            logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
+    # if schema_join_graph and len(table_ids) >= 2:
+    #     try:
+    #         join_paths_json = await run_join_graph(table_ids)
+    #         if join_paths_json:
+    #             human_message += (
+    #                 "\n\n[JOIN GRAPH] Shortest join paths between candidate tables:\n"
+    #                 + join_paths_json
+    #             )
+    #             active_phases.append("SCHEMA_JOIN_GRAPH")
+    #     except Exception as exc:
+    #         logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
 
     # ── G3: Skill Injection ───────────────────────────────────────────────────
-    loaded_skills = state.get("loaded_skills")
-    if loaded_skills:
-        try:
-            skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
-            if skill_prompts:
-                human_message += f"\n\n[APPLIED SKILLS]{skill_prompts}"
-        except Exception as e:
-            logger.warning(f"Failed to inject skills: {e}")
+    # loaded_skills = state.get("loaded_skills")
+    # if loaded_skills:
+    #     try:
+    #         skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
+    #         if skill_prompts:
+    #             human_message += f"\n\n[APPLIED SKILLS]{skill_prompts}"
+    #     except Exception as e:
+    #         logger.warning(f"Failed to inject skills: {e}")
 
 
     # Phase C: Schema Summarization (replaces profiles_json in prompt)
@@ -513,22 +513,23 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
             logger.warning("SCHEMA_SUMMARIZATION phase failed: %s", exc)
 
     # Phase D: Ambiguity Detection
-    if schema_ambiguity_detect and profile_details:
-        try:
-            notes = await run_ambiguity_detection(profile_details, user_query, _llm)
-            if notes:
-                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
-                active_phases.append("SCHEMA_AMBIGUITY_DETECT")
-        except Exception as exc:
-            logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
+    # if schema_ambiguity_detect and profile_details:
+    #     try:
+    #         notes = await run_ambiguity_detection(profile_details, user_query, _llm)
+    #         if notes:
+    #             human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
+    #             active_phases.append("SCHEMA_AMBIGUITY_DETECT")
+    #     except Exception as exc:
+    #         logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
 
     # ── Langfuse trace metadata ───────────────────────────────────────────────
     try:
         trace_id = langfuse_client.get_current_trace_id()
         if trace_id:
-            langfuse_client.trace(
-                id=trace_id,
-                tags=[f"scoping_mode={scoping_mode}"],
+            langfuse_client._create_trace_tags_via_ingestion(
+                trace_id=trace_id, tags=[f"scoping_mode={scoping_mode}"]
+            )
+            langfuse_client.update_current_span(
                 metadata={
                     "active_schema_phases": active_phases,
                     "cache_hit_count": cache_hit_count,

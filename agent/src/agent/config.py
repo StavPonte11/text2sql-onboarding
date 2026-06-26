@@ -12,9 +12,10 @@ class AgentSettings(BaseSettings):
     ESCA_URL: str = "http://localhost:7010"
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
-    LLM_MODEL: str = "llama3.2:latest"
-    EMBEDDER_URL: str = "http://localhost:11434"
+    LLM_MODEL: str = "gemma4:e4b"
+    EMBEDDER_URL: str = "http://localhost:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
+    EMBEDDER_KEY: str = ""
     HYBRID_SEARCH_MAX_TABLES: int = 10
     MAX_PROFILES_TO_FETCH: int = 3
     PROFILE_FETCH_CONCURRENCY: int = Field(default=4, gt=0)

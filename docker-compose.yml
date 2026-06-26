@@ -404,6 +404,8 @@ services:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
+      secrets:
+        - deploy_key
     command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - ./backend/.env
@@ -429,9 +431,16 @@ services:
       - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
       - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
       - LANGFUSE_HOST=https://cloud.langfuse.com
+      - MINIO_HOST=minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - REDIS_URL=redis://redis:6379
+      - REDIS_SSL=false
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_started
       trino:
         condition: service_healthy
       openmetadata-server:
@@ -447,6 +456,8 @@ services:
     build:
       context: .
       dockerfile: ./agent/Dockerfile
+      secrets:
+        - deploy_key
     env_file:
       - ./agent/.env
     ports:
@@ -508,3 +519,6 @@ volumes:
   es-data: null
   db-data: null
 
+secrets:
+  deploy_key:
+    file: ./deploy_key

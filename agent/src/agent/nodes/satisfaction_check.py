@@ -152,10 +152,8 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
     fail_count = prior_fail_count + (1 if failures else 0)
 
     try:
-        trace_id = langfuse_client.get_current_trace_id()
-        if trace_id:
-            langfuse_client.trace(
-                id=trace_id,
+        if langfuse_client.get_current_trace_id():
+            langfuse_client.update_current_span(
                 metadata={
                     "satisfaction_failures": failures,
                     "satisfaction_fail_count": fail_count,

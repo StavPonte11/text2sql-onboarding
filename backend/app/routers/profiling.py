@@ -43,7 +43,6 @@ def _upsert_ai_summary(session: Session, table_id: str, summary: str) -> None:
     - If a human table_description exists: stores under 'ai_summary' key (non-destructive).
     - If no human description: also copies to 'table_description' so the agent can find it.
     """
-    from datetime import datetime
 
     existing = session.exec(
         select(EnrichmentVersion)
@@ -69,7 +68,9 @@ def _upsert_ai_summary(session: Session, table_id: str, summary: str) -> None:
     )
     session.add(ev)
     session.commit()
-    logger.info("[Profiling] Stored AI summary for table %s (v%d)", table_id, next_version)
+    logger.info(
+        "[Profiling] Stored AI summary for table %s (v%d)", table_id, next_version
+    )
 
 
 # ── Background worker ──────────────────────────────────────────────────────────
@@ -124,8 +125,8 @@ def _run_profile_job(table_id: str):
         profile.auto_insights = result.auto_insights
         profile.sample_data = result.sample_data
         profile.profile_json = result.profile_json
-        profile.cached_until = datetime.utcnow() + timedelta(hours=24)
-        profile.updated_at = datetime.utcnow()
+        profile.cached_until = datetime.now() + timedelta(hours=24)
+        profile.updated_at = datetime.now()
         session.add(profile)
         session.commit()
         session.refresh(profile)

@@ -1,79 +1,105 @@
-import { useState, memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useMutation } from '@tanstack/react-query';
 import { Alert, Button, Divider, Input, Modal, Select, Space, Spin, Switch, Tag } from 'antd';
-import { Bot, CheckCircle, Play, Send, ShieldAlert, XCircle, Copy, Check, Sparkles, Terminal, FileText, Activity, HelpCircle, AlertTriangle, CheckSquare, Code, Database, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import axios from 'axios';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  Check,
+  CheckCircle,
+  CheckSquare,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Code,
+  Copy,
+  Database,
+  FileText,
+  HelpCircle,
+  Play,
+  Send,
+  Sparkles,
+  Terminal,
+  XCircle,
+} from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 import { v4 as uuidv4 } from 'uuid';
-import { motion, AnimatePresence } from 'framer-motion';
-import axios from 'axios';
 
 import { agentApi } from '../api/agent';
 import { AgentGraph } from '../components/AgentGraph';
-import { TraceTimeline, highlightJson } from '../components/TraceTimeline';
 import { SchemaPlanDisplay } from '../components/SchemaPlanDisplay';
+import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
+
 import type { ChatRequest, ChatResponse } from '../api/agent';
 
 import styles from './AgentTestingPage.module.css';
 
 const formatLabel = (str: string) => {
-  return str.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  return str
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 };
 
 const stepDescriptions: Record<string, { label: string; desc: string }> = {
   validate_config: {
-    label: "Config Validation",
-    desc: "Verifying configuration settings and database connection health."
+    label: 'Config Validation',
+    desc: 'Verifying configuration settings and database connection health.',
   },
   init_flags: {
-    label: "Initialize Flags",
-    desc: "Loading active feature flags and system override settings."
+    label: 'Initialize Flags',
+    desc: 'Loading active feature flags and system override settings.',
   },
   init_skills: {
-    label: "Load Skills",
-    desc: "Initializing specialized system skills and database rules."
+    label: 'Load Skills',
+    desc: 'Initializing specialized system skills and database rules.',
   },
   extractor: {
-    label: "Extract intent",
-    desc: "Parsing user query to extract table entities, filters, and fields."
+    label: 'Extract intent',
+    desc: 'Parsing user query to extract table entities, filters, and fields.',
   },
   schema_explorer: {
-    label: "Explore Schema",
-    desc: "Exploring database catalog, matching candidates, and scanning schemas."
+    label: 'Explore Schema',
+    desc: 'Exploring database catalog, matching candidates, and scanning schemas.',
   },
   query_builder: {
-    label: "Build Query",
-    desc: "Synthesizing proposed schema plan and building raw Trino SQL query."
+    label: 'Build Query',
+    desc: 'Synthesizing proposed schema plan and building raw Trino SQL query.',
   },
   satisfaction_check: {
-    label: "Verify SQL",
-    desc: "Validating SQL syntax, schema references, and running dry execution tests."
+    label: 'Verify SQL',
+    desc: 'Validating SQL syntax, schema references, and running dry execution tests.',
   },
   refiner: {
-    label: "Refine Query",
-    desc: "Applying correction feedback loops to optimize SQL structure."
+    label: 'Refine Query',
+    desc: 'Applying correction feedback loops to optimize SQL structure.',
   },
   finalizer: {
-    label: "Finalize Output",
-    desc: "Compiling query explanation, formatting schema plan, and wrapping outputs."
-  }
+    label: 'Finalize Output',
+    desc: 'Compiling query explanation, formatting schema plan, and wrapping outputs.',
+  },
 };
 
 const ThinkingProcess = memo(({ path }: { path: string[] }) => {
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div style={{
-      width: '100%',
-      maxWidth: '600px',
-      background: 'rgba(15, 23, 42, 0.4)',
-      border: '1px solid rgba(255, 255, 255, 0.06)',
-      borderRadius: '12px',
-      overflow: 'hidden',
-      marginTop: 16,
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
-      backdropFilter: 'blur(8px)',
-    }}>
+    <div
+      style={{
+        width: '100%',
+        maxWidth: '600px',
+        background: 'rgba(15, 23, 42, 0.4)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        marginTop: 16,
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+        backdropFilter: 'blur(8px)',
+      }}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
         style={{
@@ -88,18 +114,30 @@ const ThinkingProcess = memo(({ path }: { path: string[] }) => {
           cursor: 'pointer',
           fontSize: '13px',
           fontWeight: 500,
-          borderBottom: expanded ? '1px solid rgba(255, 255, 255, 0.06)' : 'none'
+          borderBottom: expanded ? '1px solid rgba(255, 255, 255, 0.06)' : 'none',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Activity size={14} className={styles.pulseIcon} />
-          <span>Agent Thought Process {path.length > 0 ? `(${path.length} steps executed)` : '(Initializing...)'}</span>
+          <span>
+            Agent Thought Process{' '}
+            {path.length > 0 ? `(${path.length} steps executed)` : '(Initializing...)'}
+          </span>
         </div>
         {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
-      
+
       {expanded && (
-        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '250px', overflowY: 'auto' }}>
+        <div
+          style={{
+            padding: '16px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            maxHeight: '250px',
+            overflowY: 'auto',
+          }}
+        >
           {path.length === 0 ? (
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
               <div style={{ marginTop: 2 }}>
@@ -117,7 +155,10 @@ const ThinkingProcess = memo(({ path }: { path: string[] }) => {
           ) : (
             path.map((step, idx) => {
               const isActive = idx === path.length - 1;
-              const meta = stepDescriptions[step] || { label: formatLabel(step), desc: "Executing agent step node." };
+              const meta = stepDescriptions[step] || {
+                label: formatLabel(step),
+                desc: 'Executing agent step node.',
+              };
               return (
                 <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                   <div style={{ marginTop: 2 }}>
@@ -128,7 +169,13 @@ const ThinkingProcess = memo(({ path }: { path: string[] }) => {
                     )}
                   </div>
                   <div style={{ textAlign: 'left' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 600, color: isActive ? '#38BDF8' : 'var(--text-h)' }}>
+                    <div
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: isActive ? '#38BDF8' : 'var(--text-h)',
+                      }}
+                    >
                       {meta.label}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: 2 }}>
@@ -149,7 +196,7 @@ const CollapsibleTraceBlock = ({
   label,
   content,
   themeColor,
-  defaultExpanded = true
+  defaultExpanded = true,
 }: {
   label: string;
   content: string;
@@ -167,8 +214,9 @@ const CollapsibleTraceBlock = ({
   };
 
   const trimmed = content?.trim() || '';
-  const isJson = (trimmed.startsWith('{') && trimmed.endsWith('}')) || 
-                 (trimmed.startsWith('[') && trimmed.endsWith(']'));
+  const isJson =
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'));
 
   let formattedContent = content;
   if (isJson) {
@@ -189,15 +237,17 @@ const CollapsibleTraceBlock = ({
   `;
 
   return (
-    <div style={{
-      border: `1px solid rgba(255, 255, 255, 0.08)`,
-      borderRadius: '8px',
-      overflow: 'hidden',
-      background: 'rgba(15, 23, 42, 0.3)',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    }}>
+    <div
+      style={{
+        border: `1px solid rgba(255, 255, 255, 0.08)`,
+        borderRadius: '8px',
+        overflow: 'hidden',
+        background: 'rgba(15, 23, 42, 0.3)',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+      }}
+    >
       <style dangerouslySetInnerHTML={{ __html: jsonHighlightStyles }} />
-      <div 
+      <div
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex',
@@ -212,19 +262,28 @@ const CollapsibleTraceBlock = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            backgroundColor: themeColor,
-            boxShadow: `0 0 8px ${themeColor}`,
-          }} />
-          <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-h)', letterSpacing: '0.5px' }}>
+          <div
+            style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: themeColor,
+              boxShadow: `0 0 8px ${themeColor}`,
+            }}
+          />
+          <span
+            style={{
+              fontSize: '12px',
+              fontWeight: 700,
+              color: 'var(--text-h)',
+              letterSpacing: '0.5px',
+            }}
+          >
             {label}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <button 
+          <button
             onClick={handleCopy}
             style={{
               background: 'rgba(255, 255, 255, 0.04)',
@@ -259,23 +318,25 @@ const CollapsibleTraceBlock = ({
           </button>
         </div>
       </div>
-      
+
       {expanded && (
-        <pre style={{
-          margin: 0,
-          padding: '16px',
-          fontSize: '13px',
-          fontFamily: 'var(--mono), monospace',
-          color: '#E2E8F0',
-          overflowX: 'auto',
-          maxHeight: '400px',
-          background: '#0B0F19',
-          textAlign: 'left',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-          lineHeight: '1.5',
-          borderLeft: `3px solid ${themeColor}`,
-        }}>
+        <pre
+          style={{
+            margin: 0,
+            padding: '16px',
+            fontSize: '13px',
+            fontFamily: 'var(--mono), monospace',
+            color: '#E2E8F0',
+            overflowX: 'auto',
+            maxHeight: '400px',
+            background: '#0B0F19',
+            textAlign: 'left',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            lineHeight: '1.5',
+            borderLeft: `3px solid ${themeColor}`,
+          }}
+        >
           {isJson ? (
             <code dangerouslySetInnerHTML={{ __html: highlightJson(formattedContent) }} />
           ) : (
@@ -290,52 +351,54 @@ const CollapsibleTraceBlock = ({
 // ----------------------------------------------------------------------
 // AgentTestingHeader
 // ----------------------------------------------------------------------
-const AgentTestingHeader = memo(({ 
-  hitlEnabled, 
-  setHitlEnabled, 
-  allowedStatuses, 
-  setAllowedStatuses 
-}: { 
-  hitlEnabled: boolean, 
-  setHitlEnabled: (v: boolean) => void, 
-  allowedStatuses: string[], 
-  setAllowedStatuses: (v: string[]) => void 
-}) => (
-  <div className={styles.header}>
-    <div>
-      <h1 className={styles.title}>
-        <Bot size={28} color="var(--accent)" />
-        Text2SQL Agent Sandbox
-      </h1>
-      <p className={styles.subtitle}>
-        Test the agent directly. Toggle human-in-the-loop to approve or reject the agent's work.
-      </p>
-    </div>
-    <div className={styles.controls}>
-      <div className={styles.controlItem}>
-        <span>Human in the Loop</span>
-        <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
+const AgentTestingHeader = memo(
+  ({
+    hitlEnabled,
+    setHitlEnabled,
+    allowedStatuses,
+    setAllowedStatuses,
+  }: {
+    hitlEnabled: boolean;
+    setHitlEnabled: (v: boolean) => void;
+    allowedStatuses: string[];
+    setAllowedStatuses: (v: string[]) => void;
+  }) => (
+    <div className={styles.header}>
+      <div>
+        <h1 className={styles.title}>
+          <Bot size={28} color="var(--accent)" />
+          Text2SQL Agent Sandbox
+        </h1>
+        <p className={styles.subtitle}>
+          Test the agent directly. Toggle human-in-the-loop to approve or reject the agent's work.
+        </p>
       </div>
-      <div className={styles.controlItem}>
-        <span>Table Status</span>
-        <Select
-          mode="multiple"
-          value={allowedStatuses}
-          onChange={setAllowedStatuses}
-          style={{ minWidth: 200 }}
-          placeholder="Select allowed statuses"
-          options={[
-            { value: 'production', label: 'Production' },
-            { value: 'verified', label: 'Verified' },
-            { value: 'sandbox', label: 'Sandbox' },
-            { value: 'draft', label: 'Draft' },
-            { value: 'degraded', label: 'Degraded' },
-          ]}
-        />
+      <div className={styles.controls}>
+        <div className={styles.controlItem}>
+          <span>Human in the Loop</span>
+          <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
+        </div>
+        <div className={styles.controlItem}>
+          <span>Table Status</span>
+          <Select
+            mode="multiple"
+            value={allowedStatuses}
+            onChange={setAllowedStatuses}
+            style={{ minWidth: 200 }}
+            placeholder="Select allowed statuses"
+            options={[
+              { value: 'production', label: 'Production' },
+              { value: 'verified', label: 'Verified' },
+              { value: 'sandbox', label: 'Sandbox' },
+              { value: 'draft', label: 'Draft' },
+              { value: 'degraded', label: 'Degraded' },
+            ]}
+          />
+        </div>
       </div>
     </div>
-  </div>
-));
+  ),
+);
 AgentTestingHeader.displayName = 'AgentTestingHeader';
 
 // ----------------------------------------------------------------------
@@ -346,13 +409,13 @@ const AgentChatInput = ({
   setQuery,
   onSubmit,
   disabled,
-  loading
+  loading,
 }: {
-  query: string,
-  setQuery: (q: string) => void,
-  onSubmit: () => void,
-  disabled: boolean,
-  loading: boolean
+  query: string;
+  setQuery: (q: string) => void;
+  onSubmit: () => void;
+  disabled: boolean;
+  loading: boolean;
 }) => (
   <div className={`${styles.glassCard} ${styles.animateIn}`}>
     <Space.Compact className={styles.chatInputWrapper}>
@@ -385,13 +448,13 @@ const AgentApprovalForm = ({
   threadId,
   isResuming,
   onApprove,
-  onReject
+  onReject,
 }: {
-  chatResponse: ChatResponse,
-  threadId: string,
-  isResuming: boolean,
-  onApprove: (resumeValue?: any) => void,
-  onReject: (feedback: string, category?: string) => void
+  chatResponse: ChatResponse;
+  threadId: string;
+  isResuming: boolean;
+  onApprove: (resumeValue?: any) => void;
+  onReject: (feedback: string, category?: string) => void;
 }) => {
   const [rejectionCategory, setRejectionCategory] = useState<string | undefined>(undefined);
   const [suggestedFixes, setSuggestedFixes] = useState<string[]>([]);
@@ -401,10 +464,11 @@ const AgentApprovalForm = ({
 
   const interrupt = chatResponse.interrupt_details || {};
   const interruptType = interrupt.type;
-  
+
   const sqlQuery = chatResponse.sql_query || (interrupt.sql_query as string) || '';
   const schemaPlan = chatResponse.schema_plan || (interrupt.schema_plan as string) || '';
-  const sqlExplanation = chatResponse.sql_explanation || (interrupt.sql_explanation as string) || '';
+  const sqlExplanation =
+    chatResponse.sql_explanation || (interrupt.sql_explanation as string) || '';
 
   const handleCopy = () => {
     if (sqlQuery) {
@@ -418,7 +482,8 @@ const AgentApprovalForm = ({
     setRejectionCategory(val);
     if (val && threadId) {
       setLoadingFixes(true);
-      agentApi.suggestFixes(threadId, val)
+      agentApi
+        .suggestFixes(threadId, val)
         .then(setSuggestedFixes)
         .finally(() => setLoadingFixes(false));
     } else {
@@ -428,11 +493,13 @@ const AgentApprovalForm = ({
 
   // Ambiguity Resolution UI
   if (interruptType === 'schema_explorer_ambiguity') {
-    const message = (interrupt.message as string) || 'We found multiple tables matching your query. Please select the correct option:';
+    const message =
+      (interrupt.message as string) ||
+      'We found multiple tables matching your query. Please select the correct option:';
     const options = (interrupt.options as string[]) || [];
 
     return (
-      <motion.div 
+      <motion.div
         className={styles.interruptCardAmbiguity}
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
@@ -445,9 +512,7 @@ const AgentApprovalForm = ({
           </div>
         </div>
 
-        <div className={styles.ambiguityMessage}>
-          {message}
-        </div>
+        <div className={styles.ambiguityMessage}>{message}</div>
 
         <div className={styles.ambiguityOptionsList}>
           {options.map((opt) => (
@@ -468,9 +533,11 @@ const AgentApprovalForm = ({
 
   // Escalation / Failure UI
   if (interruptType === 'hitl_escalation') {
-    const reason = (interrupt.reason as string) || 'The agent hit a loop or failed to solve the request automatically.';
+    const reason =
+      (interrupt.reason as string) ||
+      'The agent hit a loop or failed to solve the request automatically.';
     return (
-      <motion.div 
+      <motion.div
         className={styles.interruptCardEscalation}
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
@@ -492,7 +559,9 @@ const AgentApprovalForm = ({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
-            <div style={{ marginBottom: 8, fontWeight: 500, color: 'var(--text-muted)' }}>Help the agent correct course:</div>
+            <div style={{ marginBottom: 8, fontWeight: 500, color: 'var(--text-muted)' }}>
+              Help the agent correct course:
+            </div>
             <Input.TextArea
               className={styles.glowInput}
               rows={3}
@@ -519,7 +588,7 @@ const AgentApprovalForm = ({
 
   // Query Approval (Verification Gateway) UI
   return (
-    <motion.div 
+    <motion.div
       className={styles.interruptCardApproval}
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
@@ -535,7 +604,16 @@ const AgentApprovalForm = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 16 }}>
         {schemaPlan && (
           <div>
-            <div style={{ marginBottom: 8, fontWeight: 600, color: 'var(--text-h)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div
+              style={{
+                marginBottom: 8,
+                fontWeight: 600,
+                color: 'var(--text-h)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
               <Database size={15} color="#faad14" />
               <span>Proposed Schema Plan</span>
             </div>
@@ -545,7 +623,16 @@ const AgentApprovalForm = ({
 
         {sqlQuery && (
           <div>
-            <div style={{ marginBottom: 8, fontWeight: 600, color: 'var(--text-h)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div
+              style={{
+                marginBottom: 8,
+                fontWeight: 600,
+                color: 'var(--text-h)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
               <Code size={15} color="#faad14" />
               <span>Generated SQL Query</span>
             </div>
@@ -559,7 +646,7 @@ const AgentApprovalForm = ({
               </div>
               <pre className={styles.codeBlock}>{sqlQuery}</pre>
             </div>
-            
+
             {sqlExplanation && (
               <div className={styles.explanationWrapper} style={{ marginTop: 12 }}>
                 <div className={styles.explanationHeader}>
@@ -580,7 +667,11 @@ const AgentApprovalForm = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <div style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}>Rejection Category (If rejecting)</div>
+            <div
+              style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}
+            >
+              Rejection Category (If rejecting)
+            </div>
             <Select
               style={{ width: '100%' }}
               placeholder="Select rejection reason..."
@@ -594,25 +685,44 @@ const AgentApprovalForm = ({
               ]}
             />
           </div>
-          
+
           <div>
-            <div style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}>Quick Feedback Suggestions</div>
+            <div
+              style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}
+            >
+              Quick Feedback Suggestions
+            </div>
             {loadingFixes ? (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}><Spin size="small" /> Generating...</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>
+                <Spin size="small" /> Generating...
+              </div>
             ) : suggestedFixes.length > 0 ? (
               <Space wrap size={[4, 4]}>
-                {suggestedFixes.map(fix => (
-                  <Button key={fix} size="small" onClick={() => setFeedback(fix)} style={{ fontSize: 11 }}>{fix}</Button>
+                {suggestedFixes.map((fix) => (
+                  <Button
+                    key={fix}
+                    size="small"
+                    onClick={() => setFeedback(fix)}
+                    style={{ fontSize: 11 }}
+                  >
+                    {fix}
+                  </Button>
                 ))}
               </Space>
             ) : (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>Select category to generate quick fixes</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>
+                Select category to generate quick fixes
+              </div>
             )}
           </div>
         </div>
 
         <div>
-          <div style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}>Feedback / Correction Instructions</div>
+          <div
+            style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}
+          >
+            Feedback / Correction Instructions
+          </div>
           <Input.TextArea
             className={styles.glowInput}
             rows={2}
@@ -653,11 +763,11 @@ const AgentApprovalForm = ({
 const AgentResultDisplay = ({
   chatResponse,
   onReset,
-  onViewTrace
+  onViewTrace,
 }: {
-  chatResponse: ChatResponse,
-  onReset: () => void,
-  onViewTrace: () => void
+  chatResponse: ChatResponse;
+  onReset: () => void;
+  onViewTrace: () => void;
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -670,7 +780,7 @@ const AgentResultDisplay = ({
   };
 
   return (
-    <motion.div 
+    <motion.div
       className={styles.completedCard}
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
@@ -684,7 +794,9 @@ const AgentResultDisplay = ({
           <span className={styles.completedStatus}>TASK COMPLETED</span>
           <h2 className={styles.completedTitle}>Agent Execution Successful</h2>
         </div>
-        <Tag color="success" className={styles.completedTag}>Done</Tag>
+        <Tag color="success" className={styles.completedTag}>
+          Done
+        </Tag>
       </div>
 
       <div className={styles.completedGrid}>
@@ -726,7 +838,9 @@ const AgentResultDisplay = ({
                   <span>SQL Explanation</span>
                 </div>
                 <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatResponse.sql_explanation}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {chatResponse.sql_explanation}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}
@@ -752,17 +866,17 @@ const AgentResultDisplay = ({
       <Divider className={styles.completedDivider} />
 
       <div className={styles.completedActions}>
-        <Button 
+        <Button
           type="primary"
-          onClick={onReset} 
-          icon={<Send size={16} />} 
+          onClick={onReset}
+          icon={<Send size={16} />}
           className={styles.completedBtnPrimary}
         >
           Start New Request
         </Button>
-        <Button 
-          onClick={onViewTrace} 
-          icon={<Activity size={16} />} 
+        <Button
+          onClick={onViewTrace}
+          icon={<Activity size={16} />}
           className={styles.completedBtnSecondary}
         >
           View Full Trace
@@ -803,8 +917,9 @@ export function AgentTestingPage() {
     const maxAttempts = 5;
 
     const fetchTrace = () => {
-      axios.get(`/api/agent/traces/${traceId}`)
-        .then(res => {
+      axios
+        .get(`/api/agent/traces/${traceId}`)
+        .then((res) => {
           const data = res.data || [];
           if (data.length > 0) {
             setTraceSpans(data);
@@ -817,8 +932,8 @@ export function AgentTestingPage() {
             setLoadingTrace(false);
           }
         })
-        .catch(err => {
-          console.error("Failed to fetch trace", err);
+        .catch((err) => {
+          console.error('Failed to fetch trace', err);
           if (attempts < maxAttempts) {
             attempts++;
             setTimeout(fetchTrace, 2000);
@@ -861,12 +976,12 @@ export function AgentTestingPage() {
           });
         }
       } catch (err) {
-        console.error("SSE parse error:", err);
+        console.error('SSE parse error:', err);
       }
     };
 
     eventSource.onerror = (err) => {
-      console.error("SSE connection error:", err);
+      console.error('SSE connection error:', err);
       eventSource.close();
     };
 
@@ -887,7 +1002,7 @@ export function AgentTestingPage() {
     setTraceId(null);
     setSelectedStep(null);
     setSelectedStepIndex(null);
-    
+
     // Delay mutation slightly to allow SSE EventSource to connect
     setTimeout(() => {
       chatMutation.mutate({
@@ -939,7 +1054,7 @@ export function AgentTestingPage() {
   const getSelectedSpan = () => {
     if (!selectedStep || selectedStepIndex === null) return null;
     const target = selectedStep.toLowerCase().replace(/_/g, '');
-    const matches = traceSpans.filter(s => {
+    const matches = traceSpans.filter((s) => {
       const name = s.span_name.toLowerCase().replace(/_/g, '');
       return name.includes(target) || target.includes(name);
     });
@@ -958,21 +1073,24 @@ export function AgentTestingPage() {
   const selectedSpan = getSelectedSpan();
 
   const formatLabel = (str: string) => {
-    return str.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return str
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
   };
 
   const isPendingInitial = chatMutation.isPending && !chatResponse;
 
   return (
     <div className={styles.agentTestingPage}>
-      <AgentTestingHeader 
+      <AgentTestingHeader
         hitlEnabled={hitlEnabled}
         setHitlEnabled={setHitlEnabled}
         allowedStatuses={allowedStatuses}
         setAllowedStatuses={setAllowedStatuses}
       />
 
-      <AgentChatInput 
+      <AgentChatInput
         query={query}
         setQuery={setQuery}
         onSubmit={handleSubmit}
@@ -985,7 +1103,9 @@ export function AgentTestingPage() {
           type="error"
           showIcon
           message="Agent Error"
-          description={chatMutation.error?.message || 'An error occurred while communicating with the agent.'}
+          description={
+            chatMutation.error?.message || 'An error occurred while communicating with the agent.'
+          }
           style={{ marginBottom: 24, borderRadius: 8 }}
         />
       )}
@@ -1002,15 +1122,15 @@ export function AgentTestingPage() {
 
       <AnimatePresence mode="wait">
         {(chatMutation.isPending || chatResponse || threadId) && (
-          <motion.div 
+          <motion.div
             key="graph"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             style={{ marginBottom: 24 }}
           >
-            <AgentGraph 
-              threadId={threadId!} 
-              executionPath={executionPath} 
+            <AgentGraph
+              threadId={threadId!}
+              executionPath={executionPath}
               onNodeClick={handleNodeClick}
             />
           </motion.div>
@@ -1019,7 +1139,15 @@ export function AgentTestingPage() {
 
       <Modal
         title={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '95%', color: 'var(--text-h)' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              width: '95%',
+              color: 'var(--text-h)',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {selectedSpan?.status === 'error' ? (
                 <XCircle size={20} color="#ef4444" />
@@ -1027,7 +1155,9 @@ export function AgentTestingPage() {
                 <CheckCircle size={20} color="#10b981" />
               )}
               <div>
-                <h4 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: 'var(--text-h)' }}>
+                <h4
+                  style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: 'var(--text-h)' }}
+                >
                   {selectedStep ? formatLabel(selectedStep) : ''}
                 </h4>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -1054,8 +1184,8 @@ export function AgentTestingPage() {
           setSelectedStepIndex(null);
         }}
         footer={[
-          <Button 
-            key="close" 
+          <Button
+            key="close"
             onClick={() => {
               setSelectedStep(null);
               setSelectedStepIndex(null);
@@ -1063,26 +1193,26 @@ export function AgentTestingPage() {
             style={{
               background: 'rgba(255, 255, 255, 0.05)',
               border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: 'var(--text-h)'
+              color: 'var(--text-h)',
             }}
           >
             Close Details
-          </Button>
+          </Button>,
         ]}
         width={750}
-        styles={{ 
-          content: { 
-            background: '#0F172A', 
+        styles={{
+          content: {
+            background: '#0F172A',
             border: '1px solid #1E293B',
             borderRadius: '16px',
-            boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.5)'
+            boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.5)',
           },
-          header: { 
+          header: {
             background: 'transparent',
             borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
             paddingBottom: '14px',
-            marginBottom: '16px'
-          }
+            marginBottom: '16px',
+          },
         }}
       >
         <div style={{ marginTop: 16 }}>
@@ -1104,9 +1234,23 @@ export function AgentTestingPage() {
               )}
             </div>
           ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+            <div
+              style={{
+                color: 'var(--text-muted)',
+                fontSize: 13,
+                textAlign: 'center',
+                padding: '24px 0',
+              }}
+            >
               {loadingTrace ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
                   <Spin />
                   <span>Loading execution logs from Langfuse...</span>
                 </div>
@@ -1122,7 +1266,7 @@ export function AgentTestingPage() {
         {chatResponse && !chatMutation.isPending && (
           <motion.div key="result" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             {chatResponse.status === 'interrupted' ? (
-              <AgentApprovalForm 
+              <AgentApprovalForm
                 chatResponse={chatResponse}
                 threadId={threadId!}
                 isResuming={isResuming}
@@ -1130,7 +1274,7 @@ export function AgentTestingPage() {
                 onReject={handleReject}
               />
             ) : (
-              <AgentResultDisplay 
+              <AgentResultDisplay
                 chatResponse={chatResponse}
                 onReset={handleReset}
                 onViewTrace={() => setTraceModalVisible(true)}
@@ -1146,9 +1290,9 @@ export function AgentTestingPage() {
         onCancel={() => setTraceModalVisible(false)}
         footer={null}
         width={800}
-        styles={{ 
+        styles={{
           content: { background: '#0F172A', border: '1px solid #1E293B' },
-          header: { background: 'transparent' }
+          header: { background: 'transparent' },
         }}
       >
         {traceId && <TraceTimeline traceId={traceId} />}

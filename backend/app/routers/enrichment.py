@@ -60,7 +60,7 @@ def create_enrichment(
                 f"({', '.join(changed_keys)}) → degraded."
             )
             table.status = TableStatus.degraded
-            table.updated_at = datetime.utcnow()
+            table.updated_at = datetime.now()
             session.add(table)
 
     ev = EnrichmentVersion(

@@ -8,18 +8,19 @@ Endpoints:
   POST /agent/chat        — Start a new query or resume after human approval/rejection
 """
 
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
+import httpx
+import redis.asyncio as redis
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
-import redis.asyncio as redis
-import asyncio
-import httpx
-from datetime import datetime, timedelta
 
 from app.config import settings
 
@@ -72,28 +73,26 @@ class ChatResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-from contextlib import asynccontextmanager
-
 @asynccontextmanager
 async def _get_mcp_client():
-    url = f"{settings.AGENT_URL}/sse"
-    async with sse_client(url, timeout=300.0, sse_read_timeout=300.0) as streams:
-        async with ClientSession(*streams) as session:
+    url = f"{settings.AGENT_URL}/mcp"
+    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             yield session
 
 
 async def _call_agent_mcp(tool_arguments: dict) -> dict:
     """
-    Connects to the agent MCP server over SSE, initializes the session,
+    Connects to the agent MCP server over Streamable HTTP, initializes the session,
     calls the 'chat_with_agent' tool, and returns the parsed result.
     """
-    url = f"{settings.AGENT_URL}/sse"
+    url = f"{settings.AGENT_URL}/mcp"
     logger.debug("Connecting to agent MCP: %s  args=%s", url, tool_arguments)
 
     try:
-        async with sse_client(url, timeout=300.0, sse_read_timeout=300.0) as streams:
-            async with ClientSession(*streams) as session:
+        async with streamablehttp_client(url) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
                 # Call the tool using the MCP client session
@@ -178,20 +177,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
 @router.get("/stream/{thread_id}")
 async def stream_agent_execution(thread_id: str):
     """Subscribe to Redis PubSub for agent graph execution events and yield them as SSE."""
+
     async def event_generator():
         r = None
         pubsub = None
         try:
             r = redis.from_url(
-                settings.REDIS_URL,
-                health_check_interval=30,
-                retry_on_timeout=True
+                settings.REDIS_URL, health_check_interval=30, retry_on_timeout=True
             )
             pubsub = r.pubsub()
             await pubsub.subscribe(f"agent_stream:{thread_id}")
             while True:
                 try:
-                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
                     if message and message["type"] == "message":
                         data = message["data"].decode("utf-8")
                         yield f"data: {data}\n\n"
@@ -202,7 +202,9 @@ async def stream_agent_execution(thread_id: str):
                     yield ": keep-alive\n\n"
                     continue
                 except redis.exceptions.ConnectionError as e:
-                    logger.warning("Redis connection error, attempting to reconnect... %s", e)
+                    logger.warning(
+                        "Redis connection error, attempting to reconnect... %s", e
+                    )
                     await asyncio.sleep(1)
                     try:
                         if pubsub:
@@ -231,22 +233,25 @@ async def stream_agent_execution(thread_id: str):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+
 @router.get("/traces/{trace_id}")
 async def get_trace_timeline(trace_id: str):
     """Fetch trace from Langfuse and normalize observations for frontend timeline."""
     auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
     url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
-    
+
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, auth=auth)
         if resp.status_code != 200:
             if resp.status_code == 404:
                 return []
-            raise HTTPException(status_code=resp.status_code, detail=f"Langfuse error: {resp.text}")
-        
+            raise HTTPException(
+                status_code=resp.status_code, detail=f"Langfuse error: {resp.text}"
+            )
+
         data = resp.json()
         observations = data.get("observations", [])
-        
+
         # Normalize
         timeline = []
         for obs in observations:
@@ -255,27 +260,32 @@ async def get_trace_timeline(trace_id: str):
             duration_ms = 0
             if start_time_str and end_time_str:
                 try:
-                    start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                    start_dt = datetime.fromisoformat(
+                        start_time_str.replace("Z", "+00:00")
+                    )
                     end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
                     duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
                 except Exception:
                     pass
 
-            timeline.append({
-                "span_name": obs.get("name") or obs.get("type"),
-                "start_time": start_time_str,
-                "duration_ms": duration_ms,
-                "input_tokens": obs.get("promptTokens", 0),
-                "output_tokens": obs.get("completionTokens", 0),
-                "model": obs.get("model") or "N/A",
-                "status": "success" if not obs.get("statusMessage") else "error",
-                "input_preview": str(obs.get("input", "")),
-                "output_preview": str(obs.get("output", "")),
-            })
-            
+            timeline.append(
+                {
+                    "span_name": obs.get("name") or obs.get("type"),
+                    "start_time": start_time_str,
+                    "duration_ms": duration_ms,
+                    "input_tokens": obs.get("promptTokens", 0),
+                    "output_tokens": obs.get("completionTokens", 0),
+                    "model": obs.get("model") or "N/A",
+                    "status": "success" if not obs.get("statusMessage") else "error",
+                    "input_preview": str(obs.get("input", "")),
+                    "output_preview": str(obs.get("output", "")),
+                }
+            )
+
         # Sort by start time
         timeline.sort(key=lambda x: x["start_time"] or "")
         return timeline
+
 
 @router.post("/suggest_fixes")
 async def suggest_fixes(req: SuggestFixesRequest):

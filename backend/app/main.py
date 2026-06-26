@@ -41,9 +41,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not settings.OPENAI_API_KEY:
-        logger.error("Startup failed: OPENAI_API_KEY is missing. LLM judge cannot run.")
-        raise RuntimeError("OPENAI_API_KEY is missing")
+    if not settings.LLM_API_KEY:
+        logger.warning("Startup failed: LLM_API_KEY is missing. LLM judge cannot run.")
     try:
         create_db_and_tables()
         start_scheduler()

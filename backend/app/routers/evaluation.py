@@ -14,8 +14,8 @@ On fail  → table.status = sandbox   + alert created
 """
 
 import logging
-import random
 from datetime import datetime
+from typing import Literal
 
 import requests
 from core.db.engine import engine, get_session
@@ -34,14 +34,52 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from langfuse import observe
+from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
-from app.services.evaluator import TextToSQLEvaluator
+from app.config import settings
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evaluation"])
+
+
+class EvalAPIRequest(BaseModel):
+    tables_names: list[str]
+    dataset_name: str
+
+
+class EvalAPIQuestionMetrics(BaseModel):
+    exact_match: float
+    exact_execution_accuracy: float
+    contains_execution_accuracy: float
+
+
+class EvalAPIQuestionResult(BaseModel):
+    question_id: str
+    generated_sql: str | None = None
+    metrics: EvalAPIQuestionMetrics
+    status: Literal["pass", "fail"]
+    error_message: str | None = None
+    row_count: int | None = None
+
+
+class EvalAPIOverallMetrics(BaseModel):
+    contains_execution_accuracy: float
+    exact_execution_accuracy: float
+    exact_match: float
+    total_questions: int
+    pass_rate: float
+    fail_rate: float
+
+
+class EvalAPIResponse(BaseModel):
+    run_id: str
+    status: Literal["completed", "failed"]
+    overall_metrics: EvalAPIOverallMetrics
+    results: list[EvalAPIQuestionResult]
+
 
 # Name of the single shared Langfuse dataset for all production table questions
 PRODUCTION_DATASET_NAME = "text2sql_production"
@@ -111,66 +149,64 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         return -1.0
 
     if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
-        metadata={"table_id": table_id, "run_id": run_id},
-        tags=["eval-run", f"table:{table_id}"],
-    )
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            metadata={"table_id": table_id, "run_id": run_id},
+            tags=["eval-run", f"table:{table_id}"],
+        )
 
-    # Score locally — stub returns 0.0 or 1.0 per question.
-    # MERGE: replace with real MCP/Trino calls via TextToSQLEvaluator.
+    table = session.get(Table, table_id)
+    dataset_name = f"text2sql_sandbox_{table_id}"
 
-    question_scores_contains: list[float] = [
-        float(random.choice([0, 1])) for _ in questions
-    ]
-    question_scores_exact: list[float] = [
-        float(random.choice([0, 1])) for _ in questions
-    ]
-    question_scores_ranking: list[float] = [
-        float(random.choice([0, 1])) for _ in questions
-    ]
-    logger.info(
-        f"[Eval] Scored {len(questions)} questions for table {table_id} (local stubs)"
-    )
+    if langfuse_client.enabled:
+        langfuse_client.ensure_dataset_synced(
+            dataset_name, _build_questions_payload(questions, table)
+        )
 
-    avg_score_contains = round(
-        sum(question_scores_contains) / len(question_scores_contains), 3
-    )
-    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = round(pass_count_contains / len(question_scores_contains), 3)
-    avg_score_exact = round(sum(question_scores_exact) / len(question_scores_exact), 3)
-    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    pass_rate_exact = round(pass_count_exact / len(question_scores_exact), 3)
-    avg_score_ranking = round(
-        sum(question_scores_ranking) / len(question_scores_ranking), 3
-    )
-    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    pass_rate_ranking = round(pass_count_ranking / len(question_scores_ranking), 3)
+    try:
+        req = EvalAPIRequest(tables_names=[table.name], dataset_name=dataset_name)
+        resp = requests.post(
+            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+            json=req.model_dump(),
+            timeout=600,
+        )
+        resp.raise_for_status()
+        eval_resp = EvalAPIResponse(**resp.json())
+        if eval_resp.status == "failed":
+            raise Exception("API returned failed status")
+    except Exception as e:
+        logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
+        run.status = EvalStatus.failed
+        run.score = -1.0
+        session.add(run)
+        session.commit()
+        return -1.0
 
-    run.score = avg_score_contains
-    run.pass_rate = pass_rate_contains
-    run.fail_rate = round(1.0 - pass_rate_contains, 3)
-    run.total_questions = len(questions)
+    metrics = eval_resp.overall_metrics
+    run.score = metrics.contains_execution_accuracy
+    run.pass_rate = metrics.pass_rate
+    run.fail_rate = metrics.fail_rate
+    run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now()
     run.dimension_averages = {
-        "contains_execution_accuracy": avg_score_contains,
-        "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking,
+        "contains_execution_accuracy": metrics.contains_execution_accuracy,
+        "exact_execution_accuracy": metrics.exact_execution_accuracy,
+        "exact_match": metrics.exact_match,
     }
     session.add(run)
 
-    for q, score in zip(questions, question_scores_contains, strict=False):
+    for q_res in eval_resp.results:
         session.add(
             EvalResult(
                 run_id=run_id,
-                question_id=q.id,
-                score=score,
-                status="pass" if score >= 0.50 else "fail",
+                question_id=q_res.question_id,
+                score=q_res.metrics.contains_execution_accuracy,
+                status=q_res.status,
             )
         )
 
     # Lifecycle: draft → sandbox on first evaluation only
-    table = session.get(Table, table_id)
     if table and table.status == TableStatus.draft:
         table.status = TableStatus.sandbox
         session.add(table)
@@ -178,15 +214,19 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     session.commit()
 
     logger.info(
-        f"[Eval] Table {table_id}: contains_exec_accuracy={avg_score_contains} "
-        f"exact_exec_accuracy={avg_score_exact} ranking_accuracy={avg_score_ranking} "
-        f"({len(questions)} questions, pass_rates=[{pass_rate_contains}, {pass_rate_exact}, {pass_rate_ranking}])"
+        f"[Eval] Table {table_id}: contains_exec_accuracy={metrics.contains_execution_accuracy} "
+        f"exact_exec_accuracy={metrics.exact_execution_accuracy} exact_match={metrics.exact_match} "
+        f"({metrics.total_questions} questions, pass_rate={metrics.pass_rate})"
     )
     if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
-        output={"score": avg_score_contains, "pass_rate": pass_rate_contains}
-    )
-    return avg_score_contains
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            output={
+                "score": metrics.contains_execution_accuracy,
+                "pass_rate": metrics.pass_rate,
+            },
+        )
+    return metrics.contains_execution_accuracy
 
 
 # ─── Phase A: measure baseline score on production dataset ────────────────────
@@ -195,19 +235,6 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 def _run_production_dataset_eval(
     session: Session, run_name_prefix: str, promotion_run_id: str
 ) -> float:
-    """
-    Measures baseline contains_execution_accuracy on the unified
-    'text2sql_production' Langfuse dataset.
-
-    Dataset lifecycle:
-      - If the dataset does NOT exist: build it fresh from every production
-        table's golden questions, then run evaluation on it.
-      - If the dataset ALREADY exists: use it as-is (questions are appended
-        on each admin approval via _sync_questions_to_production_dataset).
-
-    Returns the average contains_execution_accuracy score.
-    Returns 1.0 if there are no production tables (vacuously passing).
-    """
     prod_tables = session.exec(
         select(Table).where(Table.status == TableStatus.production)
     ).all()
@@ -216,7 +243,6 @@ def _run_production_dataset_eval(
         logger.info("[Promotion/Phase-A] No production tables — baseline score = 1.0")
         return 1.0
 
-    # Load all production question objects so we can persist per-question EvalResult rows
     all_production_questions: list[GoldenQuestion] = []
     for table in prod_tables:
         qs = session.exec(
@@ -225,8 +251,6 @@ def _run_production_dataset_eval(
         all_production_questions.extend(qs)
 
     if langfuse_client.enabled:
-        # Always sync — ensure_dataset_synced is idempotent (skips already-present questions).
-        # This covers: new dataset, empty dataset, or dataset missing recently added questions.
         all_questions_payload = []
         for table in prod_tables:
             qs_for_table = [
@@ -235,20 +259,12 @@ def _run_production_dataset_eval(
             all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
 
         if all_questions_payload:
-            logger.info(
-                f"[Promotion/Phase-A] Full sync of {len(all_questions_payload)} questions "
-                f"to '{PRODUCTION_DATASET_NAME}' (adds new, removes stale, updates changed)"
-            )
             try:
                 langfuse_client.sync_dataset(
                     PRODUCTION_DATASET_NAME, all_questions_payload
                 )
             except Exception as e:
                 logger.warning(f"[Promotion/Phase-A] Dataset sync failed: {e}")
-        else:
-            logger.info(
-                "[Promotion/Phase-A] No questions to sync — production tables have no golden questions"
-            )
 
     run = EvalRun(
         table_id=None,
@@ -260,181 +276,59 @@ def _run_production_dataset_eval(
     session.commit()
     session.refresh(run)
 
-    # Run evaluation against the production dataset
-    question_scores: list[float] = []
-    if langfuse_client.enabled:
-        try:
-            evaluator = TextToSQLEvaluator(
-                run_name=f"{run_name_prefix}-PhaseA",
-                session=session,
-                table_id="production-baseline",
-                run_id=run.id,
-                question_scores=question_scores,
-            )
-            evaluator.run_single_dataset(PRODUCTION_DATASET_NAME)
-        except Exception as e:
-            logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
+    table_names = [t.name for t in prod_tables]
+    try:
+        req = EvalAPIRequest(
+            tables_names=table_names, dataset_name=PRODUCTION_DATASET_NAME
+        )
+        resp = requests.post(
+            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+            json=req.model_dump(),
+            timeout=600,
+        )
+        resp.raise_for_status()
+        eval_resp = EvalAPIResponse(**resp.json())
+        if eval_resp.status == "failed":
+            raise Exception("API returned failed status")
+    except Exception as e:
+        logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
+        run.status = EvalStatus.failed
+        run.score = -1.0
+        session.add(run)
+        session.commit()
+        return -1.0
 
-    if not question_scores:
-        question_scores = [
-            float(random.choice([0, 1])) for _ in (all_production_questions or range(5))
-        ]
-
-    question_scores_contains = question_scores
-    question_scores_exact = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-    question_scores_ranking = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-
-    avg_score_contains = (
-        round(sum(question_scores_contains) / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 1.0
-    )
-    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = (
-        round(pass_count_contains / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 1.0
-    )
-
-    avg_score_exact = (
-        round(sum(question_scores_exact) / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 1.0
-    )
-    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    (
-        round(pass_count_exact / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 1.0
-    )
-
-    avg_score_ranking = (
-        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 1.0
-    )
-    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    (
-        round(pass_count_ranking / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 1.0
-    )
-
-    run.score = avg_score_contains
-    run.pass_rate = pass_rate_contains
-    run.fail_rate = round(1.0 - pass_rate_contains, 3)
-    run.total_questions = len(question_scores_contains)
+    metrics = eval_resp.overall_metrics
+    run.score = metrics.contains_execution_accuracy
+    run.pass_rate = metrics.pass_rate
+    run.fail_rate = metrics.fail_rate
+    run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now()
     run.dimension_averages = {
-        "contains_execution_accuracy": avg_score_contains,
-        "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking,
+        "contains_execution_accuracy": metrics.contains_execution_accuracy,
+        "exact_execution_accuracy": metrics.exact_execution_accuracy,
+        "exact_match": metrics.exact_match,
     }
     session.add(run)
 
-    # Persist per-question EvalResult rows so the regression diff can compare
-    # Only if the evaluator didn't already insert them
-    existing_results = session.exec(
-        select(EvalResult).where(EvalResult.run_id == run.id)
-    ).first()
-    if not existing_results and all_production_questions:
-        for q, score in zip(
-            all_production_questions, question_scores_contains, strict=False
-        ):
-            session.add(
-                EvalResult(
-                    run_id=run.id,
-                    question_id=q.id,
-                    score=score,
-                    status="pass" if score >= 0.50 else "fail",
-                )
+    for q_res in eval_resp.results:
+        session.add(
+            EvalResult(
+                run_id=run.id,
+                question_id=q_res.question_id,
+                score=q_res.metrics.contains_execution_accuracy,
+                status=q_res.status,
             )
-
+        )
     session.commit()
 
-    # Log per-question scores back to Langfuse so they appear in the Experiments UI
-    if (
-        langfuse_client.enabled
-        and all_production_questions
-        and question_scores_contains
-    ):
-        try:
-            # Fetch dataset items to get their Langfuse item IDs (needed to link scores)
-            res = requests.get(
-                f"{langfuse_client._tracer.host}/api/public/dataset-items"
-                f"?datasetName={PRODUCTION_DATASET_NAME}&limit=500",
-                auth=(
-                    langfuse_client._tracer.public_key,
-                    langfuse_client._tracer.private_key,
-                ),
-            )
-            item_map: dict[str, str] = {}  # question_id → langfuse_item_id
-            if res.status_code == 200:
-                for item in res.json().get("data", []):
-                    qid = item.get("metadata", {}).get("question_id")
-                    if qid:
-                        item_map[qid] = item["id"]
-
-            run_name = f"{run_name_prefix}-PhaseA"
-            for q, score in zip(
-                all_production_questions, question_scores_contains, strict=False
-            ):
-                lf_item_id = item_map.get(q.id)
-                if not lf_item_id:
-                    continue
-                try:
-                    # Create a trace for this question result
-                    trace = langfuse_client.client.trace(
-                        name=f"production-baseline-q-{q.id[:8]}",
-                        input={"question": q.question},
-                        output={
-                            "score": score,
-                            "status": "pass" if score >= 0.50 else "fail",
-                        },
-                        metadata={
-                            "question_id": q.id,
-                            "run_id": run.id,
-                            "run_name": run_name,
-                        },
-                    )
-                    # Link the trace to the dataset item as an experiment run
-                    langfuse_client.link_trace_to_dataset_run(
-                        run_name=run_name,
-                        run_description=f"Production baseline — {run_name_prefix}",
-                        run_metadata={"promotion_run_id": promotion_run_id},
-                        dataset_item_id=lf_item_id,
-                        trace_id=trace.id,
-                    )
-                    # Score the trace
-                    langfuse_client.client.score(
-                        trace_id=trace.id,
-                        name="contains_execution_accuracy",
-                        value=score,
-                        comment="pass" if score >= 0.50 else "fail",
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f"[Promotion/Phase-A] Failed to log score for question {q.id}: {exc}"
-                    )
-
-            langfuse_client.flush()
-            logger.info(
-                f"[Promotion/Phase-A] Logged {len(all_production_questions)} question scores to Langfuse run '{run_name}'"
-            )
-        except Exception as exc:
-            logger.warning(f"[Promotion/Phase-A] Langfuse score logging failed: {exc}")
-
     logger.info(
-        f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {avg_score_contains:.3f} "
-        f"exact_exec_accuracy = {avg_score_exact:.3f} ranking_accuracy = {avg_score_ranking:.3f} "
-        f"({len(question_scores_contains)} questions)"
+        f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {metrics.contains_execution_accuracy:.3f} "
+        f"exact_exec_accuracy = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f} "
+        f"({metrics.total_questions} questions)"
     )
-    return avg_score_contains
+    return metrics.contains_execution_accuracy
 
 
 # We no longer use a fixed dataset name to avoid soft-delete conflicts and question accumulation.
@@ -448,18 +342,6 @@ def _run_candidate_eval(
     session: Session,
     promotion_run_id: str,
 ) -> float:
-    """
-    Writes the candidate table's golden questions into the fixed
-    'text2sql_candidate' Langfuse dataset (overwriting any prior run),
-    then evaluates it. Returns average contains_execution_accuracy.
-
-    Using a fixed name ensures there is always exactly one candidate dataset
-    in Langfuse regardless of how many promotions have been attempted.
-
-    Cleanup of dataset items is gated on confirmed Langfuse run item
-    finalization (via wait_for_run_items) to avoid the race condition where
-    items are deleted before the server finishes persisting evaluation run items.
-    """
     run = EvalRun(
         table_id=table.id,
         status=EvalStatus.running,
@@ -470,157 +352,83 @@ def _run_candidate_eval(
     session.commit()
     session.refresh(run)
 
-    question_scores: list[float] = []
-
     dataset_name = "text2sql_candidate"
-    run_name = f"{run_name_prefix}-Candidate"
 
-    score = 0.0
     if langfuse_client.enabled:
         try:
             langfuse_client.ensure_dataset_synced(
                 dataset_name, _build_questions_payload(questions, table)
             )
-
-            evaluator = TextToSQLEvaluator(
-                run_name=run_name,
-                session=session,
-                table_id=table.id,
-                run_id=run.id,
-                question_scores=question_scores,
-            )
-            evaluator.run_single_dataset(dataset_name)
         except Exception as e:
-            logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
+            logger.error(f"[Promotion/Phase-B] Candidate eval prep failed: {e}")
 
-    if not question_scores:
-        question_scores = [float(random.choice([0, 1])) for _ in questions]
+    try:
+        req = EvalAPIRequest(tables_names=[table.name], dataset_name=dataset_name)
+        resp = requests.post(
+            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+            json=req.model_dump(),
+            timeout=600,
+        )
+        resp.raise_for_status()
+        eval_resp = EvalAPIResponse(**resp.json())
+        if eval_resp.status == "failed":
+            raise Exception("API returned failed status")
+    except Exception as e:
+        logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
+        run.status = EvalStatus.failed
+        run.score = -1.0
+        session.add(run)
+        session.commit()
+        return -1.0
 
-    # Generate stubs for exact and ranking based on the same length
-
-    question_scores_contains = question_scores
-    question_scores_exact = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-    question_scores_ranking = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-
-    avg_score_contains = (
-        round(sum(question_scores_contains) / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 0.0
-    )
-    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = (
-        round(pass_count_contains / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 1.0
-    )
-
-    avg_score_exact = (
-        round(sum(question_scores_exact) / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 0.0
-    )
-    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    (
-        round(pass_count_exact / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 1.0
-    )
-
-    avg_score_ranking = (
-        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 0.0
-    )
-    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    (
-        round(pass_count_ranking / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 1.0
-    )
-
-    run.score = avg_score_contains
-    run.pass_rate = pass_rate_contains
-    run.fail_rate = round(1.0 - pass_rate_contains, 3)
-    run.total_questions = len(question_scores_contains)
+    metrics = eval_resp.overall_metrics
+    run.score = metrics.contains_execution_accuracy
+    run.pass_rate = metrics.pass_rate
+    run.fail_rate = metrics.fail_rate
+    run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now()
     run.dimension_averages = {
-        "contains_execution_accuracy": avg_score_contains,
-        "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking,
+        "contains_execution_accuracy": metrics.contains_execution_accuracy,
+        "exact_execution_accuracy": metrics.exact_execution_accuracy,
+        "exact_match": metrics.exact_match,
     }
     session.add(run)
 
-    # Persist per-question EvalResult rows so the report endpoint
-    # can show per-question scores in the UI.
-    existing_results = session.exec(
-        select(EvalResult).where(EvalResult.run_id == run.id)
-    ).first()
-    if not existing_results:
-        for q, score in zip(questions, question_scores_contains, strict=False):
-            session.add(
-                EvalResult(
-                    run_id=run.id,
-                    question_id=q.id,
-                    score=score,
-                    status="pass" if score >= 0.50 else "fail",
-                )
+    for q_res in eval_resp.results:
+        session.add(
+            EvalResult(
+                run_id=run.id,
+                question_id=q_res.question_id,
+                score=q_res.metrics.contains_execution_accuracy,
+                status=q_res.status,
             )
-
+        )
     session.commit()
 
     logger.info(
-        f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {avg_score_contains:.3f} "
-        f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
+        f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {metrics.contains_execution_accuracy:.3f} "
+        f"exact_score = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f}"
     )
 
-    # ── Gate cleanup on confirmed Langfuse run item finalization ───────────────
-    # We must NOT delete dataset items until Langfuse has fully persisted all
-    # evaluation run items server-side.  Deleting before that causes the run to
-    # record 0 items (race condition, especially on slow private networks).
-    #
-    # wait_for_run_items polls GET /api/public/dataset-run-items until the
-    # expected count is reached — deterministic, state-driven, no fixed sleep.
     if langfuse_client.enabled:
-        finalized = langfuse_client.wait_for_run_items(
-            dataset_name=dataset_name,
-            run_name=run_name,
-            expected_count=len(questions),
-        )
-        if not finalized:
-            logger.warning(
-                "[Promotion/Phase-B] Langfuse run items were not fully persisted "
-                "within the configured wait window. Proceeding with cleanup to avoid "
-                "blocking the promotion pipeline. Check LANGFUSE_WAIT_MAX_ATTEMPTS "
-                "and LANGFUSE_WAIT_INITIAL_DELAY_SECS if this happens repeatedly."
-            )
+        # Since API might be async or Langfuse is async, we may still need to clear dataset
+        # Here we don't wait for traces, just clear it after evaluation finishes
         langfuse_client.clear_dataset(dataset_name)
-        logger.info(
-            f"[Promotion/Phase-B] Cleared candidate dataset '{dataset_name}' after "
-            f"confirmed evaluation completion."
-        )
 
-    return avg_score_contains
+    return metrics.contains_execution_accuracy
 
 
 def _run_regression_eval(
     run_name_prefix: str, session: Session, promotion_run_id: str
 ) -> float:
-    """
-    Re-runs the production dataset evaluation AFTER the candidate table has been
-    temporarily added to the warehouse. Returns the new score.
-    """
-    # Load the same production questions as the baseline so we can save per-question
-    # EvalResult rows and enable cross-run regression diff.
     prod_tables = session.exec(
         select(Table).where(Table.status == TableStatus.production)
     ).all()
     all_production_questions: list[GoldenQuestion] = []
+    table_names = []
     for table in prod_tables:
+        table_names.append(table.name)
         qs = session.exec(
             select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
         ).all()
@@ -636,112 +444,57 @@ def _run_regression_eval(
     session.commit()
     session.refresh(run)
 
-    # Re-sync the production dataset (unchanged questions, but now the candidate
-    # table is in the warehouse so the agent can query it)
-    question_scores: list[float] = []
-    if langfuse_client.enabled:
-        try:
-            evaluator = TextToSQLEvaluator(
-                run_name=f"{run_name_prefix}-Regression",
-                session=session,
-                table_id="production-regression",
-                run_id=run.id,
-                question_scores=question_scores,
-            )
-            evaluator.run_single_dataset(PRODUCTION_DATASET_NAME)
-        except Exception as e:
-            logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
+    try:
+        req = EvalAPIRequest(
+            tables_names=table_names, dataset_name=PRODUCTION_DATASET_NAME
+        )
+        resp = requests.post(
+            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+            json=req.model_dump(),
+            timeout=600,
+        )
+        resp.raise_for_status()
+        eval_resp = EvalAPIResponse(**resp.json())
+        if eval_resp.status == "failed":
+            raise Exception("API returned failed status")
+    except Exception as e:
+        logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
+        run.status = EvalStatus.failed
+        run.score = -1.0
+        session.add(run)
+        session.commit()
+        return -1.0
 
-    if not question_scores:
-        # Slight variance from baseline to simulate real regression testing.
-        # Use the same question count as the loaded production questions.
-        question_scores = [
-            float(random.choice([0, 1])) for _ in (all_production_questions or range(5))
-        ]
-
-    question_scores_contains = question_scores
-    question_scores_exact = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-    question_scores_ranking = [
-        float(random.choice([0, 1])) for _ in range(len(question_scores_contains))
-    ]
-
-    avg_score_contains = (
-        round(sum(question_scores_contains) / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 0.0
-    )
-    pass_count_contains = sum(1 for s in question_scores_contains if s >= 0.50)
-    pass_rate_contains = (
-        round(pass_count_contains / len(question_scores_contains), 3)
-        if question_scores_contains
-        else 1.0
-    )
-
-    avg_score_exact = (
-        round(sum(question_scores_exact) / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 0.0
-    )
-    pass_count_exact = sum(1 for s in question_scores_exact if s >= 0.50)
-    (
-        round(pass_count_exact / len(question_scores_exact), 3)
-        if question_scores_exact
-        else 1.0
-    )
-
-    avg_score_ranking = (
-        round(sum(question_scores_ranking) / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 0.0
-    )
-    pass_count_ranking = sum(1 for s in question_scores_ranking if s >= 0.50)
-    (
-        round(pass_count_ranking / len(question_scores_ranking), 3)
-        if question_scores_ranking
-        else 1.0
-    )
-
-    run.score = avg_score_contains
-    run.pass_rate = pass_rate_contains
-    run.fail_rate = round(1.0 - pass_rate_contains, 3)
-    run.total_questions = len(question_scores_contains)
+    metrics = eval_resp.overall_metrics
+    run.score = metrics.contains_execution_accuracy
+    run.pass_rate = metrics.pass_rate
+    run.fail_rate = metrics.fail_rate
+    run.total_questions = metrics.total_questions
     run.status = EvalStatus.completed
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now()
     run.dimension_averages = {
-        "contains_execution_accuracy": avg_score_contains,
-        "exact_execution_accuracy": avg_score_exact,
-        "ranking_accuracy": avg_score_ranking,
+        "contains_execution_accuracy": metrics.contains_execution_accuracy,
+        "exact_execution_accuracy": metrics.exact_execution_accuracy,
+        "exact_match": metrics.exact_match,
     }
     session.add(run)
 
-    # Persist per-question EvalResult rows so the regression diff endpoint can
-    # compare which questions passed baseline but failed here.
-    # Only if the evaluator didn't already insert them
-    existing_results = session.exec(
-        select(EvalResult).where(EvalResult.run_id == run.id)
-    ).first()
-    if not existing_results and all_production_questions:
-        for q, score in zip(
-            all_production_questions, question_scores_contains, strict=False
-        ):
-            session.add(
-                EvalResult(
-                    run_id=run.id,
-                    question_id=q.id,
-                    score=score,
-                    status="pass" if score >= 0.50 else "fail",
-                )
+    for q_res in eval_resp.results:
+        session.add(
+            EvalResult(
+                run_id=run.id,
+                question_id=q_res.question_id,
+                score=q_res.metrics.contains_execution_accuracy,
+                status=q_res.status,
             )
-
+        )
     session.commit()
 
     logger.info(
-        f"[Promotion/Phase-B] Regression contains_score (with candidate) = {avg_score_contains:.3f} "
-        f"exact_score = {avg_score_exact:.3f} ranking_score = {avg_score_ranking:.3f}"
+        f"[Promotion/Phase-B] Regression contains_score (with candidate) = {metrics.contains_execution_accuracy:.3f} "
+        f"exact_score = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f}"
     )
-    return avg_score_contains
+    return metrics.contains_execution_accuracy
 
 
 # ─── Main promotion workflow ───────────────────────────────────────────────────

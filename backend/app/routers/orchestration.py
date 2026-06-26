@@ -32,10 +32,10 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe
-from app.services.langfuse_client import langfuse_client
 from sqlmodel import Session, select
 
 from app.routers.evaluation import execute_single_table_eval
+from app.services.langfuse_client import langfuse_client
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -57,14 +57,15 @@ def _run_full_pipeline(
 ):
     """Run evaluation for multiple tables (one run per table)."""
     if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
-        tags=["evaluation_run"],
-        metadata={
-            "table_ids": table_ids,
-            "run_ids": run_ids,
-            "triggered_by": triggered_by,
-        },
-    )
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            tags=["evaluation_run"],
+            metadata={
+                "table_ids": table_ids,
+                "run_ids": run_ids,
+                "triggered_by": triggered_by,
+            },
+        )
 
     for table_id, run_id in zip(table_ids, run_ids, strict=False):
         with Session(engine) as session:
@@ -411,7 +412,7 @@ def get_trends(
     session: Session = Depends(get_session),
 ):
     """Score and pass_rate over time. Returns one data point per completed run."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now() - timedelta(days=days)
     query = (
         select(EvalRun)
         .where(EvalRun.status == EvalStatus.completed, EvalRun.created_at >= since)
@@ -724,7 +725,7 @@ def system_health(session: Session = Depends(get_session)):
         "total_tables": len(total_tables),
         "production_tables": len(production_tables),
         "total_runs_today": sum(
-            1 for r in all_runs if r.created_at.date() == datetime.utcnow().date()
+            1 for r in all_runs if r.created_at.date() == datetime.now().date()
         ),
         "top_failing_tables": failing_tables[:5],
         "recent_runs": recent_runs,

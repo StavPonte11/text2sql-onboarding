@@ -52,10 +52,8 @@ async def init_flags_node(state: AgentState, config: RunnableConfig | None = Non
 
     # Emit to Langfuse for observability
     try:
-        trace_id = langfuse_client.get_current_trace_id()
-        if trace_id:
-            langfuse_client.trace(
-                id=trace_id,
+        if langfuse_client.get_current_trace_id():
+            langfuse_client.update_current_span(
                 metadata={
                     "runtime_flags": runtime_flags,
                     "execution_mode": execution_mode or "default",

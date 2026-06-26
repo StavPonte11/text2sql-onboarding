@@ -1,7 +1,13 @@
-import { useState, useEffect, ReactNode } from 'react';
-import { Timeline, Spin, Tag, Typography, Collapse, Empty } from 'antd';
-import { CaretRightOutlined, ClockCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons';
+import { type ReactNode, useEffect, useState } from 'react';
+import {
+  CaretRightOutlined,
+  CheckOutlined,
+  ClockCircleOutlined,
+  CopyOutlined,
+} from '@ant-design/icons';
+import { Collapse, Empty, Spin, Tag, Timeline, Typography } from 'antd';
 import axios from 'axios';
+
 import JsonTreeView from '../components/JsonTreeView';
 
 const { Text } = Typography;
@@ -30,22 +36,23 @@ export function highlightJson(json: string): string {
     '>': '&gt;',
     '"': '&quot;',
     "'": '&#39;',
-    '/': '&#x2F;'
+    '/': '&#x2F;',
   };
-  const escapeHtml = (text: string) => text.replace(/[&<>"'/]/g, m => entityMap[m]);
+  const escapeHtml = (text: string) => text.replace(/[&<>"'/]/g, (m) => entityMap[m]);
 
-  const jsonRegex = /("(?:[^"\\]|\\.)*"(?:\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g;
-  
+  const jsonRegex =
+    /("(?:[^"\\]|\\.)*"(?:\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g;
+
   let lastIndex = 0;
   let html = '';
   let match;
-  
+
   while ((match = jsonRegex.exec(json)) !== null) {
     html += escapeHtml(json.substring(lastIndex, match.index));
-    
+
     const token = match[0];
     let cls = 'json-number';
-    
+
     if (token.startsWith('"')) {
       if (token.endsWith(':')) {
         cls = 'json-key';
@@ -57,7 +64,7 @@ export function highlightJson(json: string): string {
     } else if (token === 'null') {
       cls = 'json-null';
     }
-    
+
     if (cls === 'json-key') {
       const lastQuoteIndex = token.lastIndexOf('"');
       const keyPart = token.substring(0, lastQuoteIndex + 1);
@@ -66,10 +73,10 @@ export function highlightJson(json: string): string {
     } else {
       html += `<span class="${cls}">${escapeHtml(token)}</span>`;
     }
-    
+
     lastIndex = jsonRegex.lastIndex;
   }
-  
+
   html += escapeHtml(json.substring(lastIndex));
   return html;
 }
@@ -90,8 +97,9 @@ export function FormattedBlock({ label, content, themeColor }: FormattedBlockPro
   };
 
   const trimmed = content?.trim() || '';
-  const isJson = (trimmed.startsWith('{') && trimmed.endsWith('}')) || 
-                 (trimmed.startsWith('[') && trimmed.endsWith(']'));
+  const isJson =
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'));
 
   let highlightedElement: ReactNode;
   if (isJson) {
@@ -109,8 +117,17 @@ export function FormattedBlock({ label, content, themeColor }: FormattedBlockPro
 
   return (
     <div style={{ position: 'relative' }} className="json-block-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1px', color: themeColor }}>{label}</span>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 6,
+        }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1px', color: themeColor }}>
+          {label}
+        </span>
         <button
           onClick={handleCopy}
           style={{
@@ -142,25 +159,29 @@ export function FormattedBlock({ label, content, themeColor }: FormattedBlockPro
           )}
         </button>
       </div>
-      <div style={{ 
-        background: '#0B0F19', 
-        border: '1px solid #1E293B',
-        borderLeft: `3px solid ${themeColor}`,
-        padding: '12px 16px', 
-        borderRadius: '6px', 
-        fontSize: '11px', 
-        maxHeight: '200px', 
-        overflowY: 'auto',
-        boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
-        position: 'relative'
-      }}>
-        <pre style={{ 
-          margin: 0, 
-          whiteSpace: 'pre-wrap', 
-          fontFamily: 'var(--mono), monospace', 
-          color: '#E2E8F0',
-          lineHeight: '1.5'
-        }}>
+      <div
+        style={{
+          background: '#0B0F19',
+          border: '1px solid #1E293B',
+          borderLeft: `3px solid ${themeColor}`,
+          padding: '12px 16px',
+          borderRadius: '6px',
+          fontSize: '11px',
+          maxHeight: '200px',
+          overflowY: 'auto',
+          boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
+          position: 'relative',
+        }}
+      >
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'var(--mono), monospace',
+            color: '#E2E8F0',
+            lineHeight: '1.5',
+          }}
+        >
           {highlightedElement}
         </pre>
       </div>
@@ -195,12 +216,13 @@ export function TraceTimeline({ traceId }: TraceTimelineProps) {
     if (!traceId) return;
 
     setLoading(true);
-    axios.get(`/api/agent/traces/${traceId}`)
-      .then(res => {
+    axios
+      .get(`/api/agent/traces/${traceId}`)
+      .then((res) => {
         setSpans(res.data || []);
       })
-      .catch(err => {
-        console.error("Failed to load trace", err);
+      .catch((err) => {
+        console.error('Failed to load trace', err);
       })
       .finally(() => {
         setLoading(false);
@@ -208,7 +230,11 @@ export function TraceTimeline({ traceId }: TraceTimelineProps) {
   }, [traceId]);
 
   if (loading) {
-    return <div style={{ padding: 20, textAlign: 'center' }}><Spin /></div>;
+    return (
+      <div style={{ padding: 20, textAlign: 'center' }}>
+        <Spin />
+      </div>
+    );
   }
 
   if (spans.length === 0) {
@@ -220,47 +246,61 @@ export function TraceTimeline({ traceId }: TraceTimelineProps) {
       <style dangerouslySetInnerHTML={{ __html: jsonHighlightStyles }} />
       <Timeline>
         {spans.map((span, idx) => (
-          <Timeline.Item 
-            key={idx} 
+          <Timeline.Item
+            key={idx}
             color={span.status === 'error' ? 'red' : 'blue'}
-            dot={span.span_name.includes('llm') || span.model !== 'N/A' ? <ClockCircleOutlined style={{ fontSize: '16px' }} /> : undefined}
+            dot={
+              span.span_name.includes('llm') || span.model !== 'N/A' ? (
+                <ClockCircleOutlined style={{ fontSize: '16px' }} />
+              ) : undefined
+            }
           >
             <div style={{ marginBottom: 4 }}>
-              <Text strong style={{ color: 'var(--text-h)' }}>{span.span_name}</Text>
+              <Text strong style={{ color: 'var(--text-h)' }}>
+                {span.span_name}
+              </Text>
               <span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 12 }}>
                 {span.duration_ms}ms
               </span>
               {span.model !== 'N/A' && (
-                <Tag color="purple" style={{ marginLeft: 8 }}>{span.model}</Tag>
+                <Tag color="purple" style={{ marginLeft: 8 }}>
+                  {span.model}
+                </Tag>
               )}
-              {span.input_tokens > 0 && (
-                <Tag color="cyan">In: {span.input_tokens}</Tag>
-              )}
-              {span.output_tokens > 0 && (
-                <Tag color="geekblue">Out: {span.output_tokens}</Tag>
-              )}
+              {span.input_tokens > 0 && <Tag color="cyan">In: {span.input_tokens}</Tag>}
+              {span.output_tokens > 0 && <Tag color="geekblue">Out: {span.output_tokens}</Tag>}
             </div>
 
             {(span.input_preview || span.output_preview) && (
-              <Collapse 
-                ghost 
-                size="small" 
-                expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} style={{ color: 'var(--text-muted)' }} />}
+              <Collapse
+                ghost
+                size="small"
+                expandIcon={({ isActive }) => (
+                  <CaretRightOutlined
+                    rotate={isActive ? 90 : 0}
+                    style={{ color: 'var(--text-muted)' }}
+                  />
+                )}
               >
-                <Panel header={<span style={{ color: 'var(--text-muted)', fontSize: 12 }}>View Details</span>} key="1">
+                <Panel
+                  header={
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>View Details</span>
+                  }
+                  key="1"
+                >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
                     {span.input_preview && (
-                      <JsonTreeView 
-                        label="INPUT" 
-                        content={span.input_preview} 
-                        themeColor="#38BDF8" 
+                      <JsonTreeView
+                        label="INPUT"
+                        content={span.input_preview}
+                        themeColor="#38BDF8"
                       />
                     )}
                     {span.output_preview && (
-                      <JsonTreeView 
-                        label="OUTPUT" 
-                        content={span.output_preview} 
-                        themeColor="#10B981" 
+                      <JsonTreeView
+                        label="OUTPUT"
+                        content={span.output_preview}
+                        themeColor="#10B981"
                       />
                     )}
                   </div>

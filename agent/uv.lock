@@ -215,7 +215,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = "==2.9.9" },
     { name = "pydantic", specifier = "==2.10.4" },
     { name = "pydantic-settings", specifier = "==2.7.0" },
-    { name = "python-core-utils", extras = ["postgres", "redis"], directory = "../python-core-utils" },
+    { name = "python-core-utils", extras = ["postgres", "redis"], git = "https://github.com/matzpen-agency/python-core-utils.git?rev=main" },
     { name = "sqlmodel", specifier = "==0.0.22" },
     { name = "trino", specifier = ">=0.328.0" },
 ]
@@ -1095,7 +1095,7 @@ wheels = [
 [[package]]
 name = "python-core-utils"
 version = "0.1.0"
-source = { directory = "../python-core-utils" }
+source = { git = "https://github.com/matzpen-agency/python-core-utils.git?rev=main#47764b545a0dac9d951a2b5fa77a5888ea120e1a" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx2" },
@@ -1113,29 +1113,6 @@ postgres = [
 redis = [
     { name = "redis" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.3.0" },
-    { name = "aiobotocore", marker = "extra == 's3'", specifier = ">=2.6.0" },
-    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.28.0" },
-    { name = "authlib", marker = "extra == 'keycloak'", specifier = ">=1.7.2" },
-    { name = "fastapi", specifier = ">=0.100.0" },
-    { name = "fastapi", marker = "extra == 'keycloak'", specifier = ">=0.100.0" },
-    { name = "httpx", marker = "extra == 'keycloak'", specifier = ">=0.27.0" },
-    { name = "httpx2", specifier = ">=2.0.0" },
-    { name = "itsdangerous", marker = "extra == 'keycloak'", specifier = ">=2.2.0" },
-    { name = "motor", marker = "extra == 'mongo'", specifier = ">=3.3.0" },
-    { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", marker = "extra == 'keycloak'", specifier = ">=2.0.0" },
-    { name = "python-core-utils", extras = ["postgres", "redis", "mongo", "s3", "rabbitmq", "keycloak"], marker = "extra == 'all'" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0.0" },
-    { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0.0" },
-    { name = "starlette", specifier = ">=0.27.0" },
-]
-provides-extras = ["postgres", "redis", "mongo", "s3", "rabbitmq", "keycloak", "all"]
 
 [[package]]
 name = "python-dateutil"

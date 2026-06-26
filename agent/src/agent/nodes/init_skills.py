@@ -41,12 +41,10 @@ async def init_skills_node(state: AgentState, config: RunnableConfig | None = No
             try:
                 from core.langfuse import get_langfuse_handler
                 langfuse_handler = get_langfuse_handler()
-                trace_id = getattr(langfuse_handler, "last_trace_id", None)
-                if trace_id:
+                if langfuse_client.get_current_trace_id():
                     skill_names = [s.get("displayName") or s.get("name", "Unknown") for s in loaded_skills]
                     from agent.langfuse_client import langfuse_client
-                    langfuse_client.trace(
-                        id=trace_id,
+                    langfuse_client.update_current_span(
                         metadata={"skills_loaded": skill_names}
                     )
             except Exception as inner_e:

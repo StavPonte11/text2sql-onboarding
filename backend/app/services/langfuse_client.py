@@ -157,7 +157,7 @@ class LangfuseTracer(Connection):
         if self.client:
             try:
                 self.client.flush()
-                
+
                 self.logger.info("[LangfuseTracer] Flushed and logged out.")
             except Exception as exc:
                 self.logger.warning(f"[LangfuseTracer] Logout warning: {exc}")
@@ -222,7 +222,6 @@ class LangfuseDatasetService:
     def flush(self) -> None:
         if self._tracer.client:
             self._tracer.client.flush()
-            
 
     # ── Dataset helpers ────────────────────────────────────────────────────────
 
@@ -381,6 +380,7 @@ class LangfuseDatasetService:
             try:
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
+                    id=q["question_id"],
                     input={
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],
