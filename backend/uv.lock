@@ -459,7 +459,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = "==2.9.9" },
     { name = "pydantic", specifier = "==2.10.4" },
     { name = "pydantic-settings", specifier = "==2.7.0" },
-    { name = "python-core-utils", extras = ["postgres", "redis"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=feat%2Fgoogle-sso" },
+    { name = "python-core-utils", extras = ["postgres", "redis"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0" },
     { name = "sqlmodel", specifier = "==0.0.22" },
     { name = "trino", specifier = ">=0.328.0" },
 ]
@@ -1473,7 +1473,7 @@ wheels = [
 [[package]]
 name = "python-core-utils"
 version = "0.2.0"
-source = { git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=feat%2Fgoogle-sso#49c9ecc832cb74e750da2e6f858d62df36f2fbe2" }
+source = { git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0#969ebd9ab74e4f3d2af6b4b41da6869962b7cad9" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx2" },
@@ -1952,7 +1952,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = "==2.9.9" },
     { name = "pydantic", specifier = "==2.10.4" },
     { name = "pydantic-settings", specifier = "==2.7.0" },
-    { name = "python-core-utils", extras = ["keycloak"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=feat%2Fgoogle-sso" },
+    { name = "python-core-utils", extras = ["keycloak"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0" },
     { name = "python-dotenv", specifier = "==1.0.1" },
     { name = "python-jose", extras = ["cryptography"], specifier = "==3.3.0" },
     { name = "python-multipart", specifier = "==0.0.20" },
