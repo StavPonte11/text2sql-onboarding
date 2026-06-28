@@ -1,3 +1,6 @@
+import json
+import urllib.request
+
 from core.db.engine import create_db_and_tables, engine
 from core.embeddings import EXPECTED_EMBEDDING_DIM, get_embedding as core_get_embedding
 from core.models.models import (
@@ -410,4 +413,7 @@ def seed():
 
 
 if __name__ == "__main__":
-    seed()
+    if settings.RUN_SEED:
+        seed()
+    else:
+        print("Skipping seed initialization (RUN_SEED is False)")

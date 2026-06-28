@@ -2,9 +2,6 @@ import io
 import json
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlmodel import Session, select
-
 from core.db.engine import get_session
 from core.models.models import (
     DifficultyLevel,
@@ -14,6 +11,8 @@ from core.models.models import (
     QuestionType,
     Table,
 )
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlmodel import Session, select
 
 router = APIRouter(prefix="/tables", tags=["golden-questions"])
 

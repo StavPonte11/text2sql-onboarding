@@ -87,12 +87,16 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
                         status_code=502, detail="Unexpected content type from agent."
                     )
 
+                if getattr(result, "isError", False):
+                    error_text = first.text if first and hasattr(first, "text") else "Unknown MCP Error"
+                    raise HTTPException(status_code=502, detail=f"Agent returned error: {error_text}")
+
                 try:
                     tool_result = json.loads(first.text)
                 except json.JSONDecodeError as exc:
                     raise HTTPException(
                         status_code=502,
-                        detail=f"Agent returned non-JSON content: {exc}",
+                        detail=f"Agent returned non-JSON content: {first.text[:100]}... ({exc})",
                     )
 
                 if "error" in tool_result:
@@ -102,6 +106,14 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
 
     except HTTPException:
         raise
+    except BaseExceptionGroup as eg:
+        http_exc = next((e for e in eg.exceptions if isinstance(e, HTTPException)), None)
+        if http_exc:
+            raise http_exc
+        logger.error(f"MCP client error: {eg}", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail=f"Failed to communicate with Agent MCP: {eg}"
+        )
     except Exception as exc:
         logger.error(f"MCP client error: {exc}", exc_info=True)
         raise HTTPException(

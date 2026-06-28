@@ -3,9 +3,6 @@ Feedback router — stores and retrieves user feedback (👍/👎) on queries.
 Feedback signals are consumed by the Table Health scoring engine.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-
 from core.db.engine import get_session
 from core.models.models import (
     AuditQuery,
@@ -13,6 +10,8 @@ from core.models.models import (
     QueryFeedbackCreate,
     QueryFeedbackRead,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
 
 router = APIRouter(tags=["feedback"])
 

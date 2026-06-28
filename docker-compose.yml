@@ -38,16 +38,25 @@ services:
     volumes:
       - minio_data:/data
   trino:
-    image: trinodb/trino:435
+    image: trinodb/trino:443
     ports:
       - 8080:8080
     volumes:
-      - ./infra/trino/etc/catalog:/etc/trino/catalog
+    - ./infra/trino/etc/catalog:/etc/trino/catalog
+    - ./infra/trino/etc/jvm.config:/etc/trino/jvm.config
     depends_on:
       db:
         condition: service_healthy
       minio:
         condition: service_started
+    environment:
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+      SNOWFLAKE_JDBC_URL: ${SNOWFLAKE_JDBC_URL}
+
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/v1/info" ]
       interval: 10s
@@ -101,9 +110,9 @@ services:
       MIGRATION_LIMIT_PARAM: ${MIGRATION_LIMIT_PARAM:-1200}
       AUTHORIZER_CLASS_NAME: ${AUTHORIZER_CLASS_NAME:-org.openmetadata.service.security.DefaultAuthorizer}
       AUTHORIZER_REQUEST_FILTER: ${AUTHORIZER_REQUEST_FILTER:-org.openmetadata.service.security.JwtFilter}
-      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin]}
+      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin,profiler-bot]}
       AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: ${AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN:-["all"]}
-      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot]}
+      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot,profiler-bot]}
       AUTHORIZER_PRINCIPAL_DOMAIN: ${AUTHORIZER_PRINCIPAL_DOMAIN:-"open-metadata.org"}
       AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN: ${AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN:-false}
       AUTHORIZER_ENABLE_SECURE_SOCKET: ${AUTHORIZER_ENABLE_SECURE_SOCKET:-false}
@@ -197,7 +206,8 @@ services:
       SMTP_SERVER_USERNAME: ${SMTP_SERVER_USERNAME:-""}
       SMTP_SERVER_PWD: ${SMTP_SERVER_PWD:-""}
       SMTP_SERVER_STRATEGY: ${SMTP_SERVER_STRATEGY:-"SMTP_TLS"}
-      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx1G -Xms1G}
+      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx512M -Xms256M}
+      JAVA_TOOL_OPTIONS: "-Xmx512M -Xms256M"
       MASK_PASSWORDS_API: ${MASK_PASSWORDS_API:-false}
       WEB_CONF_URI_PATH: ${WEB_CONF_URI_PATH:-"/api"}
       WEB_CONF_HSTS_ENABLED: ${WEB_CONF_HSTS_ENABLED:-false}
@@ -236,9 +246,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AUTHORIZER_CLASS_NAME: ${AUTHORIZER_CLASS_NAME:-org.openmetadata.service.security.DefaultAuthorizer}
       AUTHORIZER_REQUEST_FILTER: ${AUTHORIZER_REQUEST_FILTER:-org.openmetadata.service.security.JwtFilter}
-      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin]}
+      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin,profiler-bot]}
       AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: ${AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN:-["all"]}
-      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot]}
+      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot,profiler-bot]}
       AUTHORIZER_PRINCIPAL_DOMAIN: ${AUTHORIZER_PRINCIPAL_DOMAIN:-"open-metadata.org"}
       AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN: ${AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN:-false}
       AUTHORIZER_ENABLE_SECURE_SOCKET: ${AUTHORIZER_ENABLE_SECURE_SOCKET:-false}
@@ -328,7 +338,8 @@ services:
       SMTP_SERVER_USERNAME: ${SMTP_SERVER_USERNAME:-""}
       SMTP_SERVER_PWD: ${SMTP_SERVER_PWD:-""}
       SMTP_SERVER_STRATEGY: ${SMTP_SERVER_STRATEGY:-"SMTP_TLS"}
-      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx1G -Xms1G}
+      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx512M -Xms256M}
+      JAVA_TOOL_OPTIONS: "-Xmx512M -Xms256M"
       MASK_PASSWORDS_API: ${MASK_PASSWORDS_API:-false}
       WEB_CONF_URI_PATH: ${WEB_CONF_URI_PATH:-"/api"}
       WEB_CONF_HSTS_ENABLED: ${WEB_CONF_HSTS_ENABLED:-false}
@@ -406,7 +417,7 @@ services:
       dockerfile: ./backend/Dockerfile
       secrets:
         - deploy_key
-    # command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "python -m app.seed && python -m app.infra_init && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - ./backend/.env
     ports:
@@ -421,16 +432,25 @@ services:
       - TRINO_CATALOG=minio
       - TRINO_SCHEMA=simple_retail
       - TRINO_HTTP_SCHEME=http
-      - TRINO_REQUEST_TIMEOUT=30.0
+      - TRINO_REQUEST_TIMEOUT=600.0
       - TRINO_ENABLED=true
       - OPENMETADATA_URL=http://openmetadata-server:8585
       - OPENMETADATA_SERVICE_NAME=local_trino
       - APP_ENV=production
       - JWT_SECRET=dev-secret-change-in-production
       - AGENT_URL=http://agent:8001
-      - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
-      - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
-      - LANGFUSE_HOST=https://cloud.langfuse.com
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+      - ENABLE_GOOGLE=${ENABLE_GOOGLE}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - ENABLE_KEYCLOAK=${ENABLE_KEYCLOAK}
+      - KEYCLOAK_SERVER_URL=${KEYCLOAK_SERVER_URL}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - FRONTEND_DEFAULT_REDIRECT=${FRONTEND_DEFAULT_REDIRECT}
+      - SSO_REDIRECT_URI=${SSO_REDIRECT_URI}
     depends_on:
       db:
         condition: service_healthy
@@ -443,7 +463,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 300s
 
   agent:
     build:
@@ -467,10 +487,11 @@ services:
       - LLM_BASE_URL=http://host.docker.internal:11434/v1
       - LLM_MODEL=gemma4:e4b
       - LLM_API_KEY=ollama
-      - EMBEDDER_URL=http://host.docker.internal:11434
+      - EMBEDDER_URL=http://host.docker.internal:11434/v1/embeddings
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
-      - MAX_PROFILES_TO_FETCH=4
+      - MAX_PROFILES_TO_FETCH=10
+      - HYBRID_SEARCH_MAX_TABLES=15
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino

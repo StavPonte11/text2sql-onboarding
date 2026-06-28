@@ -1,9 +1,9 @@
+from core.db.engine import get_session
+from core.models.models import SecurityUserRead
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from core.db.engine import get_session
-from core.models.models import SecurityUserRead
 from app.services.auth import get_user_by_email
 
 router = APIRouter(prefix="/admin", tags=["admin_auth"])

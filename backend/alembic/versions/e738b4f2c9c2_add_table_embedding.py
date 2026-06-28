@@ -8,9 +8,8 @@ Create Date: 2026-06-01 17:58:00.000000
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
-import sqlmodel
 import pgvector
+import sqlalchemy as sa
 
 from alembic import op
 

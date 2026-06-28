@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.config import settings
-from app.services.trino_client import execute_query_sync
+from core import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ def execute_with_timeout(query: str, table_id: str):
         logger.warning(
             f"[TrinoClient] Query timed out after {QUERY_TIMEOUT_SECONDS}s: {query[:120]}"
         )
-        from app.services.trino_client import TrinoExecutionResult
+        from core import TrinoExecutionResult
 
         return TrinoExecutionResult(
             success=False,

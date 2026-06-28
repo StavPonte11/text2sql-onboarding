@@ -38,7 +38,19 @@ function fmt(v?: number | null) {
 function fmtDate(ts: any) {
   if (!ts) return '—';
   if (typeof ts === 'number') {
-    return new Date(ts * 1000).toISOString().split('T')[0];
+    let ms = ts;
+    if (ts < 1e11) ms = ts * 1000;
+    else if (ts > 1e14) ms = Math.floor(ts / 1000); // Microseconds
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+    return String(ts);
+  }
+  
+  const d = new Date(ts);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
   return String(ts).split(' ')[0];
 }

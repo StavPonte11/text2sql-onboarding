@@ -1,9 +1,20 @@
 import axios from 'axios';
-
+import { useAuthStore } from '../store/authStore';
 const api = axios.create({
   baseURL: '/api/agent',
   headers: { 'Content-Type': 'application/json' },
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear auth state to trigger React Router's ProtectedRoute redirect
+      useAuthStore.getState().setAuth(null);
+    }
+    return Promise.reject(error);
+  }
+);
 
 export interface QueryApproval {
   approved: boolean;
