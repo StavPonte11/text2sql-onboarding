@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { ArrowRight, Code2, Cpu, LineChart, Shield, Zap } from 'lucide-react';
 
+import { useAuthStore } from '../store/authStore';
+
 import '../styles/LandingPage.css';
 
 const TypewriterText = ({ texts }: { texts: string[] }) => {
@@ -74,9 +76,16 @@ const staggerContainer = {
 
 export function LandingPage() {
   const navigate = useNavigate();
+  const { isAuthenticated, isLoading } = useAuthStore();
   const { scrollYProgress } = useScroll();
   const mockupY = useTransform(scrollYProgress, [0, 1], [0, -100]);
   const bgY = useTransform(scrollYProgress, [0, 1], [0, 200]);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      navigate('/control-center', { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate]);
 
   return (
     <div className="landing-layout">

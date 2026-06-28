@@ -13,6 +13,7 @@ New endpoints:
 import random
 from datetime import datetime, timedelta
 
+from core import execute_query_sync
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
@@ -36,7 +37,6 @@ from langfuse.decorators import langfuse_context, observe
 from sqlmodel import Session, select
 
 from app.routers.evaluation import execute_single_table_eval
-from app.services.trino_client import execute_query_sync
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 

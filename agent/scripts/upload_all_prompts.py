@@ -6,10 +6,10 @@ from langfuse import Langfuse
 # ==============================================================================
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
-LANGFUSE_BASE_URL = os.getenv("LANGFUSE_HOST")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST")
 
 if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY or not LANGFUSE_BASE_URL:
-    raise RuntimeError("LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_HOST must be set")
+    raise RuntimeError("LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_BASE_URL must be set")
 
 def main():
     print(f"Connecting to Langfuse at {LANGFUSE_BASE_URL}...")
@@ -181,7 +181,8 @@ def main():
             langfuse_client.create_prompt(
                 name=p["name"],
                 prompt=p["prompt"],
-                type=p["type"]
+                type=p["type"],
+                labels=["production"]
             )
             print(f"  ✓ Successfully uploaded {p['name']}")
         except Exception as e:

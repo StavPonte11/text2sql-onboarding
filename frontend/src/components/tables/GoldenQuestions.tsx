@@ -126,6 +126,7 @@ export function GoldenQuestions({ tableId }: Props) {
                 <th>{t('questions.question')}</th>
                 <th>{t('questions.sql')}</th>
                 <th>{t('questions.difficulty')}</th>
+                <th>Type</th>
                 <th>Created</th>
                 <th></th>
               </tr>
@@ -150,6 +151,9 @@ export function GoldenQuestions({ tableId }: Props) {
                     >
                       {q.difficulty}
                     </span>
+                  </td>
+                  <td style={{ textTransform: 'capitalize', fontSize: '13px' }}>
+                    {(q as any).question_type?.replace('_', ' ') || 'Simple'}
                   </td>
                   <td className="created-date-cell">{dayjs(q.created_at).format('MMM D, YYYY')}</td>
                   <td>
@@ -203,6 +207,21 @@ export function GoldenQuestions({ tableId }: Props) {
                 <option value="simple">Simple</option>
                 <option value="medium">Medium</option>
                 <option value="complex">Complex</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Type</label>
+              <select
+                className="form-select"
+                value={form.question_type}
+                onChange={(e) => setForm((f) => ({ ...f, question_type: e.target.value as any }))}
+              >
+                <option value="join">Join</option>
+                <option value="simple">Simple</option>
+                <option value="complex">Complex</option>
+                <option value="geo">Geo</option>
+                <option value="aggregate">Aggregate</option>
+                <option value="time_series">Time Series</option>
               </select>
             </div>
             <div className="modal__actions">

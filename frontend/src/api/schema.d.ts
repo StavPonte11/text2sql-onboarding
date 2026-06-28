@@ -76,6 +76,50 @@ export interface paths {
     patch: operations['update_table_status_tables__table_id__status_patch'];
     trace?: never;
   };
+  '/tables/{table_id}/foreign-keys': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Foreign Keys
+     * @description Get all custom foreign key mappings for a table.
+     */
+    get: operations['get_foreign_keys_tables__table_id__foreign_keys_get'];
+    put?: never;
+    /**
+     * Create Foreign Key
+     * @description Create or update a foreign key mapping for a specific column in the table.
+     */
+    post: operations['create_foreign_key_tables__table_id__foreign_keys_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tables/{table_id}/foreign-keys/{fk_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete Foreign Key
+     * @description Delete a specific foreign key mapping.
+     */
+    delete: operations['delete_foreign_key_tables__table_id__foreign_keys__fk_id__delete'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/tables/{table_id}/enrichment': {
     parameters: {
       query?: never;
@@ -810,81 +854,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/tables/{table_id}/health': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Table Health */
-    get: operations['get_table_health_tables__table_id__health_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/tables/{table_id}/health/recompute': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Recompute Health */
-    post: operations['recompute_health_tables__table_id__health_recompute_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/health/all': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get All Health
-     * @description Returns the latest health record for every table (used in the table list view).
-     */
-    get: operations['get_all_health_health_all_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/admin/login': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Login
-     * @description Validate that the supplied email belongs to an active admin in security.users.
-     *     Returns the user record on success; raises 403 when the user is not an admin.
-     */
-    post: operations['login_admin_login_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/admin/tables/pending': {
     parameters: {
       query?: never;
@@ -949,6 +918,145 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/tables/{table_id}/health': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Table Health */
+    get: operations['get_table_health_tables__table_id__health_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tables/{table_id}/health/recompute': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Recompute Health */
+    post: operations['recompute_health_tables__table_id__health_recompute_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/health/all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get All Health
+     * @description Returns the latest health record for every table (used in the table list view).
+     */
+    get: operations['get_all_health_health_all_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/config': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Auth Config */
+    get: operations['get_auth_config_api_v1_auth_config_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/login/{provider}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Login */
+    get: operations['login_api_v1_auth_login__provider__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/callback/{provider}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Auth Callback */
+    get: operations['auth_callback_api_v1_auth_callback__provider__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/logout': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Logout */
+    get: operations['logout_api_v1_auth_logout_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Me */
+    get: operations['get_me_api_v1_auth_me_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/health': {
     parameters: {
       query?: never;
@@ -956,8 +1064,8 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Health */
-    get: operations['health_health_get'];
+    /** Health Check */
+    get: operations['health_check_health_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1018,6 +1126,13 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+    };
+    /** AuthConfigRead */
+    AuthConfigRead: {
+      /** Enable Keycloak */
+      ENABLE_KEYCLOAK: boolean;
+      /** Enable Google */
+      ENABLE_GOOGLE: boolean;
     };
     /** Body_upload_questions_tables__table_id__questions_upload_post */
     Body_upload_questions_tables__table_id__questions_upload_post: {
@@ -1268,6 +1383,38 @@ export interface components {
      * @enum {string}
      */
     FeedbackRating: 'positive' | 'negative';
+    /** ForeignKeyMappingCreate */
+    ForeignKeyMappingCreate: {
+      /** Source Column */
+      source_column: string;
+      /** Target Table Id */
+      target_table_id: string;
+      /** Target Column */
+      target_column: string;
+    };
+    /** ForeignKeyMappingRead */
+    ForeignKeyMappingRead: {
+      /** Id */
+      id: string;
+      /** Table Id */
+      table_id: string;
+      /** Source Column */
+      source_column: string;
+      /** Target Table Id */
+      target_table_id: string;
+      /** Target Column */
+      target_column: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
     /** GoldenQuestionCreate */
     GoldenQuestionCreate: {
       /** Question */
@@ -1311,11 +1458,6 @@ export interface components {
      * @enum {string}
      */
     HealthStatus: 'good' | 'warning' | 'critical';
-    /** LoginRequest */
-    LoginRequest: {
-      /** Email */
-      email: string;
-    };
     /**
      * ProfilingStatus
      * @enum {string}
@@ -1378,6 +1520,8 @@ export interface components {
       is_active: boolean;
       /** Is Admin */
       is_admin: boolean;
+      /** Provider */
+      provider: string | null;
       /**
        * Created At
        * Format: date-time
@@ -1687,6 +1831,102 @@ export interface operations {
         content: {
           'application/json': components['schemas']['TableRead'];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_foreign_keys_tables__table_id__foreign_keys_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        table_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ForeignKeyMappingRead'][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  create_foreign_key_tables__table_id__foreign_keys_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        table_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ForeignKeyMappingCreate'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ForeignKeyMappingRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  delete_foreign_key_tables__table_id__foreign_keys__fk_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        table_id: string;
+        fk_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -3064,6 +3304,92 @@ export interface operations {
       };
     };
   };
+  get_pending_tables_admin_tables_pending_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': Record<string, never>[];
+        };
+      };
+    };
+  };
+  approve_table_admin_tables__table_id__approve_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        table_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  reject_table_admin_tables__table_id__reject_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        table_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RejectionNote'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   get_table_health_tables__table_id__health_get: {
     parameters: {
       query?: never;
@@ -3146,18 +3472,118 @@ export interface operations {
       };
     };
   };
-  login_admin_login_post: {
+  get_auth_config_api_v1_auth_config_get: {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['LoginRequest'];
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthConfigRead'];
+        };
       };
     };
+  };
+  login_api_v1_auth_login__provider__get: {
+    parameters: {
+      query?: {
+        next_url?: string | null;
+      };
+      header?: never;
+      path: {
+        provider: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  auth_callback_api_v1_auth_callback__provider__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        provider: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  logout_api_v1_auth_logout_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+    };
+  };
+  get_me_api_v1_auth_me_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {
@@ -3168,119 +3594,9 @@ export interface operations {
           'application/json': components['schemas']['SecurityUserRead'];
         };
       };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
     };
   };
-  get_pending_tables_admin_tables_pending_get: {
-    parameters: {
-      query?: never;
-      header: {
-        'X-Admin-Email': string;
-      };
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': Record<string, never>[];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  approve_table_admin_tables__table_id__approve_post: {
-    parameters: {
-      query?: never;
-      header: {
-        'X-Admin-Email': string;
-      };
-      path: {
-        table_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  reject_table_admin_tables__table_id__reject_post: {
-    parameters: {
-      query?: never;
-      header: {
-        'X-Admin-Email': string;
-      };
-      path: {
-        table_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['RejectionNote'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  health_health_get: {
+  health_check_health_get: {
     parameters: {
       query?: never;
       header?: never;

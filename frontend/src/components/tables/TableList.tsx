@@ -1,17 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import dayjs from 'dayjs';
 import { Database, Plus, Search, Wand2 } from 'lucide-react';
+import { z } from 'zod';
 
 import { tablesApi } from '../../api/client';
 import { ErrorState } from '../common/ErrorState';
 import { SkeletonTable } from '../common/Skeleton';
 import { StatusBadge } from '../common/StatusBadge';
 
-import type { TableCreate, TableStatus } from '../../types';
+import type { TableStatus } from '../../types';
 
 import './TableList.css';
 
@@ -24,6 +27,12 @@ const STATUS_OPTIONS: Array<{ value: TableStatus | ''; label: string }> = [
   { value: 'degraded', label: 'Degraded' },
 ];
 
+const createSchema = z.object({
+  oasis_source_id: z.string().trim().min(1, 'Oasis Source ID is required'),
+});
+
+type CreateSchemaType = z.infer<typeof createSchema>;
+
 export function TableList() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -33,8 +42,18 @@ export function TableList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<TableStatus | ''>('');
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState<TableCreate>({
-    oasis_source_id: '',
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors },
+  } = useForm<CreateSchemaType>({
+    resolver: zodResolver(createSchema),
+    defaultValues: {
+      oasis_source_id: '',
+    },
   });
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -51,10 +70,26 @@ export function TableList() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tables'] });
       setShowCreate(false);
-      setCreateForm({ oasis_source_id: '' });
+      reset();
       message.success('Table created successfully');
     },
   });
+
+  const watchOasisSourceId = watch('oasis_source_id');
+  const { reset: resetMutation } = createMutation;
+  useEffect(() => {
+    resetMutation();
+  }, [watchOasisSourceId, resetMutation]);
+
+  const onSubmit = (formData: CreateSchemaType) => {
+    createMutation.mutate(formData);
+  };
+
+  const handleCloseCreate = () => {
+    setShowCreate(false);
+    reset();
+    createMutation.reset();
+  };
 
   return (
     <div className="page">
@@ -164,31 +199,59 @@ export function TableList() {
 
       {/* Create Modal */}
       {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={handleCloseCreate}>
+          <form
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleSubmit(onSubmit)}
+          >
             <h2 className="modal__title">Create New Table</h2>
+
+            {createMutation.isError && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  color: 'var(--status-degraded)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  fontSize: '13px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                {(createMutation.error as any)?.response?.data?.detail ||
+                  createMutation.error?.message ||
+                  'Failed to create table'}
+              </div>
+            )}
+
             <div className="form-group">
               <label className="form-label">Oasis Source ID</label>
               <input
-                className="form-input"
+                className={`form-input${errors.oasis_source_id ? ' form-input--error' : ''}`}
                 placeholder="e.g. some-uuid-or-fqn"
-                value={createForm.oasis_source_id}
-                onChange={(e) => setCreateForm({ oasis_source_id: e.target.value })}
+                {...register('oasis_source_id')}
               />
+              {errors.oasis_source_id && (
+                <div className="form-error">{errors.oasis_source_id.message}</div>
+              )}
             </div>
             <div className="modal__actions">
-              <button className="btn btn--ghost" onClick={() => setShowCreate(false)}>
+              <button type="button" className="btn btn--ghost" onClick={handleCloseCreate}>
                 {t('common.cancel')}
               </button>
               <button
+                type="submit"
                 className="btn btn--primary"
-                disabled={!createForm.oasis_source_id || createMutation.isPending}
-                onClick={() => createMutation.mutate(createForm)}
+                disabled={createMutation.isPending || createMutation.isError}
               >
                 {createMutation.isPending ? 'Creating...' : 'Create Table'}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>
