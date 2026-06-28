@@ -413,7 +413,7 @@ def seed():
 
 
 if __name__ == "__main__":
-    if getattr(settings, "RUN_SEED", True):
+    if settings.RUN_SEED:
         seed()
     else:
         print("Skipping seed initialization (RUN_SEED is False)")

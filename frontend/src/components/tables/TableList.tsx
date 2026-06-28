@@ -76,9 +76,10 @@ export function TableList() {
   });
 
   const watchOasisSourceId = watch('oasis_source_id');
+  const { reset: resetMutation } = createMutation;
   useEffect(() => {
-    createMutation.reset();
-  }, [watchOasisSourceId]);
+    resetMutation();
+  }, [watchOasisSourceId, resetMutation]);
 
   const onSubmit = (formData: CreateSchemaType) => {
     createMutation.mutate(formData);

@@ -81,6 +81,9 @@ def downgrade() -> None:
         if 'provider' in columns_users:
             op.drop_column('users', 'provider', schema='security')
         if 'sso_id' in columns_users:
+            indexes_users = [i['name'] for i in inspector.get_indexes('users', schema='security')]
+            if 'ix_security_users_sso_id' in indexes_users:
+                op.drop_index(op.f('ix_security_users_sso_id'), table_name='users', schema='security')
             op.drop_column('users', 'sso_id', schema='security')
 
     if 'organizations' in security_tables:

@@ -95,7 +95,7 @@ export function OnboardingWizard() {
 
   useEffect(() => {
     setSubmitError(null);
-  }, [watchOasisSourceId, watchTableDescription, watchColumns, watchQuestions]);
+  }, [watchOasisSourceId, watchTableDescription, watchColumns.length, watchQuestions.length]);
 
 
 
