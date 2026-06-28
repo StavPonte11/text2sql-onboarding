@@ -487,10 +487,11 @@ services:
       - LLM_BASE_URL=http://host.docker.internal:11434/v1
       - LLM_MODEL=gemma4:e4b
       - LLM_API_KEY=ollama
-      - EMBEDDER_URL=http://host.docker.internal:11434
+      - EMBEDDER_URL=http://host.docker.internal:11434/v1/embeddings
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
-      - MAX_PROFILES_TO_FETCH=15
+      - MAX_PROFILES_TO_FETCH=10
+      - HYBRID_SEARCH_MAX_TABLES=15
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino

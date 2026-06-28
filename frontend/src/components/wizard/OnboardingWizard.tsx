@@ -452,7 +452,7 @@ export function OnboardingWizard() {
                     )}
                   </div>
 
-                  <div className="form-group" style={{ marginBottom: 0 }}>
+                  <div className="form-group">
                     <label className="form-label">Difficulty</label>
                     <select
                       className="form-select"
@@ -461,6 +461,21 @@ export function OnboardingWizard() {
                       <option value="simple">Simple</option>
                       <option value="medium">Medium</option>
                       <option value="complex">Complex</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Question Type</label>
+                    <select
+                      className="form-select"
+                      {...register(`questions.${i}.question_type`)}
+                    >
+                      <option value="join">Join</option>
+                      <option value="simple">Simple</option>
+                      <option value="complex">Complex</option>
+                      <option value="geo">Geo</option>
+                      <option value="aggregate">Aggregate</option>
+                      <option value="time_series">Time Series</option>
                     </select>
                   </div>
                 </div>
