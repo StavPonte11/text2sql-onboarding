@@ -85,11 +85,11 @@ function AppLayout() {
           <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
           <Route path="/tables" element={<ProtectedRoute><TableList /></ProtectedRoute>} />
           <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
-          <Route path="/tables/:id/:tab" element={<TableDetails />} />
-          <Route path="/wizard" element={<OnboardingWizard />} />
-          <Route path="/monitoring" element={<MonitoringPage />} />
-          <Route path="/permissions" element={<ScopesPage />} />
-          <Route path="/agent-testing" element={<AgentTestingPage />} />
+          <Route path="/tables/:id/:tab" element={<ProtectedRoute><TableDetails /></ProtectedRoute>} />
+          <Route path="/wizard" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
+          <Route path="/monitoring" element={<ProtectedRoute><MonitoringPage /></ProtectedRoute>} />
+          <Route path="/permissions" element={<ProtectedRoute><ScopesPage /></ProtectedRoute>} />
+          <Route path="/agent-testing" element={<ProtectedRoute><AgentTestingPage /></ProtectedRoute>} />
           <Route
             path="/admin"
             element={
