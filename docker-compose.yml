@@ -490,7 +490,7 @@ services:
       - EMBEDDER_URL=http://host.docker.internal:11434
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
-      - MAX_PROFILES_TO_FETCH=10
+      - MAX_PROFILES_TO_FETCH=15
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino
