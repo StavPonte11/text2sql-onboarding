@@ -13,7 +13,10 @@ routes to extractor (full state reset path).
 Satisfaction check sits between refiner success path and finalizer (G2-04).
 """
 
-from agent.nodes.refiner import MAX_REFINER_ITERATIONS
+import logging
+from agent.config import settings
+
+logger = logging.getLogger(__name__)
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -24,11 +27,10 @@ from agent.utils.redis_publisher import publish_node_event_sync
 from agent.nodes.extractor import extractor_node
 from agent.nodes.init_flags import init_flags_node
 from agent.nodes.init_skills import init_skills_node
-from agent.nodes.schema_explorer import schema_explorer_node, MAX_SCHEMA_RETRIES
+from agent.nodes.schema_explorer import schema_explorer_node, MAX_SCHEMA_RETRIES, sql_static_validations_node
 from agent.nodes.query_builder import query_builder_node
-from agent.nodes.refiner import refiner_node
+from agent.nodes.refiner_graph import refiner_subgraph
 from agent.nodes.finalizer import finalizer_node
-from agent.nodes.satisfaction_check import satisfaction_check_node
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from pydantic import BaseModel, Field
@@ -62,7 +64,8 @@ def validate_config_node(state: AgentState, config: RunnableConfig | None = None
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     publish_node_event_sync(thread_id, "validate_config")
 
-    mode: str = state.get("scoping_mode") or settings.TABLE_SCOPING_MODE
+    runtime_flags = state.get("runtime_flags") or {}
+    mode: str = state.get("scoping_mode") or runtime_flags.get("DEFAULT_TABLE_SCOPING_MODE", settings.DEFAULT_TABLE_SCOPING_MODE)
 
     if mode == "strict":
         allowed = state.get("allowed_tables")
@@ -81,8 +84,8 @@ def validate_config_node(state: AgentState, config: RunnableConfig | None = None
 def hitl_escalation_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     Execution pauses HERE via LangGraph interrupt_before before this node runs.
-    The human then calls graph.update_state() to inject corrected state and
-    clears sql_query / last_error / trino_error / escalated / escalation_reason.
+    The API consumer then calls graph.update_state() to inject a corrected query 
+    or provide explicit guidance, rather than just clearing the state.
     After update_state the graph resumes from this node, which immediately
     routes to extractor via its direct edge.
 
@@ -145,13 +148,10 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
         response = chain.invoke({"feedback": feedback})
         route = response.route
     except Exception as e:
-        print(f"Structured output parsing failed: {e}")
-        route = "extractor"  # Fallback
-
+        logger.error(f"Structured output parsing failed: {e}")
+        raise RuntimeError(f"Rejection router failed to parse structured output: {e}")
     return {
         "feedback_route": route,
-        "sql_query": "",
-        "schema_plan": "",
         "raw_data_ref": None,
         "trino_error": None,
         "execution_path": ["rejection_router"]
@@ -170,36 +170,24 @@ def route_schema_explorer(state: AgentState) -> str:
     return "query_builder"
 
 
-def route_refiner(state: AgentState) -> str:
-    """G2-02: route to hitl_escalation when refiner limit is hit."""
+def route_refiner_subagent(state: AgentState) -> str:
+    """G2-02, G2-04: Route out of refiner subagent based on escalated state or failures."""
+    if state.get("escalation_reason"):
+        return "hitl_escalation"
+    if state.get("satisfaction_failures"):
+        fail_count = state.get("satisfaction_fail_count") or 0
+        if fail_count >= settings.SATISFACTION_MAX_FAILURES:
+            return "hitl_escalation"
     if state.get("trino_error"):
-        if state.get("refinement_count", 0) < MAX_REFINER_ITERATIONS:
-            return "satisfaction_check"  # run check even on error path so Check A can flag it
+        # If it exited the subgraph and still has a trino error, it hit the max iterations limit
         return "hitl_escalation"
-    return "satisfaction_check"
-
-
-def route_satisfaction(state: AgentState) -> str:
-    """
-    G2-04: route based on satisfaction check outcome.
-      - no module / no failures  → finalizer
-      - failures, under MAX      → refiner
-      - failures, over MAX       → hitl_escalation
-    """
-    failures = state.get("satisfaction_failures")
-    if not failures:
-        return "finalizer"
-
-    fail_count = state.get("satisfaction_fail_count") or 0
-    if fail_count >= settings.SATISFACTION_MAX_FAILURES:
-        return "hitl_escalation"
-    return "refiner"
+    return "finalizer"
 
 
 def route_query_builder(state: AgentState) -> str:
     if state.get("feedback"):
         return "rejection_router"
-    return "refiner"
+    return "refiner_subagent"
 
 
 def route_rejection(state: AgentState) -> str:
@@ -218,22 +206,23 @@ workflow.add_node("init_flags", init_flags_node)
 workflow.add_node("init_skills", init_skills_node)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("schema_explorer", schema_explorer_node)
+workflow.add_node("sql_static_validations", sql_static_validations_node)
 workflow.add_node("query_builder", query_builder_node)
 workflow.add_node("rejection_router", rejection_router_node)
-workflow.add_node("refiner", refiner_node)
-workflow.add_node("satisfaction_check", satisfaction_check_node)
+workflow.add_node("refiner_subagent", refiner_subgraph)
 workflow.add_node("hitl_escalation", hitl_escalation_node)
 workflow.add_node("finalizer", finalizer_node)
 
-# Entry: validate config → resolve flags → load skills → start reasoning
-workflow.add_edge(START, "validate_config")
-workflow.add_edge("validate_config", "init_flags")
+# Entry: resolve flags → validate config → load skills → start reasoning
+workflow.add_edge(START, "init_flags")
+workflow.add_edge("init_flags", "validate_config")
 workflow.add_edge("init_flags", "init_skills")
 workflow.add_edge("init_skills", "extractor")
 workflow.add_edge("extractor", "schema_explorer")
+workflow.add_edge("schema_explorer", "sql_static_validations")
 
 workflow.add_conditional_edges(
-    "schema_explorer",
+    "sql_static_validations",
     route_schema_explorer,
     {
         "schema_explorer": "schema_explorer",
@@ -245,7 +234,7 @@ workflow.add_conditional_edges(
 workflow.add_conditional_edges(
     "query_builder",
     route_query_builder,
-    {"rejection_router": "rejection_router", "refiner": "refiner"},
+    {"rejection_router": "rejection_router", "refiner_subagent": "refiner_subagent"},
 )
 
 workflow.add_conditional_edges(
@@ -259,21 +248,10 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_conditional_edges(
-    "refiner",
-    route_refiner,
-    {
-        "satisfaction_check": "satisfaction_check",  # G2-04 replaces direct → finalizer
-        "hitl_escalation": "hitl_escalation",         # G2-02
-    },
-)
-
-# G2-04: satisfaction gate
-workflow.add_conditional_edges(
-    "satisfaction_check",
-    route_satisfaction,
+    "refiner_subagent",
+    route_refiner_subagent,
     {
         "finalizer": "finalizer",
-        "refiner": "refiner",
         "hitl_escalation": "hitl_escalation",
     },
 )

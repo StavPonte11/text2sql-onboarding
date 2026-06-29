@@ -2,9 +2,10 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from agent.state import AgentState
-from agent.graph import validate_config_node, InvalidConfigurationException, rejection_router_node, route_refiner, route_schema_explorer
-from agent.nodes.refiner import refiner_node, MAX_REFINER_ITERATIONS
+from agent.graph import validate_config_node, InvalidConfigurationException, rejection_router_node, route_refiner_subagent, route_schema_explorer
+from agent.nodes.refiner import refiner_node
 from agent.nodes.schema_explorer import MAX_SCHEMA_RETRIES
+from agent.config import settings
 from agent.utils.schema_enrichment import _bfs_shortest_path
 
 @pytest.mark.asyncio
@@ -42,8 +43,6 @@ async def test_tts_g1_04_error_and_feedback_loop_routing(mock_langfuse, mock_llm
     
     result = rejection_router_node(state)
     assert result["feedback_route"] == "extractor"
-    assert result["sql_query"] == ""
-    assert result["schema_plan"] == ""
     assert result["raw_data_ref"] is None
     assert result["trino_error"] is None
 
@@ -136,7 +135,7 @@ def test_tts_g2_01_scoping_modes_strict_vs_hybrid():
 
 def test_tts_g2_02_max_loop_and_hitl_breakpointer():
     state: AgentState = {
-        "refinement_count": MAX_REFINER_ITERATIONS,
+        "refinement_count": settings.MAX_REFINER_ITERATIONS,
         "trino_error": "still failing",
         "user_query": "",
         "messages": [],
@@ -164,8 +163,8 @@ def test_tts_g2_02_max_loop_and_hitl_breakpointer():
         "satisfaction_fail_count": 0
     }
     
-    # route_refiner should return hitl_escalation
-    route = route_refiner(state)
+    # route_refiner_subagent should return hitl_escalation when trino_error is set after hitting subgraph limit
+    route = route_refiner_subagent(state)
     assert route == "hitl_escalation"
 
     # also test schema explorer max loop

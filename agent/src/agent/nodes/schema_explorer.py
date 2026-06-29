@@ -1,7 +1,11 @@
+from __future__ import annotations
+import asyncio
 from langgraph.types import interrupt
 import json
 import re
 import urllib.request
+from agent.utils.redis_publisher import publish_node_event
+from core.trino import execute_query_sync
 
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -36,11 +40,53 @@ llm = get_llm("schema_explorer")
 logger = logging.getLogger(__name__)
 
 # Cache singleton
-_cache = get_cache_service(settings.REDIS_URL)
+_cache = get_cache_service()
+
+async def _resolve_ambiguity(
+    data: SchemaExplorerOutput,
+    chain,
+    tables_info: list,
+    profiles_json_str: str,
+    human_message: str,
+    state: AgentState,
+) -> SchemaExplorerOutput:
+    """Helper to handle ambiguity detection and interactive resolution."""
+    if (
+        data.ambiguity_detected
+        and data.ambiguity_message
+        and not state.get("non_interactive")
+    ):
+        user_choice = interrupt(
+            {
+                "type": "schema_explorer_ambiguity",
+                "message": data.ambiguity_message,
+                "options": data.candidate_options,
+            }
+        )
+
+        clarified_message = f"{human_message}\nSelected table/option: {user_choice}"
+        try:
+            return await chain.ainvoke(
+                {
+                    "tables_json": json.dumps(tables_info, indent=2),
+                    "profiles_json": profiles_json_str,
+                    "human_message": clarified_message,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Structured output parsing failed in schema explorer after clarification: {e}")
+            return SchemaExplorerOutput(
+                schema_plan=None,
+                ambiguity_detected=False,
+                ambiguity_message="",
+                candidate_options=[],
+            )
+    return data
 
 # Skill Registry
 from agent.utils.skill_registry import SkillRegistry
 from python_core_utils.redis import get_redis_client
+
 _skill_registry = SkillRegistry()
 
 # G2-02 limits
@@ -57,7 +103,9 @@ def _build_column_context(cp: "ColumnProfile") -> dict:
     - min, max, mean for numeric/time columns
     """
     top_vals = cp.top_values or []
-    sample_values = [v.get("value") for v in top_vals[:20] if v.get("value") is not None]
+    sample_values = [
+        v.get("value") for v in top_vals[:20] if v.get("value") is not None
+    ]
     stats = cp.stats_json or {}
 
     col: dict = {
@@ -103,7 +151,7 @@ class SchemaExplorerOutput(BaseModel):
     )
     candidate_options: List[str] = Field(
         default_factory=list,
-        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false."
+        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false.",
     )
     tables_used: List[str] = Field(
         default_factory=list,
@@ -117,7 +165,7 @@ def get_query_embedding(text: str) -> list[float]:
         text=text,
         embedder_url=settings.EMBEDDER_URL,
         embedder_model=settings.EMBEDDER_MODEL,
-        embedder_key=settings.EMBEDDER_KEY
+        embedder_key=settings.EMBEDDER_KEY,
     )
     if emb is None:
         print("Error getting query embedding for text")
@@ -136,7 +184,7 @@ def hybrid_search_tables(
     """Hybrid search combining pgvector cosine distance and keyword matching.
 
     G2-01: In strict mode, allowed_tables is a hard allowlist — allowed_statuses
-    is ignored.  In hybrid mode, the union of both filters applies (legacy behaviour).
+    is ignored.  In hybrid mode, the union of both filters applies.
     """
     stmt_all = select(Table)
     all_tables = session.exec(stmt_all).all()
@@ -174,12 +222,14 @@ def hybrid_search_tables(
 
     # Vector Search
     if allowed_ids:
-        stmt = text("""
+        stmt = text(
+            """
             SELECT id FROM tables
             WHERE id = ANY(:allowed_ids)
             ORDER BY embedding <=> :emb
             LIMIT :limit
-        """)
+        """
+        )
         try:
             vec_ids = [
                 row[0]
@@ -312,8 +362,6 @@ async def get_table_profile(table_id: str) -> str:
                 esca_id = res.get("esca_id")
             except Exception as e:
                 esca_id = None
-                from agent.langfuse_client import langfuse_client
-
                 if langfuse_client and langfuse_client.get_current_trace_id():
                     langfuse_client.update_current_span(
                         level="WARNING",
@@ -333,10 +381,9 @@ async def get_table_profile(table_id: str) -> str:
         ).first()
         if enrichment and enrichment.data:
             # Prefer human annotation, fall back to AI summary
-            table_description = (
-                enrichment.data.get("table_description", "")
-                or enrichment.data.get("ai_summary", "")
-            )
+            table_description = enrichment.data.get(
+                "table_description", ""
+            ) or enrichment.data.get("ai_summary", "")
 
         # Lightweight response to cache and return to LLM
         lightweight = {
@@ -344,12 +391,12 @@ async def get_table_profile(table_id: str) -> str:
             "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
             "description": table_description,
             "row_count": profile.row_count,
-            "columns": [
-                _build_column_context(cp)
-                for cp in columns
-            ],
+            "columns": [_build_column_context(cp) for cp in columns],
             "esca_reference_id": esca_id,
         }
+        
+        if esca_id is None:
+            lightweight["esca_write_failed"] = True
 
         # ── G2-05: Populate cache ─────────────────────────────────────────────
         await _cache.set_json(cache_key, lightweight, settings.PROFILE_CACHE_TTL)
@@ -360,7 +407,7 @@ async def get_table_profile(table_id: str) -> str:
 async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
     """RAG Schema Explorer sub-agent node — with G2-01 scoping, G2-03 enrichment, G2-05 caching."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
-    from agent.utils.redis_publisher import publish_node_event
+
     await publish_node_event(thread_id, "schema_explorer")
 
     user_query = state.get("user_query")
@@ -371,13 +418,35 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     runtime_flags = state.get("runtime_flags") or {}
 
     # Resolve all flag-tunable parameters for this invocation
-    profile_fetch_concurrency = int(runtime_flags.get("PROFILE_FETCH_CONCURRENCY", settings.PROFILE_FETCH_CONCURRENCY))
-    max_profiles_to_fetch = int(runtime_flags.get("MAX_PROFILES_TO_FETCH", settings.MAX_PROFILES_TO_FETCH))
-    schema_semantic_typing = bool(runtime_flags.get("SCHEMA_SEMANTIC_TYPING", settings.ENABLE_SEMANTIC_TYPING))
-    schema_join_graph = bool(runtime_flags.get("SCHEMA_JOIN_GRAPH", settings.ENABLE_JOIN_GRAPH))
-    schema_summarization = bool(runtime_flags.get("SCHEMA_SUMMARIZATION", settings.ENABLE_SCHEMA_SUMMARIZATION))
-    schema_ambiguity_detect = bool(runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT))
-    scoping_mode_flag = runtime_flags.get("TABLE_SCOPING_MODE", settings.TABLE_SCOPING_MODE)
+    profile_fetch_concurrency = int(
+        runtime_flags.get(
+            "PROFILE_FETCH_CONCURRENCY", settings.PROFILE_FETCH_CONCURRENCY
+        )
+    )
+    max_profiles_to_fetch = int(
+        runtime_flags.get("MAX_PROFILES_TO_FETCH", settings.MAX_PROFILES_TO_FETCH)
+    )
+    def _parse_bool_flag(value) -> bool:
+        """Parse a flag value that may be a bool or a string like 'true'/'false'/'0'/'1'."""
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in ("true", "1")
+
+    schema_semantic_typing = _parse_bool_flag(
+        runtime_flags.get("SCHEMA_SEMANTIC_TYPING", settings.ENABLE_SEMANTIC_TYPING)
+    )
+    schema_join_graph = _parse_bool_flag(
+        runtime_flags.get("SCHEMA_JOIN_GRAPH", settings.ENABLE_JOIN_GRAPH)
+    )
+    schema_summarization = _parse_bool_flag(
+        runtime_flags.get("SCHEMA_SUMMARIZATION", settings.ENABLE_SCHEMA_SUMMARIZATION)
+    )
+    schema_ambiguity_detect = _parse_bool_flag(
+        runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
+    )
+    scoping_mode_flag = runtime_flags.get(
+        "DEFAULT_TABLE_SCOPING_MODE", settings.DEFAULT_TABLE_SCOPING_MODE
+    )
 
     # Per-invocation LLM (supports model switching via execution mode)
     _llm = get_llm("schema_explorer", runtime_flags=runtime_flags)
@@ -412,7 +481,10 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                 with Session(engine) as s:
                     profile_row = s.exec(
                         select(TableProfile)
-                        .where(TableProfile.table_id == t_id, TableProfile.status == "completed")
+                        .where(
+                            TableProfile.table_id == t_id,
+                            TableProfile.status == "completed",
+                        )
                         .order_by(TableProfile.created_at.desc())
                     ).first()
                     if profile_row:
@@ -498,7 +570,6 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     #     except Exception as e:
     #         logger.warning(f"Failed to inject skills: {e}")
 
-
     # Phase C: Schema Summarization (replaces profiles_json in prompt)
     profiles_json_str = json.dumps(profile_details, indent=2)
     if schema_summarization and profile_details:
@@ -567,38 +638,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
             candidate_options=[],
         )
 
-    if (
-        data.ambiguity_detected
-        and data.ambiguity_message
-        and not state.get("non_interactive")
-    ):
-        user_choice = interrupt(
-            {
-                "type": "schema_explorer_ambiguity",
-                "message": data.ambiguity_message,
-                "options": data.candidate_options,
-            }
-        )
-
-        clarified_message = f"{human_message}\nSelected table/option: {user_choice}"
-        try:
-            data = await chain.ainvoke(
-                {
-                    "tables_json": json.dumps(tables_info, indent=2),
-                    "profiles_json": profiles_json_str,
-                    "human_message": clarified_message,
-                }
-            )
-        except Exception as e:
-            print(
-                f"Structured output parsing failed in schema explorer after clarification: {e}"
-            )
-            data = SchemaExplorerOutput(
-                schema_plan=None,
-                ambiguity_detected=False,
-                ambiguity_message="",
-                candidate_options=[],
-            )
+    data = await _resolve_ambiguity(data, chain, tables_info, profiles_json_str, human_message, state)
 
     plan = data.schema_plan
     if plan is not None and not isinstance(plan, str):
@@ -607,14 +647,25 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         plan = ""
 
     tables_used = getattr(data, "tables_used", [])
-    hallucinated = []
+    if tables_used:
+        state["tables_used"] = tables_used
 
+    result_state: dict = {"schema_plan": plan, "tables_used": tables_used}
+    result_state["execution_path"] = ["schema_explorer"]
+    # Store enriched profiles for downstream nodes (refiner re-uses without re-fetch)
+    result_state["table_profiles"] = profile_details if profile_details else None
+
+    return result_state
+
+async def sql_static_validations_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
+    """
+    Check if tables_used actually exist.
+    """
+    tables_used = state.get("tables_used") or []
+    hallucinated = []
+    
     if tables_used:
         try:
-            from python_core_utils.redis import get_redis_client
-            from core.trino import execute_query_sync
-            import asyncio
-
             redis_client = get_redis_client()
             for t_name in tables_used:
                 cache_key = f"table_exists:{t_name}"
@@ -630,11 +681,11 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                         params = [sch, tbl]
                     elif len(parts) == 2:
                         sch, tbl = parts
-                        sql = 'SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?'
+                        sql = "SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?"
                         params = [sch, tbl]
                     elif len(parts) == 1:
                         tbl = parts[0]
-                        sql = 'SELECT 1 FROM information_schema.tables WHERE table_name = ?'
+                        sql = "SELECT 1 FROM information_schema.tables WHERE table_name = ?"
                         params = [tbl]
                     else:
                         hallucinated.append(t_name)
@@ -653,17 +704,19 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                         logger.error(
                             f"Information schema check failed for {t_name}: {e}"
                         )
-                        hallucinated.append(t_name)
+                        # Do not mark as hallucinated on infrastructure failures
                 elif exists == b"0":
                     hallucinated.append(t_name)
         except Exception as e:
             logger.error(f"Error during Redis/Trino table verification: {e}")
-            if tables_used:
-                hallucinated.extend(tables_used)
+            # Do not mark as hallucinated on infrastructure failures
 
     retry_count = state.get("schema_explorer_retry_count", 0) or 0
-    result_state: dict = {"schema_plan": plan}
-
+    result_state: dict = {
+        "schema_explorer_retry_count": retry_count,
+        "esca_write_failed": any(p.get("esca_write_failed") for p in profile_details) if profile_details else False,
+    }
+    
     if hallucinated:
         new_retry = retry_count + 1
         result_state["hallucinated_tables"] = hallucinated
@@ -687,9 +740,5 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         result_state["last_error"] = None
         result_state["schema_explorer_retry_count"] = 0
 
-    result_state["execution_path"] = ["schema_explorer"]
-    # Store enriched profiles for downstream nodes (refiner re-uses without re-fetch)
-    result_state["table_profiles"] = profile_details if profile_details else None
-
+    result_state["execution_path"] = ["sql_static_validations"]
     return result_state
-

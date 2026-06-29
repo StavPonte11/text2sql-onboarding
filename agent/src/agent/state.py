@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict, Any
+from typing import Annotated, TypedDict, Any, Literal
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 import operator
@@ -28,11 +28,12 @@ class AgentState(TypedDict):
     last_error: str | None
     hallucinated_tables: list[str] | None
     esca_write_failed: bool | None
-    inline_result_rows: list[dict[str, Any]] | None
+    inline_result_rows: list[list[Any]] | None
+    inline_result_columns: list[str] | None
     error_history: list[str] | None
     schema_explorer_retry_count: int | None
     # G2-01: table scoping
-    scoping_mode: str | None  # 'strict' | 'hybrid'
+    scoping_mode: Literal["strict", "hybrid"] | None  # controlled via config / runtime_flags
     # G2-02: HITL escalation
     escalated: bool | None
     escalation_reason: str | None

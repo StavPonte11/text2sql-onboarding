@@ -31,6 +31,7 @@ def upgrade() -> None:
         sa.Column("type", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=""),
         sa.Column("owner", sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=""),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.Column("last_modified_by", sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=""),
         sa.Column("last_modified_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint("name"),
@@ -76,7 +77,7 @@ def upgrade() -> None:
         ("EXTRACTOR_MODEL",             "gpt-4o",    "string", "LLM model for extractor node",                  "DS team"),
         ("EXTRACTOR_TEMPERATURE",       0.0,         "float",  "Sampling temperature for extractor",             "DS team"),
         ("EXTRACTOR_TOP_K_TABLES",      10,          "int",    "Max candidate tables from extractor",            "DS team"),
-        ("TABLE_SCOPING_MODE",          "hybrid",    "string", "Table scoping mode: strict | hybrid",            "DS team"),
+        ("DEFAULT_TABLE_SCOPING_MODE",  "hybrid",    "string", "Table scoping mode: strict | hybrid",            "DS team"),
         # Schema Explorer
         ("MAX_PROFILES_TO_FETCH",       8,           "int",    "Max table profiles fetched per run",             "DS team"),
         ("PROFILE_FETCH_CONCURRENCY",   4,           "int",    "asyncio.Semaphore limit for profile fetch",      "Eng"),
@@ -86,15 +87,17 @@ def upgrade() -> None:
         ("SCHEMA_JOIN_GRAPH",           False,       "bool",   "Enable join graph injection (Phase 2)",          "DS team"),
         ("SCHEMA_SUMMARIZATION",        False,       "bool",   "Enable table summarization for large schemas",   "DS team"),
         ("SCHEMA_AMBIGUITY_DETECT",     True,        "bool",   "Enable ambiguous column detection",              "DS team"),
-        ("SCHEMA_SUMMARY_MODEL",        "gpt-4o-mini","string","Model for schema summarization (cost-saving)",   "DS team"),
+        ("SCHEMA_EXPLORER_MODEL",        "gpt-4o-mini","string","Model for schema explorer",   "DS team"),
         ("SCHEMA_TOP_K_JOINS",          5,           "int",    "Max join suggestions to inject",                 "DS team"),
         # Query Builder
         ("QUERY_BUILDER_MODEL",         "gpt-4o",    "string", "LLM model for SQL generation",                  "DS team"),
         ("QUERY_BUILDER_TEMPERATURE",   0.0,         "float",  "Temperature for query builder",                  "DS team"),
         # Refiner
         ("MAX_REFINER_ITERATIONS",      4,           "int",    "Max refiner retry attempts before fallback",     "DS team"),
+        ("REFINER_SCHEMA_CONTEXT_TABLES", 4,         "int",    "Max tables in schema context",                   "DS team"),
         ("MAX_SCHEMA_REPLAN_ITERATIONS",2,           "int",    "Max schema_explorer re-entries before HITL",     "DS team"),
         ("REFINER_MODEL",               "gpt-4o",    "string", "LLM model for refiner",                         "DS team"),
+        ("ESCA_WRITE_ENABLED",          True,        "bool",   "Master switch to enable writing/reading from Esca", "Eng"),
         # Satisfaction Check
         ("SATISFACTION_CHECK_ENABLED",  False,       "bool",   "Master switch for satisfaction check module",    "DS team"),
         ("SATISFACTION_CHECK_EXECUTION",True,        "bool",   "Check: SQL executed without error",              "DS team"),

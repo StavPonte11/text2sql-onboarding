@@ -1,28 +1,4 @@
-import { API_BASE_URL } from '../config/constants';
-import { useAdminStore } from '../store/adminStore';
-
-const fetchWithAdminEmail = async (url: string, options: RequestInit = {}) => {
-  const user = useAdminStore.getState().user;
-  if (!user?.email) throw new Error('Not authenticated');
-
-  const headers = new Headers(options.headers || {});
-  headers.set('X-Admin-Email', user.email);
-  headers.set('Content-Type', 'application/json');
-
-  const response = await fetch(`${API_BASE_URL}${url}`, { ...options, headers });
-
-  if (response.status === 403) {
-    useAdminStore.getState().logout();
-    const err = await response.json().catch(() => null);
-    throw new Error(err?.detail || 'Forbidden');
-  }
-  if (!response.ok) {
-    const err = await response.json().catch(() => null);
-    throw new Error(err?.detail || 'Request failed');
-  }
-  if (response.status === 204) return null;
-  return response.json();
-};
+import api from './client';
 
 export type FlagType = 'bool' | 'int' | 'float' | 'string' | 'json';
 
@@ -48,29 +24,23 @@ export interface ExecutionMode {
 
 export const flagsApi = {
   // ── Feature Flags ─────────────────────────────────────────────────────────
-  list: (): Promise<FeatureFlag[]> => fetchWithAdminEmail('/flags/'),
+  list: (): Promise<FeatureFlag[]> => api.get('/flags/').then((r) => r.data),
 
   update: (name: string, value: unknown): Promise<FeatureFlag> =>
-    fetchWithAdminEmail(`/flags/${name}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ value }),
-    }),
+    api.patch(`/flags/${encodeURIComponent(name)}`, { value }).then((r) => r.data),
 
   reset: (name: string): Promise<null> =>
-    fetchWithAdminEmail(`/flags/${name}`, { method: 'DELETE' }),
+    api.delete(`/flags/${encodeURIComponent(name)}`).then((r) => r.data),
 
   // ── Execution Modes ───────────────────────────────────────────────────────
-  listModes: (): Promise<ExecutionMode[]> => fetchWithAdminEmail('/flags/modes/'),
+  listModes: (): Promise<ExecutionMode[]> => api.get('/flags/modes/').then((r) => r.data),
 
   getMode: (name: string): Promise<ExecutionMode> =>
-    fetchWithAdminEmail(`/flags/modes/${name}`),
+    api.get(`/flags/modes/${encodeURIComponent(name)}`).then((r) => r.data),
 
   upsertMode: (name: string, data: Partial<ExecutionMode>): Promise<ExecutionMode> =>
-    fetchWithAdminEmail(`/flags/modes/${name}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
+    api.put(`/flags/modes/${encodeURIComponent(name)}`, data).then((r) => r.data),
 
   deleteMode: (name: string): Promise<null> =>
-    fetchWithAdminEmail(`/flags/modes/${name}`, { method: 'DELETE' }),
+    api.delete(`/flags/modes/${encodeURIComponent(name)}`).then((r) => r.data),
 };

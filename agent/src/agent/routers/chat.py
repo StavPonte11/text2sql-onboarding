@@ -80,17 +80,15 @@ async def chat_endpoint(
 
         if request.allowed_tables:
             async with AsyncSession(async_engine) as session:
-                all_tables = (await session.execute(select(Table))).scalars().all()
+                from sqlalchemy import or_
                 for allowed in request.allowed_tables:
-                    exists = False
-                    for t in all_tables:
-                        if (
-                            t.id == allowed
-                            or t.name == allowed
-                            or f"{t.schema_name}.{t.name}" == allowed
-                        ):
-                            exists = True
-                            break
+                    parts = allowed.split(".")
+                    if len(parts) == 2:
+                        cond = or_(Table.id == allowed, Table.name == allowed, (Table.schema_name == parts[0]) & (Table.name == parts[1]))
+                    else:
+                        cond = or_(Table.id == allowed, Table.name == allowed)
+                    
+                    exists = (await session.execute(select(Table.id).where(cond))).first()
                     if not exists:
                         raise HTTPException(
                             status_code=400, detail=f"Table '{allowed}' does not exist."

@@ -3,12 +3,6 @@ import sys
 import time
 from contextlib import asynccontextmanager
 
-from core.db.engine import create_db_and_tables, engine
-from core.models.models import AuditQuery
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session
-
 from app.config import settings
 from app.routers import (
     admin_approval,
@@ -23,12 +17,17 @@ from app.routers import (
     health,
     orchestration,
     profiling,
-    publish,
     questions,
     scopes,
     tables,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
+
+from core.db.engine import create_db_and_tables, engine
+from core.models.models import AuditQuery
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -94,9 +93,9 @@ async def audit_middleware(request: Request, call_next):
         try:
             with Session(engine) as session:
                 audit = AuditQuery(
-                    table_id=table_id
-                    if table_id and len(table_id) == 36
-                    else None,  # quick check for uuid
+                    table_id=(
+                        table_id if table_id and len(table_id) == 36 else None
+                    ),  # quick check for uuid
                     user_id=user_id,
                     raw_question=query_desc,
                     execution_time_ms=process_time_ms,
@@ -117,7 +116,6 @@ api_router.include_router(questions.router)
 api_router.include_router(evaluation.router)
 api_router.include_router(extractors.router)
 api_router.include_router(orchestration.router)
-api_router.include_router(publish.router)
 api_router.include_router(scopes.router)
 api_router.include_router(audit.router)
 api_router.include_router(profiling.router)

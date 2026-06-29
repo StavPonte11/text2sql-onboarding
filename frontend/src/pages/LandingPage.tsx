@@ -352,18 +352,18 @@ export function LandingPage() {
           <div className="footer-links">
             <div className="footer-col">
               <h4>Platform</h4>
-              <a href="#">Features</a>
-              <a href="#">Integrations</a>
+              <a href="https://example.com/features" target="_blank" rel="noreferrer">Features</a>
+              <a href="https://example.com/integrations" target="_blank" rel="noreferrer">Integrations</a>
             </div>
             <div className="footer-col">
               <h4>Resources</h4>
-              <a href="#">Documentation</a>
-              <a href="#">API Reference</a>
+              <a href="https://example.com/docs" target="_blank" rel="noreferrer">Documentation</a>
+              <a href="https://example.com/api" target="_blank" rel="noreferrer">API Reference</a>
             </div>
             <div className="footer-col">
               <h4>Support</h4>
-              <a href="#">Help Center</a>
-              <a href="#">IT Service Desk</a>
+              <a href="https://example.com/help" target="_blank" rel="noreferrer">Help Center</a>
+              <a href="https://example.com/support" target="_blank" rel="noreferrer">IT Service Desk</a>
             </div>
           </div>
         </div>

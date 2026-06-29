@@ -115,5 +115,6 @@ async def test_tts_g1_07_esca_resilient_fallback_and_finalizer(mock_langfuse, mo
         assert mock_get_esca.called == False
         
         # Verify finalizer updates the summary based on mock LLM
-        # mock_llm returns None structured output by default here, so summary is fallback
         assert "summary" in result
+        assert result["summary"] != state["summary"], "Summary should be updated by finalizer_node"
+        assert result["summary"] != ""

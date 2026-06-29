@@ -4,6 +4,9 @@ from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
 from agent.utils.skill_registry import SkillRegistry
 from python_core_utils.redis import get_redis_client
+from agent.config import settings
+from agent.langfuse_client import langfuse_client
+from core.langfuse import get_langfuse_handler
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,6 @@ async def init_skills_node(state: AgentState, config: RunnableConfig | None = No
     active_skills = state.get("active_skills")
     runtime_flags = state.get("runtime_flags") or {}
     
-    from agent.config import settings
     skills_enabled = bool(runtime_flags.get("SKILLS_ENABLED", getattr(settings, "SKILLS_ENABLED", True)))
     hot_reload = bool(runtime_flags.get("SKILLS_HOT_RELOAD", getattr(settings, "SKILLS_HOT_RELOAD", False)))
     cache_ttl = int(runtime_flags.get("SKILLS_CACHE_TTL", getattr(settings, "SKILLS_CACHE_TTL", 3600)))
@@ -39,11 +41,9 @@ async def init_skills_node(state: AgentState, config: RunnableConfig | None = No
         
         if loaded_skills:
             try:
-                from core.langfuse import get_langfuse_handler
                 langfuse_handler = get_langfuse_handler()
                 if langfuse_client.get_current_trace_id():
                     skill_names = [s.get("displayName") or s.get("name", "Unknown") for s in loaded_skills]
-                    from agent.langfuse_client import langfuse_client
                     langfuse_client.update_current_span(
                         metadata={"skills_loaded": skill_names}
                     )

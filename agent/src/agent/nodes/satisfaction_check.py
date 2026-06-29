@@ -49,21 +49,12 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
 
     runtime_flags = state.get("runtime_flags") or {}
 
-    # ── Global gate ───────────────────────────────────────────────────────────
-    check_enabled = _f(runtime_flags, "SATISFACTION_CHECK_ENABLED", settings.SATISFACTION_CHECK_ENABLED)
-    if not check_enabled:
-        return {"satisfaction_failures": [], "execution_path": ["satisfaction_check"]}
-
     # ── LLM (used for Check C and D) ──────────────────────────────────────────
     llm = get_llm("satisfaction_check", runtime_flags=runtime_flags)
 
     failures: list[str] = []
     rows = state.get("inline_result_rows") or []
-    columns: list[str] = []
-
-    # Attempt to derive column names from the first result row
-    if rows and isinstance(rows[0], dict):
-        columns = list(rows[0].keys())
+    columns: list[str] = state.get("inline_result_columns") or []
 
     # ── Check A: Execution Success ────────────────────────────────────────────
     if _f(runtime_flags, "SATISFACTION_CHECK_EXECUTION", settings.SATISFACTION_CHECK_EXECUTION):

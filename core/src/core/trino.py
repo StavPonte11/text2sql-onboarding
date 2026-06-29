@@ -69,7 +69,7 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
     try:
         conn = get_trino_connection()
         cur = conn.cursor()
-        if params:
+        if params is not None:
             cur.execute(sql, params)
         else:
             cur.execute(sql)

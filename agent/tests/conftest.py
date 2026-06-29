@@ -72,7 +72,11 @@ class MockRedisPipeline:
     def delete(self, *keys):
         self.commands.append(("delete", keys))
         
+    def setex(self, name, time, value):
+        self.commands.append(("setex", name, time, value))
+        
     async def execute(self):
+        # execute should reflect both queued writes and deletes
         return [True] * len(self.commands)
 
 class MockRedisAsync:
@@ -83,6 +87,13 @@ class MockRedisAsync:
         if isinstance(key, str):
             key = key.encode()
         return self.store.get(key)
+        
+    async def mget(self, keys):
+        res = []
+        for key in keys:
+            k = key.encode() if isinstance(key, str) else key
+            res.append(self.store.get(k))
+        return res
         
     async def setex(self, key, ttl, value):
         if isinstance(key, str):
@@ -123,7 +134,7 @@ def mock_trino():
     from core.trino import TrinoExecutionResult
     
     def _execute_query_sync(*args, **kwargs):
-        return TrinoExecutionResult(success=True, rows=[{"id": 1, "name": "test"}], columns=["id", "name"], error=None)
+        return TrinoExecutionResult(success=True, rows=[[1, "test"]], columns=["id", "name"], error_message=None)
         
     with patch("core.trino.execute_query_sync", side_effect=_execute_query_sync) as mock_func:
         yield mock_func

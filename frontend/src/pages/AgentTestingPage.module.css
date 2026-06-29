@@ -169,11 +169,11 @@
   border-radius: 50%;
   border-top-color: #38BDF8;
   border-right-color: #818CF8;
-  animation: spinLoader 1s cubic-bezier(0.55, 0.25, 0.25, 0.85) infinite;
+  animation: spin-loader 1s cubic-bezier(0.55, 0.25, 0.25, 0.85) infinite;
   box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
 }
 
-@keyframes spinLoader {
+@keyframes spin-loader {
   to {
     transform: rotate(360deg);
   }
@@ -184,10 +184,10 @@
   font-size: 14.5px;
   font-weight: 500;
   letter-spacing: 0.5px;
-  animation: pulseText 2s ease-in-out infinite;
+  animation: pulse-text 2s ease-in-out infinite;
 }
 
-@keyframes pulseText {
+@keyframes pulse-text {
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
 }
@@ -199,7 +199,7 @@
 }
 
 /* Animations */
-@keyframes fadeInUp {
+@keyframes fade-in-up {
   from {
     opacity: 0;
     transform: translateY(20px);
@@ -211,7 +211,7 @@
 }
 
 .animateIn {
-  animation: fadeInUp 0.5s ease forwards;
+  animation: fade-in-up 0.5s ease forwards;
 }
 
 /* Revamped Agent Completed Card styling */
@@ -768,10 +768,10 @@
 
 /* Real-time thinking spinner & step process classes */
 .pulseIcon {
-  animation: pulseIconAnim 1.5s infinite ease-in-out;
+  animation: pulse-icon-anim 1.5s infinite ease-in-out;
 }
 
-@keyframes pulseIconAnim {
+@keyframes pulse-icon-anim {
   0%, 100% { opacity: 0.6; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.1); }
 }
@@ -782,10 +782,10 @@
   border-radius: 50%;
   background-color: #38BDF8;
   box-shadow: 0 0 8px #38BDF8, 0 0 16px #38BDF8;
-  animation: pulseDotAnim 1.5s infinite ease-in-out;
+  animation: pulse-dot-anim 1.5s infinite ease-in-out;
 }
 
-@keyframes pulseDotAnim {
+@keyframes pulse-dot-anim {
   0%, 100% { transform: scale(0.8); opacity: 0.7; }
   50% { transform: scale(1.2); opacity: 1; }
 }

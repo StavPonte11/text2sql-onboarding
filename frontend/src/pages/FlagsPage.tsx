@@ -32,256 +32,16 @@ import { QUERY_KEYS } from '../config/constants';
 import { useAdminStore } from '../store/adminStore';
 import './FlagsPage.css';
 
-// ── Flag category grouping ─────────────────────────────────────────────────
-
-const FLAG_CATEGORIES: Record<string, string[]> = {
-  Extraction: [
-    'EXTRACTOR_MODEL', 'EXTRACTOR_TEMPERATURE', 'EXTRACTOR_TOP_K_TABLES', 'TABLE_SCOPING_MODE',
-  ],
-  'Schema Explorer': [
-    'MAX_PROFILES_TO_FETCH', 'PROFILE_FETCH_CONCURRENCY', 'SCHEMA_CACHE_TTL', 'PROFILE_CACHE_TTL',
-    'SCHEMA_SEMANTIC_TYPING', 'SCHEMA_JOIN_GRAPH', 'SCHEMA_SUMMARIZATION', 'SCHEMA_AMBIGUITY_DETECT',
-    'SCHEMA_SUMMARY_MODEL', 'SCHEMA_TOP_K_JOINS',
-  ],
-  'Query Builder': ['QUERY_BUILDER_MODEL', 'QUERY_BUILDER_TEMPERATURE'],
-  Refiner: ['MAX_REFINER_ITERATIONS', 'MAX_SCHEMA_REPLAN_ITERATIONS', 'REFINER_MODEL'],
-  'Satisfaction Check': [
-    'SATISFACTION_CHECK_ENABLED', 'SATISFACTION_CHECK_EXECUTION', 'SATISFACTION_CHECK_PLAUSIBILITY',
-    'SATISFACTION_CHECK_COLUMNS', 'SATISFACTION_CHECK_SEMANTIC', 'SATISFACTION_MIN_ROWS',
-    'SATISFACTION_MAX_ROWS', 'SATISFACTION_SEMANTIC_THRESHOLD', 'SATISFACTION_JUDGE_MODEL',
-  ],
-  Skills: ['SKILLS_ENABLED', 'SKILLS_HOT_RELOAD', 'SKILLS_CACHE_TTL'],
-  Evaluation: ['LLM_JUDGE_ENABLED', 'EVAL_PARALLEL_WORKERS', 'EVAL_JUDGE_MODEL'],
-  'Catalog Validation': ['CATALOG_VALIDATION_ENABLED', 'CATALOG_CACHE_TTL'],
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  bool: 'blue', int: 'green', float: 'cyan', string: 'purple', json: 'orange',
-};
-
-// ── Inline Flag Editor ─────────────────────────────────────────────────────
-
-function FlagEditor({
-  flag,
-  onSave,
-  onReset,
-  isSaving,
-  isResetting,
-}: {
-  flag: FeatureFlag;
-  onSave: (name: string, value: unknown) => void;
-  onReset: (name: string) => void;
-  isSaving: boolean;
-  isResetting: boolean;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<unknown>(flag.value);
-
-  const handleSave = () => {
-    onSave(flag.name, draft);
-    setEditing(false);
-  };
-
-  const handleCancel = () => {
-    setDraft(flag.value);
-    setEditing(false);
-  };
-
-  const displayValue = () => {
-    if (flag.value === null || flag.value === undefined) {
-      return <span className="flag-value--null">env default</span>;
-    }
-    if (flag.type === 'bool') {
-      return (
-        <Switch
-          checked={flag.value as boolean}
-          size="small"
-          onChange={(v) => onSave(flag.name, v)}
-          loading={isSaving}
-        />
-      );
-    }
-    return <code className="flag-value">{JSON.stringify(flag.value)}</code>;
-  };
-
-  const editor = () => {
-    if (flag.type === 'bool') return null; // bool uses switch directly
-    if (flag.type === 'int') {
-      return (
-        <InputNumber
-          value={draft as number}
-          step={1}
-          precision={0}
-          onChange={(v) => setDraft(v)}
-          size="small"
-          style={{ width: 120 }}
-        />
-      );
-    }
-    if (flag.type === 'float') {
-      return (
-        <InputNumber
-          value={draft as number}
-          step={0.01}
-          onChange={(v) => setDraft(v)}
-          size="small"
-          style={{ width: 120 }}
-        />
-      );
-    }
-    if (flag.type === 'json') {
-      return (
-        <Input.TextArea
-          value={typeof draft === 'string' ? draft : JSON.stringify(draft, null, 2)}
-          onChange={(e) => {
-            try { setDraft(JSON.parse(e.target.value)); } catch { setDraft(e.target.value); }
-          }}
-          autoSize={{ minRows: 2, maxRows: 6 }}
-          style={{ width: 280, fontFamily: 'monospace', fontSize: 12 }}
-        />
-      );
-    }
-    return (
-      <Input
-        value={draft as string}
-        onChange={(e) => setDraft(e.target.value)}
-        size="small"
-        style={{ width: 200 }}
-      />
-    );
-  };
-
-  return (
-    <div className="flag-row">
-      <div className="flag-row__meta">
-        <span className="flag-row__name">{flag.name}</span>
-        <Tag color={TYPE_COLORS[flag.type]} style={{ fontSize: 10 }}>{flag.type}</Tag>
-      </div>
-
-      <div className="flag-row__desc">{flag.description}</div>
-
-      <div className="flag-row__value">
-        {editing && flag.type !== 'bool' ? (
-          <div className="flag-row__edit-controls">
-            {editor()}
-            <Tooltip title="Save">
-              <Button type="primary" size="small" icon={<Save size={12} />} onClick={handleSave} loading={isSaving} />
-            </Tooltip>
-            <Tooltip title="Cancel">
-              <Button size="small" icon={<X size={12} />} onClick={handleCancel} />
-            </Tooltip>
-          </div>
-        ) : (
-          <div className="flag-row__display">
-            {displayValue()}
-            {flag.type !== 'bool' && (
-              <Tooltip title="Edit value">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<Edit3 size={12} />}
-                  onClick={() => { setDraft(flag.value); setEditing(true); }}
-                />
-              </Tooltip>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flag-row__actions">
-        <span className="flag-row__owner">{flag.owner}</span>
-        {flag.last_modified_by && flag.last_modified_by !== 'seed' && (
-          <span className="flag-row__modifier">by {flag.last_modified_by}</span>
-        )}
-        <Popconfirm
-          title={`Reset ${flag.name} to env default?`}
-          description="This clears the DB override and falls back to the environment variable."
-          onConfirm={() => onReset(flag.name)}
-          okText="Reset"
-          okButtonProps={{ danger: true }}
-        >
-          <Tooltip title="Reset to env default">
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<RotateCcw size={12} />}
-              loading={isResetting}
-              disabled={flag.value === null}
-            />
-          </Tooltip>
-        </Popconfirm>
-      </div>
-    </div>
-  );
-}
-
-// ── Execution Mode Card ────────────────────────────────────────────────────
-
-function ModeCard({
-  mode,
-  onEdit,
-  onDelete,
-}: {
-  mode: ExecutionMode;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const overrideCount = Object.keys(mode.flag_overrides || {}).length;
-  return (
-    <div className={`mode-card ${!mode.is_active ? 'mode-card--inactive' : ''}`}>
-      <div className="mode-card__header">
-        <div className="mode-card__title">
-          <Zap size={14} className="mode-card__icon" />
-          <span>{mode.name}</span>
-          {!mode.is_active && <Badge color="gray" text="Inactive" />}
-        </div>
-        <div className="mode-card__actions">
-          <Button type="text" size="small" icon={<Edit3 size={14} />} onClick={onEdit} />
-          <Popconfirm
-            title={`Delete mode "${mode.name}"?`}
-            description="Active sessions using this mode won't be affected until their next invocation."
-            onConfirm={onDelete}
-            okText="Delete"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="text" size="small" danger icon={<Trash2 size={14} />} />
-          </Popconfirm>
-        </div>
-      </div>
-      <p className="mode-card__desc">{mode.description || <em>No description</em>}</p>
-      <div className="mode-card__overrides">
-        <span className="mode-card__override-count">{overrideCount} flag override{overrideCount !== 1 ? 's' : ''}</span>
-        {Object.entries(mode.flag_overrides || {}).slice(0, 4).map(([k, v]) => (
-          <Tag key={k} style={{ fontSize: 10 }}>{k}: {JSON.stringify(v)}</Tag>
-        ))}
-        {overrideCount > 4 && <Tag>+{overrideCount - 4} more</Tag>}
-      </div>
-      <div 
-        className="mode-card__footer" 
-        style={{ 
-          marginTop: 12, 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          fontSize: 10, 
-          color: 'var(--color-text-secondary, #8c8c8c)', 
-          borderTop: '1px solid var(--color-border-subtle, #f0f0f0)', 
-          paddingTop: 8 
-        }}
-      >
-        <span>Created by: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{mode.created_by || 'system'}</span></span>
-        <span>Updated: {new Date(mode.updated_at).toLocaleDateString()}</span>
-      </div>
-    </div>
-  );
-}
+import { FlagEditor } from '../components/flags/FlagEditor';
+import { ModeCard } from '../components/flags/ModeCard';
+import { FLAG_CATEGORIES, TYPE_COLORS } from '../config/flagsConfig';
 
 export function FlagsPage() {
   const queryClient = useQueryClient();
   const user = useAdminStore((state) => state.user);
   
-  const [activeTab, setActiveTab] = useState<'flags' | 'modes'>('flags');
+  type TabKey = 'flags' | 'modes';
+  const [activeTab, setActiveTab] = useState<TabKey>('flags');
   const [search, setSearch] = useState('');
   const [modeModalOpen, setModeModalOpen] = useState(false);
   const [editingMode, setEditingMode] = useState<ExecutionMode | null>(null);
@@ -386,16 +146,31 @@ export function FlagsPage() {
 
   const filteredCategories = useMemo(() => {
     const q = search.toLowerCase();
-    return Object.entries(FLAG_CATEGORIES).filter(([cat, names]) => {
+    const categorizedFlagNames = new Set<string>();
+
+    const categories = Object.entries(FLAG_CATEGORIES).filter(([cat, names]) => {
       if (!q) return true;
       return cat.toLowerCase().includes(q) || names.some((n) => n.toLowerCase().includes(q));
-    }).map(([cat, names]) => ({
-      cat,
-      flags: names
+    }).map(([cat, names]) => {
+      const catFlags = names
         .filter((n) => !q || n.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
-        .map((n) => flagMap[n])
-        .filter(Boolean) as FeatureFlag[],
-    })).filter((g) => g.flags.length > 0);
+        .map((n) => {
+          categorizedFlagNames.add(n);
+          return flagMap[n];
+        })
+        .filter(Boolean) as FeatureFlag[];
+      return { cat, flags: catFlags };
+    }).filter((g) => g.flags.length > 0);
+
+    const uncategorizedFlags = flags.filter(
+      (f) => !categorizedFlagNames.has(f.name) && (!q || f.name.toLowerCase().includes(q))
+    );
+
+    if (uncategorizedFlags.length > 0) {
+      categories.push({ cat: 'Uncategorized', flags: uncategorizedFlags });
+    }
+
+    return categories;
   }, [flags, flagMap, search]);
 
   const openNewMode = () => {
@@ -420,6 +195,10 @@ export function FlagsPage() {
   };
 
   const submitMode = () => {
+    if (!modeDraft.name.trim()) {
+      message.error('Mode name is required and cannot be blank.');
+      return;
+    }
     // Construct overrides object from overridesList
     const overridesObj: Record<string, any> = {};
     for (const item of overridesList) {
@@ -427,7 +206,7 @@ export function FlagsPage() {
     }
     
     upsertModeMutation.mutate({
-      name: modeDraft.name,
+      name: modeDraft.name.trim(),
       data: { 
         description: modeDraft.description, 
         flag_overrides: overridesObj, 
@@ -688,6 +467,7 @@ export function FlagsPage() {
                           className="override-builder-item__delete"
                           icon={<Trash2 size={13} />} 
                           onClick={() => handleRemoveOverride(item.name)} 
+                          aria-label={`Delete ${item.name} override`}
                         />
                       </div>
                     );

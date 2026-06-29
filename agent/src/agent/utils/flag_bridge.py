@@ -28,7 +28,7 @@ _ENV_DEFAULTS: dict[str, Any] = {
     "EXTRACTOR_MODEL": settings.LLM_MODEL,
     "EXTRACTOR_TEMPERATURE": 0.0,
     "EXTRACTOR_TOP_K_TABLES": settings.HYBRID_SEARCH_MAX_TABLES,
-    "TABLE_SCOPING_MODE": settings.TABLE_SCOPING_MODE,
+    "DEFAULT_TABLE_SCOPING_MODE": settings.DEFAULT_TABLE_SCOPING_MODE,
     # Schema Explorer
     "MAX_PROFILES_TO_FETCH": settings.MAX_PROFILES_TO_FETCH,
     "PROFILE_FETCH_CONCURRENCY": settings.PROFILE_FETCH_CONCURRENCY,
@@ -38,7 +38,7 @@ _ENV_DEFAULTS: dict[str, Any] = {
     "SCHEMA_JOIN_GRAPH": settings.ENABLE_JOIN_GRAPH,
     "SCHEMA_SUMMARIZATION": settings.ENABLE_SCHEMA_SUMMARIZATION,
     "SCHEMA_AMBIGUITY_DETECT": settings.ENABLE_AMBIGUITY_DETECT,
-    "SCHEMA_SUMMARY_MODEL": settings.LLM_MODEL,
+    "SCHEMA_EXPLORER_MODEL": settings.LLM_MODEL,
     "SCHEMA_TOP_K_JOINS": 5,
     # Query Builder
     "QUERY_BUILDER_MODEL": settings.LLM_MODEL,
@@ -104,7 +104,7 @@ class FlagBridge:
         # Layer 2: DB flag overrides
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.get(f"{self._base_url}/api/flags/map")
+                resp = await client.get(f"{self._base_url}/flags/map")
                 if resp.status_code == 200:
                     db_flags: dict[str, Any] = resp.json()
                     # Only overlay flags that have a non-null value in the DB
@@ -114,7 +114,7 @@ class FlagBridge:
                     logger.debug("FlagBridge: loaded %d DB flag overrides", len(db_flags))
                 else:
                     logger.warning(
-                        "FlagBridge: /api/flags/map returned %d, using env defaults",
+                        "FlagBridge: /flags/map returned %d, using env defaults",
                         resp.status_code,
                     )
         except Exception as exc:
@@ -125,12 +125,15 @@ class FlagBridge:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
                     resp = await client.get(
-                        f"{self._base_url}/api/flags/modes/{execution_mode}"
+                        f"{self._base_url}/flags/modes/{execution_mode}"
                     )
                     if resp.status_code == 200:
                         mode_data = resp.json()
                         overrides: dict = mode_data.get("flag_overrides") or {}
-                        resolved.update(overrides)
+                        # Only apply overrides that have non-null values (mirrors DB overlay logic)
+                        for name, value in overrides.items():
+                            if value is not None:
+                                resolved[name] = value
                         logger.info(
                             "FlagBridge: applied execution_mode='%s' (%d overrides)",
                             execution_mode,
@@ -143,7 +146,7 @@ class FlagBridge:
                         )
                     else:
                         logger.warning(
-                            "FlagBridge: /api/flags/modes/%s returned %d",
+                            "FlagBridge: /flags/modes/%s returned %d",
                             execution_mode,
                             resp.status_code,
                         )

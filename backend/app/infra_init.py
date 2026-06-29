@@ -14,6 +14,7 @@ All steps are fully idempotent. Running this multiple times is safe.
 
 import base64
 import logging
+import os
 import time
 from typing import Any
 
@@ -24,7 +25,6 @@ from minio.error import S3Error
 
 logger = logging.getLogger(__name__)
 
-import os
 _MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
 _MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
 _MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password123")

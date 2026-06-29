@@ -10,6 +10,7 @@ class AgentSettings(BaseSettings):
 
     ESCA_API_KEY: str = ""
     ESCA_URL: str = "http://localhost:7010"
+    ESCA_WRITE_ENABLED: bool = True
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "gemma4:e4b"
@@ -19,8 +20,6 @@ class AgentSettings(BaseSettings):
     HYBRID_SEARCH_MAX_TABLES: int = 10
     MAX_PROFILES_TO_FETCH: int = 3
     PROFILE_FETCH_CONCURRENCY: int = Field(default=4, gt=0)
-    REDIS_URL: str = "redis://localhost:6379"
-
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
     LANGFUSE_BASE_URL: str = Field(min_length=1)
@@ -31,8 +30,7 @@ class AgentSettings(BaseSettings):
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
 
     # ── G4: Feature Flags & Execution Modes ──────────────────────────────────
-    BACKEND_URL: str = ""  # Studio backend URL for flag reads (e.g. http://backend:8000)
-                           # If empty, FlagBridge falls back to env-var defaults
+    BACKEND_URL: str  # Studio backend URL for flag reads (e.g. http://backend:8000)
 
 
     # Langfuse prompt names
@@ -46,8 +44,11 @@ class AgentSettings(BaseSettings):
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
 
+    MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)
+    REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=4, gt=0)
+
     # ── G2-01: Table Scoping ──────────────────────────────────────────────────
-    TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
+    DEFAULT_TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
 
     # ── G2-03: Advanced Schema Explorer phases ────────────────────────────────
     ENABLE_SEMANTIC_TYPING: bool = True   # single batched LLM call — adds id/timestamp/category labels
@@ -67,8 +68,8 @@ class AgentSettings(BaseSettings):
     SATISFACTION_MAX_FAILURES: int = 2  # escalate to HITL after this many check failures
 
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────
-    SCHEMA_CACHE_TTL: int = 600    # seconds — DDL content
-    PROFILE_CACHE_TTL: int = 1800  # seconds — table profile statistics
+    SCHEMA_CACHE_TTL: int = Field(default=600, gt=0)    # seconds — DDL content
+    PROFILE_CACHE_TTL: int = Field(default=1800, gt=0)  # seconds — table profile statistics
 
 
 settings = AgentSettings()

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+@import "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap";
 
 :root {
   --text: #94A3B8; /* slate-400 */
@@ -12,9 +12,9 @@
   --social-bg: rgba(15, 23, 42, 0.5);
   --shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
 
-  --sans: 'Fira Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: 'Fira Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: 'Fira Code', ui-monospace, Consolas, monospace;
+  --sans: "Fira Sans", system-ui, "Segoe UI", "Roboto", sans-serif;
+  --heading: "Fira Sans", system-ui, "Segoe UI", "Roboto", sans-serif;
+  --mono: "Fira Code", ui-monospace, "Consolas", monospace;
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;

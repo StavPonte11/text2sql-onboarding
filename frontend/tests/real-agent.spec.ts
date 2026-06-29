@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Real Agent Execution', () => {
   test('should run query against real backend', async ({ page }) => {
     // Navigate to the Studio / Agent Testing page using the local dev server
-    await page.goto('http://localhost:3001/agent-testing');
+    await page.goto('/agent-testing');
 
     // Fill the chat input
     const input = page.getByPlaceholder('Ask the agent to query a table...');

@@ -42,6 +42,7 @@ async def chat_with_agent(
     """
     thread_id = thread_id or str(uuid.uuid4())
     
+    langfuse_handler = None
     try:
         from core.langfuse import get_langfuse_handler
         langfuse_handler = get_langfuse_handler()
@@ -63,7 +64,16 @@ async def chat_with_agent(
                 }
             )
 
-        result = await agent_graph.ainvoke(Command(resume=resume_value), config=config)
+        result = await agent_graph.ainvoke(Command(
+            update={
+                "last_error": None,
+                "trino_error": None,
+                "escalated": None,
+                "escalation_reason": None,
+                "refinement_count": 0,
+            },
+            resume=resume_value
+        ), config=config)
     else:
         if not query:
             return json.dumps({"error": "Query is required for new chat session."})
@@ -181,9 +191,6 @@ async def chat_with_agent(
         }
     )
 
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
-
 @mcp.tool()
 async def suggest_fixes(thread_id: str, category: str) -> str:
     """Generate quick fix suggestions during an interruption."""
@@ -216,7 +223,14 @@ async def suggest_fixes(thread_id: str, category: str) -> str:
     
     structured_llm = llm.with_structured_output(Fixes, method="json_schema")
     try:
-        res = structured_llm.invoke(prompt)
-        return json.dumps(res.suggestions)
+        res = await structured_llm.ainvoke(prompt)
+        if isinstance(res, dict):
+            suggestions = res.get("suggestions", [])
+        else:
+            suggestions = res.suggestions
+        return json.dumps(suggestions)
     except Exception as e:
         return json.dumps([])
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import JSON, Column, ForeignKey
 from sqlmodel import Field, SQLModel
@@ -14,6 +14,14 @@ class TableStatus(StrEnum):
     verified = "verified"
     production = "production"
     degraded = "degraded"
+
+
+class FeatureFlagType(StrEnum):
+    bool = "bool"
+    int = "int"
+    float = "float"
+    string = "string"
+    json = "json"
 
 
 class Table(SQLModel, table=True):
@@ -788,9 +796,10 @@ class FeatureFlag(SQLModel, table=True):
 
     name: str = Field(primary_key=True)
     value: Any | None = Field(default=None, sa_column=Column(JSON))
-    type: str = Field(description="bool | int | float | string | json")
+    type: FeatureFlagType = Field(description="bool | int | float | string | json")
     description: str = Field(default="")
     owner: str = Field(default="")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     last_modified_by: str = Field(default="")
     last_modified_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -798,9 +807,10 @@ class FeatureFlag(SQLModel, table=True):
 class FeatureFlagRead(SQLModel):
     name: str
     value: Any | None
-    type: str
+    type: Literal["bool", "int", "float", "string", "json"]
     description: str
     owner: str
+    created_at: datetime
     last_modified_by: str
     last_modified_at: datetime
 

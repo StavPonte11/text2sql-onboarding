@@ -915,28 +915,33 @@ export function AgentTestingPage() {
     setLoadingTrace(true);
     let attempts = 0;
     const maxAttempts = 5;
+    let timeoutId: NodeJS.Timeout;
+    let isSubscribed = true;
 
     const fetchTrace = () => {
+      if (!isSubscribed) return;
       axios
         .get(`/api/agent/traces/${traceId}`)
         .then((res) => {
+          if (!isSubscribed) return;
           const data = res.data || [];
           if (data.length > 0) {
             setTraceSpans(data);
             setLoadingTrace(false);
           } else if (attempts < maxAttempts) {
             attempts++;
-            setTimeout(fetchTrace, 2000); // retry in 2s
+            timeoutId = setTimeout(fetchTrace, 2000); // retry in 2s
           } else {
             setTraceSpans([]);
             setLoadingTrace(false);
           }
         })
         .catch((err) => {
+          if (!isSubscribed) return;
           console.error('Failed to fetch trace', err);
           if (attempts < maxAttempts) {
             attempts++;
-            setTimeout(fetchTrace, 2000);
+            timeoutId = setTimeout(fetchTrace, 2000);
           } else {
             setLoadingTrace(false);
           }
@@ -944,6 +949,11 @@ export function AgentTestingPage() {
     };
 
     fetchTrace();
+
+    return () => {
+      isSubscribed = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [traceId]);
 
   const chatMutation = useMutation({
@@ -960,7 +970,7 @@ export function AgentTestingPage() {
   });
 
   useEffect(() => {
-    if (!threadId || !chatMutation.isPending) return;
+    if (!threadId) return;
 
     const eventSource = new EventSource(`/api/agent/stream/${threadId}`);
 
@@ -988,7 +998,7 @@ export function AgentTestingPage() {
     return () => {
       eventSource.close();
     };
-  }, [threadId, chatMutation.isPending]);
+  }, [threadId]);
 
   const isResuming = chatMutation.isPending && chatResponse?.status === 'interrupted';
   const isInputDisabled = chatMutation.isPending || chatResponse?.status === 'interrupted';

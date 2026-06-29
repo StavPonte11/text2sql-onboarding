@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     EMBEDDER_URL: str = "http://host.docker.internal:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     EMBEDDER_KEY: str = ""
+    
+    FLAG_CACHE_TTL: int = 30
+    MODE_CACHE_TTL: int = 30
 
 
 settings = Settings()

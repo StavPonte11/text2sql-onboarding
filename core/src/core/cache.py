@@ -20,24 +20,16 @@ import json
 import logging
 from typing import Any
 
-import redis.asyncio as aioredis
+from python_core_utils.redis import get_redis_client
+from core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Fixed TTL for catalog pre-flight validation cache (not configurable)
-CATALOG_VALID_TTL = 300
-
 
 class CacheService:
     """Async Redis cache wrapper with non-blocking fallback semantics."""
 
-    def __init__(self, redis_url: str) -> None:
-        self._redis: aioredis.Redis = aioredis.from_url(
-            redis_url,
-            decode_responses=False,  # return raw bytes so callers control decoding
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
+    def __init__(self) -> None:
+        self._redis = get_redis_client()
 
     # ── Primitive operations ──────────────────────────────────────────────────
 
@@ -68,18 +60,19 @@ class CacheService:
     async def invalidate_pattern(self, pattern: str) -> None:
         """
         Delete all keys matching *pattern* using SCAN (safe for production Redis,
-        does not block with KEYS).
+        does not block with KEYS).  Pipeline is executed per-batch to bound
+        memory and latency cost.
         """
         try:
             cursor = 0
-            pipe = self._redis.pipeline()
             while True:
                 cursor, keys = await self._redis.scan(cursor, match=pattern, count=100)
                 if keys:
+                    pipe = self._redis.pipeline()
                     pipe.delete(*keys)
+                    await pipe.execute()
                 if cursor == 0:
                     break
-            await pipe.execute()
         except Exception as exc:
             logger.warning("Cache SCAN/DELETE error for pattern %r: %s", pattern, exc)
 
@@ -130,10 +123,9 @@ class CacheService:
 
 _cache_instance: CacheService | None = None
 
-
-def get_cache_service(redis_url: str) -> CacheService:
+def get_cache_service() -> CacheService:
     """Return a module-level singleton CacheService."""
     global _cache_instance
     if _cache_instance is None:
-        _cache_instance = CacheService(redis_url)
+        _cache_instance = CacheService()
     return _cache_instance

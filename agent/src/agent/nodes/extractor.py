@@ -41,6 +41,9 @@ class ExtractorOutput(BaseModel):
 
 
 class BaseExtractor(abc.ABC):
+    def __init__(self, runtime_flags: dict | None = None):
+        self.runtime_flags = runtime_flags or {}
+
     @abc.abstractmethod
     def extract(self, query: str) -> List[ContextEntry]:
         pass
@@ -48,6 +51,7 @@ class BaseExtractor(abc.ABC):
 
 class LLMExtractor(BaseExtractor):
     def __init__(self, runtime_flags: dict | None = None):
+        super().__init__(runtime_flags)
         self.llm = get_llm("extractor", runtime_flags=runtime_flags)
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_EXTRACTOR)
@@ -85,13 +89,15 @@ class TimeExtractor(BaseExtractor):
 
 
 class HTTPExtractor(BaseExtractor):
-    def __init__(self, url: str, name: str):
+    def __init__(self, url: str, name: str, runtime_flags: dict | None = None):
+        super().__init__(runtime_flags)
         self.url = url
         self.name = name
 
     def extract(self, query: str) -> List[ContextEntry]:
         try:
-            res = requests.post(self.url, json={"query": query}, timeout=50)
+            payload = {"query": query, "runtime_flags": self.runtime_flags}
+            res = requests.post(self.url, json=payload, timeout=50)
             res.raise_for_status()
             data = res.json()
             return [ContextEntry(**item) for item in data.get("enrichments", [])]
@@ -112,12 +118,16 @@ def extractor_node(state: AgentState, config: RunnableConfig | None = None):
     import concurrent.futures
 
     extractors: List[BaseExtractor] = [
-        TimeExtractor(),
+        TimeExtractor(runtime_flags=runtime_flags),
         LLMExtractor(runtime_flags=runtime_flags),
     ]
 
     for ext_info in active_extractors:
-        extractors.append(HTTPExtractor(ext_info["url"], ext_info["name"]))
+        extractors.append(
+            HTTPExtractor(
+                ext_info["url"], ext_info["name"], runtime_flags=runtime_flags
+            )
+        )
 
     all_enrichments = []
 

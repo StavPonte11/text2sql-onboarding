@@ -10,7 +10,11 @@ def get_sync_redis():
     global _sync_redis
     if _sync_redis is None:
         import redis
-        _sync_redis = redis.from_url(settings.REDIS_URL)
+        _sync_redis = redis.from_url(
+            settings.REDIS_URL,
+            socket_timeout=2,
+            socket_connect_timeout=2,
+        )
     return _sync_redis
 
 async def publish_node_event(thread_id: str, node: str, status: str = "active"):

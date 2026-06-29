@@ -2,8 +2,10 @@ import axios from 'axios';
 
 import { API_BASE_URL } from '../config/constants';
 import { useAppStore } from '../store/appStore';
+import { useAdminStore } from '../store/adminStore';
 
 import type {
+
   AuditQuery,
   ColumnProfile,
   CrossTableProfile,
@@ -34,8 +36,22 @@ api.interceptors.request.use((config) => {
   if (scope) {
     config.headers['X-Scope-Id'] = scope.id;
   }
+  const user = useAdminStore.getState().user;
+  if (user?.email) {
+    config.headers['X-Admin-Email'] = user.email;
+  }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 403 && error.config?.url?.startsWith('/flags')) {
+      useAdminStore.getState().logout();
+    }
+    return Promise.reject(error);
+  }
+);
 
 // ── Tables ────────────────────────────────────────────────────────────────────
 export const tablesApi = {

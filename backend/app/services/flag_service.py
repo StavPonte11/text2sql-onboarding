@@ -16,12 +16,12 @@ A missing row in config.feature_flags means "no DB override" —
 callers must fall back to their env-var default.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
 from typing import Any
 
-import redis.asyncio as aioredis
 from core.db.engine import engine
 from core.models.models import (
     ExecutionMode,
@@ -31,43 +31,22 @@ from core.models.models import (
 )
 from fastapi import HTTPException
 from sqlmodel import Session, select
+from python_core_utils.redis import get_redis_client
+from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-FLAG_CACHE_TTL = 30     # seconds — per TTS-G4-01 AC1
-MODE_CACHE_TTL = 30     # seconds
 
 # Valid types and coercion rules
 _VALID_TYPES = {"bool", "int", "float", "string", "json"}
 
-_REDIS: aioredis.Redis | None = None
-
-
-def _get_redis(redis_url: str) -> aioredis.Redis:
-    global _REDIS
-    if _REDIS is None:
-        _REDIS = aioredis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-    return _REDIS
-
 
 def validate_flag_type(value: Any, flag_type: str) -> bool:
-    """Return True if *value* is compatible with the declared *flag_type*."""
-    if flag_type == "bool":
-        return isinstance(value, bool)
-    if flag_type == "int":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if flag_type == "float":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if flag_type == "string":
-        return isinstance(value, str)
+    """Return True if *value* strictly matches the declared *flag_type*."""
     if flag_type == "json":
-        return isinstance(value, (dict, list))
-    return False
+        return type(value) in (dict, list)
+    if flag_type == "string":
+        return type(value) is str
+    return type(value).__name__ == flag_type
 
 
 class FlagService:
@@ -77,18 +56,17 @@ class FlagService:
     Redis calls are wrapped in try/except — a Redis outage never crashes the API.
     """
 
-    def __init__(self, redis_url: str) -> None:
-        self._redis_url = redis_url
+    def __init__(self) -> None:
+        pass
 
     @property
-    def _redis(self) -> aioredis.Redis:
-        return _get_redis(self._redis_url)
+    def _redis(self):
+        return get_redis_client()
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 
     def _try_cache_get(self, key: str) -> dict | None:
         """Synchronous Redis GET (creates a new event loop if needed for sync context)."""
-        import asyncio
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -102,7 +80,6 @@ class FlagService:
         return None
 
     def _try_cache_set(self, key: str, value: dict, ttl: int) -> None:
-        import asyncio
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -113,7 +90,6 @@ class FlagService:
             logger.warning("Flag cache SET error for %r: %s", key, exc)
 
     def _invalidate(self, *keys: str) -> None:
-        import asyncio
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -161,9 +137,9 @@ class FlagService:
 
         with Session(engine) as session:
             flags = session.exec(select(FeatureFlag)).all()
+            flag_map = {f.name: f.value for f in flags}
 
-        flag_map = {f.name: f.value for f in flags}
-        self._try_cache_set("flag:all", flag_map, FLAG_CACHE_TTL)
+        self._try_cache_set("flag:all", flag_map, settings.FLAG_CACHE_TTL)
         return flag_map
 
     def set(self, name: str, value: Any, actor: str) -> FeatureFlag:
@@ -199,7 +175,8 @@ class FlagService:
 
     def delete(self, name: str, actor: str) -> None:
         """
-        Reset a flag to its env-var default by deleting the DB row.
+        Clear a flag's value back to its env-var default by setting flag.value = None.
+        The DB row is preserved so flag metadata (type, description) is retained.
         Writes audit log with new_value=None to mark the reset.
         """
         with Session(engine) as session:
@@ -241,7 +218,7 @@ class FlagService:
         if mode is None:
             return {}
         overrides = mode.flag_overrides or {}
-        self._try_cache_set(cache_key, overrides, MODE_CACHE_TTL)
+        self._try_cache_set(cache_key, overrides, settings.MODE_CACHE_TTL)
         return overrides
 
     def upsert_mode(self, name: str, data: ExecutionModeUpsert, actor: str) -> ExecutionMode:

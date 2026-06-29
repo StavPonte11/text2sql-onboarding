@@ -1,3 +1,4 @@
+import re
 from langchain_core.runnables.config import RunnableConfig
 from agent.utils.redis_publisher import publish_node_event_sync
 from agent.state import AgentState
@@ -33,7 +34,6 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
             "feedback_str": feedback_str,
         }
     )
-    import re
     content = response.content
     
     # Check for built-in reasoning content in model metadata (additional_kwargs)

@@ -10,8 +10,14 @@ def clean_sql(query: str) -> str:
         return ""
 
     cleaned = query.strip()
-    cleaned = re.sub(r"^```(?:sql)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+    
+    # Check for fenced SQL block anywhere in the string
+    match = re.search(r"```(?:sql)?\s*(.*?)\s*```", cleaned, re.IGNORECASE | re.DOTALL)
+    if match:
+        cleaned = match.group(1).strip()
+    else:
+        cleaned = re.sub(r"^```(?:sql)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
 
     # Strip trailing semicolon if present
     cleaned = cleaned.strip()

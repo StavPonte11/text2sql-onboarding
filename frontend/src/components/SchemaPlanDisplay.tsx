@@ -15,7 +15,7 @@ interface SchemaPlanDisplayProps {
 const renderCellSafe = (val: any): string => {
   if (val === null || val === undefined) return '';
   if (typeof val === 'object') {
-    return val.column_name || val.name || JSON.stringify(val);
+    return val.column_name ?? val.name ?? JSON.stringify(val);
   }
   return String(val);
 };
@@ -179,7 +179,7 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
       title: 'Value',
       key: 'value',
       render: (record: any) => {
-        const val = record.value || record.val || '';
+        const val = record.value ?? record.val ?? '';
         return <Text code>{renderCellSafe(val)}</Text>;
       },
     },
@@ -268,14 +268,14 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
         </div>
       )}
 
-      {(planData.order_by?.length > 0 || planData.limit) && (
+      {(planData.order_by?.length > 0 || planData.limit !== undefined) && (
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
             <ListOrdered size={16} /> <span>Sorting & Limits</span>
           </div>
           <Card size="small" className={styles.infoCard}>
             {planData.order_by?.length > 0 && (
-              <div style={{ marginBottom: planData.limit ? 8 : 0 }}>
+              <div style={{ marginBottom: planData.limit !== undefined ? 8 : 0 }}>
                 <Text strong>Order By: </Text>
                 {planData.order_by.map((ob: any, i: number) => (
                   <Tag key={i} color="purple">
@@ -285,7 +285,7 @@ export const SchemaPlanDisplay: React.FC<SchemaPlanDisplayProps> = ({ planString
                 ))}
               </div>
             )}
-            {planData.limit && (
+            {planData.limit !== undefined && (
               <div>
                 <Text strong>Limit: </Text> <Tag color="magenta">{planData.limit}</Tag>
               </div>

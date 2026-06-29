@@ -21,4 +21,6 @@ class CoreSettings(BaseSettings):
     TRINO_CERT_PATH: str | None = None
     TRINO_KEY_PATH: str | None = None
 
+    CATALOG_VALID_TTL: int = 300
+
 settings = CoreSettings()

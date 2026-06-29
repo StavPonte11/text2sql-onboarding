@@ -9,5 +9,5 @@ def get_langfuse_handler() -> CallbackHandler | None:
     try:
         return CallbackHandler()
     except Exception as e:
-        logger.error(f"Failed to initialize Langfuse CallbackHandler: {e}")
+        logger.exception("Failed to initialize Langfuse CallbackHandler")
         return None

@@ -283,7 +283,7 @@ async def run_join_graph(
             for b in node_names[i + 1 :]:
                 p = _bfs_shortest_path(adj, a, b)
                 if p:
-                    paths.append({"from": a, "to": b, "path": p})
+                    paths.append({"from": a, "to": b, "path": p, "joins": []})
 
     if not paths:
         return ""
@@ -371,7 +371,10 @@ async def run_ambiguity_detection(
     )
     try:
         structured = llm.with_structured_output(AmbiguityOutput, method="json_schema")
-        result: AmbiguityOutput = await structured.ainvoke(prompt)
+        result = await structured.ainvoke(prompt)
+        # Handle both Pydantic model and raw dict responses
+        if isinstance(result, dict):
+            return result.get("ambiguity_notes", [])
         return result.ambiguity_notes
     except Exception as exc:
         logger.warning("run_ambiguity_detection failed: %s", exc)

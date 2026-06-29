@@ -56,7 +56,11 @@ class SkillRegistry:
                 try:
                     pipeline = self.redis.pipeline()
                     for skill in fetched:
-                        key = f"skill:{skill['id']}"
+                        skill_id = skill.get("id")
+                        if not skill_id:
+                            logger.warning("Skipping skill cache write — skill dict is missing 'id' field: %s", skill)
+                            continue
+                        key = f"skill:{skill_id}"
                         pipeline.setex(key, cache_ttl, json.dumps(skill))
                     await pipeline.execute()
                 except Exception as e:

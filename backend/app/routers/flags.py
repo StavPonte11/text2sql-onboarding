@@ -2,15 +2,15 @@
 Feature Flags & Execution Modes API (G4-01)
 ============================================
 Endpoints:
-  GET  /flags/                   – list all flags
-  GET  /flags/{name}             – get single flag
-  PATCH /flags/{name}            – update flag value (operator only)
-  DELETE /flags/{name}           – reset flag to env default (operator only)
+  GET  /flags/                   - list all flags
+  GET  /flags/{name}             - get single flag
+  PATCH /flags/{name}            - update flag value (operator only)
+  DELETE /flags/{name}           - reset flag to env default (operator only)
 
-  GET  /flags/modes/             – list all execution modes
-  GET  /flags/modes/{name}       – get single mode
-  PUT  /flags/modes/{name}       – create or update a mode (operator only)
-  DELETE /flags/modes/{name}     – delete a mode (operator only)
+  GET  /flags/modes/             - list all execution modes
+  GET  /flags/modes/{name}       - get single mode
+  PUT  /flags/modes/{name}       - create or update a mode (operator only)
+  DELETE /flags/modes/{name}     - delete a mode (operator only)
 
 Auth: all write operations require X-Admin-Email header pointing to
       a SecurityUser with is_admin=True (reuses existing admin auth pattern).
@@ -43,7 +43,7 @@ _flag_service: FlagService | None = None
 def get_flag_service() -> FlagService:
     global _flag_service
     if _flag_service is None:
-        _flag_service = FlagService(redis_url=settings.REDIS_URL)
+        _flag_service = FlagService()
     return _flag_service
 
 

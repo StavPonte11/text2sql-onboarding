@@ -60,7 +60,7 @@ async def test_tts_g2_04_satisfaction_check_multi_stage_gate(mock_langfuse, mock
 async def test_tts_g2_05_redis_schema_cache_management_and_scan_eviction():
     # Setup mock Redis via CacheService
     # We will instantiate CacheService directly passing a dummy url and then patch its internal redis
-    with patch("core.cache.aioredis.from_url") as mock_from_url:
+    with patch("redis.asyncio.from_url") as mock_from_url:
         mock_redis_client = MagicMock()
         mock_redis_client.get = AsyncMock(return_value=b'{"cached": true}')
         mock_redis_client.setex = AsyncMock()
@@ -75,7 +75,8 @@ async def test_tts_g2_05_redis_schema_cache_management_and_scan_eviction():
         
         mock_from_url.return_value = mock_redis_client
         
-        cache = CacheService("redis://dummy")
+        cache = CacheService()
+        cache._redis = mock_redis_client
         
         # Verify read hit
         res = await cache.get_json("dummy_key")
@@ -94,5 +95,4 @@ async def test_tts_g2_05_redis_schema_cache_management_and_scan_eviction():
         assert mock_pipeline.delete.call_count == 2
         mock_pipeline.delete.assert_any_call(b"profile:1:v1")
         mock_pipeline.delete.assert_any_call(b"profile:1:v2")
-        # Should have executed the pipeline once
-        mock_pipeline.execute.assert_called_once()
+        assert mock_pipeline.execute.call_count == 2

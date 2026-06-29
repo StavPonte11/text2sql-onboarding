@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 # Flag name → LLM_MODEL env-var fallback for each node
 _NODE_MODEL_FLAGS: dict[str, str] = {
     "extractor":          "EXTRACTOR_MODEL",
-    "schema_explorer":    "SCHEMA_SUMMARY_MODEL",
+    "schema_explorer":    "SCHEMA_EXPLORER_MODEL",
     "query_builder":      "QUERY_BUILDER_MODEL",
     "refiner":            "REFINER_MODEL",
     "satisfaction_check": "SATISFACTION_JUDGE_MODEL",

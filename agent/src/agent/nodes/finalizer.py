@@ -9,9 +9,7 @@ from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
 from agent.utils.esca import get_esca_client
 
-llm = get_llm("finalizer")
-
-# Prompts will be loaded dynamically from Langfuse inside the node execution
+from agent.utils.esca import get_esca_client
 
 
 async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
@@ -43,7 +41,7 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
         return f"Error retrieving data preview from Esca: {e}"
 
 
-async def get_sql_explanation(sql_query: str | None) -> str:
+async def get_sql_explanation(sql_query: str | None, llm) -> str:
     """Ask LLM to explain the SQL query in natural language."""
     if not sql_query:
         return "No SQL query was generated."
@@ -68,6 +66,8 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
     raw_data_ref = state.get("raw_data_ref")
     esca_write_failed = state.get("esca_write_failed", False)
     inline_result_rows = state.get("inline_result_rows")
+    runtime_flags = state.get("runtime_flags") or {}
+    llm = get_llm("finalizer", runtime_flags=runtime_flags)
 
     preview_str = ""
     if esca_write_failed or not raw_data_ref:
@@ -85,7 +85,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
                 "preview_count": len(preview_rows),
                 "total_rows": len(inline_result_rows),
             }
-            preview_str = json.dumps(preview_info, indent=2)
+            preview_str = json.dumps(preview_info, indent=2, default=str)
         else:
             preview_str = "No data reference found."
     else:
@@ -109,7 +109,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
         }
     )
 
-    sql_task = get_sql_explanation(state.get("sql_query"))
+    sql_task = get_sql_explanation(state.get("sql_query"), llm)
 
     summary_response, sql_explanation = await asyncio.gather(summary_task, sql_task)
 
