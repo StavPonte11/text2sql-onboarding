@@ -105,20 +105,13 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
     @observe(name="eval-question")
     def task(self, item) -> dict[str, Any]:
         """
-        Evaluate a single question via the Text2SQL MCP tool.
-
-        ┌──────────────────────────────────────────────────────────────────────┐
-        │  MERGE — replace this block with the real MCP client call:           │
-        │                                                                      │
-        │  tool_response = mcp_client.call_tool("TextToSQL", {                 │
-        │      "query":     item.input["query"],                               │
-        │      "databases": item.input["databases"],                           │
-        │  })                                                                  │
-        │  generated_sql = tool_response.data["result"]                        │
-        └──────────────────────────────────────────────────────────────────────┘
-
+        Evaluate one dataset item by retrieving its golden question, recording the run, and returning the generated SQL result.
+        
+        Parameters:
+        	item: Dataset item containing the question identifier in its metadata.
+        
         Returns:
-            dict with keys: response (generated SQL), question_id, expected_sql
+        	dict[str, Any]: A mapping with the trace identifiers, generated SQL response, question ID, expected SQL, and persisted evaluation result ID. If the question cannot be found, the response is ``None``.
         """
         trace_id = _lf_client.client.get_current_trace_id() if _lf_client.client else None
         observation_id = _lf_client.client.get_current_observation_id() if _lf_client.client else None

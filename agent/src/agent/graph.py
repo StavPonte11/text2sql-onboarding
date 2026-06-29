@@ -27,7 +27,14 @@ class RejectionRoute(BaseModel):
 
 
 def rejection_router_node(state: AgentState):
-    """Classify user rejection feedback and select the appropriate phase to return to."""
+    """
+    Route user rejection feedback to the next pipeline phase.
+    
+    If feedback is missing, routes back to the query builder. Otherwise, classifies the feedback into a rerun target and clears the current SQL, schema plan, raw data reference, and Trino error state.
+    
+    Returns:
+        dict: A state update containing ``feedback_route`` and reset routing fields.
+    """
     feedback = state.get("feedback")
     if not feedback:
         return {"feedback_route": "query_builder"}
@@ -56,6 +63,12 @@ def rejection_router_node(state: AgentState):
 
 
 def route_refiner(state: AgentState):
+    """
+    Route the workflow to another refinement pass or to finalization.
+    
+    Returns:
+    	str: "refiner" when a Trino error is present and the refinement limit has not been reached; otherwise "finalizer".
+    """
     if (
         state.get("trino_error")
         and state.get("refinement_count", 0) < MAX_REFINER_ITERATIONS
@@ -65,12 +78,27 @@ def route_refiner(state: AgentState):
 
 
 def route_query_builder(state: AgentState):
+    """
+    Route query building to rejection handling when feedback is present.
+    
+    Returns:
+    	str: "rejection_router" if feedback is present, otherwise "refiner".
+    """
     if state.get("feedback"):
         return "rejection_router"
     return "refiner"
 
 
 def route_rejection(state: AgentState):
+    """
+    Select the next phase to revisit after rejection feedback.
+    
+    Parameters:
+    	state (AgentState): Current workflow state containing the selected feedback route.
+    
+    Returns:
+    	str: The requested route when it is one of "extractor", "schema_explorer", or "query_builder"; otherwise "extractor".
+    """
     route = state.get("feedback_route")
     if route in ["extractor", "schema_explorer", "query_builder"]:
         return route
@@ -91,6 +119,12 @@ workflow.add_edge("extractor", "schema_explorer")
 
 
 def route_schema_explorer(state: AgentState):
+    """
+    Route schema exploration based on detected hallucinated tables and retry count.
+    
+    Returns:
+    	str: "schema_explorer" when hallucinated tables remain and the retry limit has not been reached; otherwise "query_builder".
+    """
     if state.get("hallucinated_tables"):
         if state.get("schema_explorer_retry_count", 0) >= 3:
             return "query_builder"

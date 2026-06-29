@@ -41,11 +41,23 @@ class ExtractorOutput(BaseModel):
 class BaseExtractor(abc.ABC):
     @abc.abstractmethod
     def extract(self, query: str) -> List[ContextEntry]:
+        """
+        Extract enrichment entries for a user query.
+        
+        Parameters:
+        	query (str): The user query to analyze.
+        
+        Returns:
+        	List[ContextEntry]: Enrichment entries derived from the query.
+        """
         pass
 
 
 class LLMExtractor(BaseExtractor):
     def __init__(self):
+        """
+        Initialize the LLM-based extractor.
+        """
         self.llm = get_llm("extractor")
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_EXTRACTOR)
@@ -58,6 +70,15 @@ class LLMExtractor(BaseExtractor):
         )
 
     def extract(self, query: str) -> List[ContextEntry]:
+        """
+        Extract context enrichments for a query.
+        
+        Parameters:
+        	query (str): The user query to analyze.
+        
+        Returns:
+        	List[ContextEntry]: The extracted enrichment entries.
+        """
         try:
             data = self.chain.invoke({"user_query": query})
             return data.enrichments
@@ -68,6 +89,15 @@ class LLMExtractor(BaseExtractor):
 
 class TimeExtractor(BaseExtractor):
     def extract(self, query: str) -> List[ContextEntry]:
+        """
+        Add a current-time enrichment entry.
+        
+        Parameters:
+        	query (str): The user query.
+        
+        Returns:
+        	list[ContextEntry]: A list containing a current-time context entry.
+        """
         enrichments = []
         now = datetime.datetime.now()
         # Always anchor current time
@@ -84,10 +114,26 @@ class TimeExtractor(BaseExtractor):
 
 class HTTPExtractor(BaseExtractor):
     def __init__(self, url: str, name: str):
+        """
+        Initialize an HTTP extractor.
+        
+        Parameters:
+        	url (str): The endpoint used to request enrichments.
+        	name (str): The extractor name used in error messages.
+        """
         self.url = url
         self.name = name
 
     def extract(self, query: str) -> List[ContextEntry]:
+        """
+        Fetch context enrichments from an HTTP service.
+        
+        Parameters:
+        	query (str): The user query to send to the remote extractor.
+        
+        Returns:
+        	List[ContextEntry]: Enrichment entries returned by the service, or an empty list if the request or response parsing fails.
+        """
         try:
             res = requests.post(self.url, json={"query": query}, timeout=50)
             res.raise_for_status()
@@ -99,7 +145,12 @@ class HTTPExtractor(BaseExtractor):
 
 
 def extractor_node(state: AgentState):
-    """Enrich the user query with additional context to help downstream phases."""
+    """
+    Enrich the user query with context entries from the configured extractors.
+    
+    Returns:
+        dict: A mapping containing ``query_enrichments`` with the collected enrichment dictionaries.
+    """
     user_query = state["user_query"]
     active_extractors = state.get("active_extractors") or []
 

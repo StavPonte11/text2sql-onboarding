@@ -53,6 +53,15 @@ async def chat_endpoint(
     request: ChatRequest,
     langfuse_handler: CallbackHandler = Depends(get_langfuse_handler),
 ):
+    """
+    Starts or resumes an agent chat session.
+    
+    Parameters:
+    	request (ChatRequest): Chat input and session control values.
+    	
+    Returns:
+    	ChatResponse: The final chat result, including completion data or interruption details.
+    """
     thread_id = request.thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},

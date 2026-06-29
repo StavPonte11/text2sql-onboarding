@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Manage application startup and shutdown lifecycle.
+    
+    Initializes the database and background scheduler during startup after verifying that the OpenAI API key is configured, then stops the scheduler during shutdown.
+    
+    Raises:
+    	RuntimeError: If the OpenAI API key is missing or startup initialization fails.
+    """
     if not settings.OPENAI_API_KEY:
         logger.error("Startup failed: OPENAI_API_KEY is missing. LLM judge cannot run.")
         raise RuntimeError("OPENAI_API_KEY is missing")

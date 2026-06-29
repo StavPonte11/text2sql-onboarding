@@ -9,7 +9,15 @@ llm = get_llm("query_builder")
 
 
 def query_builder_node(state: AgentState):
-    """Build SQL from plan and pause for user approval."""
+    """
+    Build a SQL query from the current plan and request approval when needed.
+    
+    Parameters:
+        state (AgentState): The agent state containing the user query, optional schema plan, optional feedback, and interactive mode settings.
+    
+    Returns:
+        dict: A result containing the generated SQL when approved, or feedback and a null SQL query when rejected.
+    """
     feedback = state.get("feedback")
     feedback_str = f"\nUser Feedback to apply: {feedback}" if feedback else ""
 

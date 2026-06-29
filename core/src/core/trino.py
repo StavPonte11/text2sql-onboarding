@@ -24,7 +24,12 @@ class TrinoExecutionResult(BaseModel):
 
 
 def get_trino_connection():
-    """Create a real Trino DBAPI connection from settings."""
+    """
+    Create a Trino DBAPI connection using configured settings.
+    
+    Returns:
+    	connection: A Trino DBAPI connection configured from application settings.
+    """
     auth = None
     if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
         auth = trino.auth.CertificateAuthentication(
@@ -50,7 +55,15 @@ def get_trino_connection():
 
 def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list | None = None) -> TrinoExecutionResult:
     """
-    Execute a SQL query against the real Trino cluster.
+    Execute a SQL query against Trino and return the result details.
+    
+    Parameters:
+    	sql (str): The SQL statement to run.
+    	table_id (str): Context label used in log messages.
+    	params (tuple | dict | list | None): Parameters to pass to the query.
+    
+    Returns:
+    	TrinoExecutionResult: The query outcome, including rows, column names, row count, execution time, and any error message.
     """
     start_time = time.time()
     log_sql = sql.strip().replace("\n", " ")[:300]

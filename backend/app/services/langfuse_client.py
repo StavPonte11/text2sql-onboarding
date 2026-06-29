@@ -153,7 +153,9 @@ class LangfuseTracer(Connection):
             return False
 
     def logout(self) -> None:
-        """Flush pending events and release the client."""
+        """
+        Flush pending events and release the Langfuse client.
+        """
         if self.client:
             try:
                 self.client.flush()
@@ -169,8 +171,12 @@ class LangfuseTracer(Connection):
     def get_prompt(self, name: str) -> Any | None:
         """
         Fetch a prompt from Langfuse by name.
-
-        Returns the prompt object or None if unavailable.
+        
+        Parameters:
+        	name (str): The prompt name.
+        
+        Returns:
+        	The prompt object if it can be retrieved, or None if the client is unavailable or the lookup fails.
         """
         if self.client is None:
             self.logger.warning(
@@ -220,6 +226,9 @@ class LangfuseDatasetService:
         return self._tracer.client
 
     def flush(self) -> None:
+        """
+        Flush pending events on the Langfuse client.
+        """
         if self._tracer.client:
             self._tracer.client.flush()
             

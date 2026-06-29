@@ -95,6 +95,17 @@ def _build_questions_payload(questions: list, table: Table) -> list:
 
 @observe(name="eval-single-table")
 def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
+    """
+    Evaluate a table against its golden questions and store the results.
+    
+    Parameters:
+    	table_id (str): The table to evaluate.
+    	run_id (str): The evaluation run to update.
+    	session (Session): Database session used to load and persist evaluation data.
+    
+    Returns:
+    	float: The average contains execution accuracy, or -1.0 when the run or questions are missing.
+    """
     run = session.get(EvalRun, run_id)
     if not run:
         return -1.0

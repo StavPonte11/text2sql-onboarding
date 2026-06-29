@@ -55,7 +55,14 @@ LOW_SCORE_THRESHOLD = 0.70
 def _run_full_pipeline(
     table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
 ):
-    """Run evaluation for multiple tables (one run per table)."""
+    """
+    Run evaluation for each table and persist alerts and analytics metrics.
+    
+    Parameters:
+    	table_ids (list[str]): Table IDs to evaluate.
+    	run_ids (list[str]): Evaluation run IDs corresponding to the tables.
+    	triggered_by (str): Source that initiated the evaluation run.
+    """
     if langfuse_client.client and langfuse_client.client.get_current_trace_id():
         langfuse_client.client.trace(id=langfuse_client.client.get_current_trace_id(), 
         tags=["evaluation_run"],

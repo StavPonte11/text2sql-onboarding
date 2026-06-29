@@ -52,7 +52,12 @@ class SchemaExplorerOutput(BaseModel):
 
 
 def get_query_embedding(text: str) -> list[float]:
-    """Generate 768-dimensional embedding from nomic-embed-text."""
+    """
+    Generate an embedding for the given text.
+    
+    Returns:
+    	embedding (list[float]): The embedding vector for the input text, or a 768-element zero vector if the embedding request fails.
+    """
     # TODO: support secret
     url = f"{settings.EMBEDDER_URL}/api/embeddings"
     data = json.dumps({"model": settings.EMBEDDER_MODEL, "prompt": text}).encode()
@@ -74,7 +79,19 @@ def hybrid_search_tables(
     allowed_tables: list[str] | None = None,
     allowed_statuses: list[str] | None = None,
 ) -> list[Table]:
-    """Hybrid search combining pgvector cosine distance and keyword matching."""
+    """
+    Find candidate tables using vector similarity and keyword matching.
+    
+    Parameters:
+    	query (str): User query used for keyword matching.
+    	query_embedding (list[float]): Embedding used for vector similarity search.
+    	session (Session): Database session used to load tables and enrichment data.
+    	allowed_tables (list[str] | None): Optional allowlist of table IDs, table names, or fully qualified names.
+    	allowed_statuses (list[str] | None): Table statuses that are eligible when no allowlist is provided.
+    
+    Returns:
+    	list[Table]: Matching tables ordered by combined vector and keyword relevance.
+    """
     # 1. Get all allowed tables
     stmt_all = select(Table)
     all_tables = session.exec(stmt_all).all()
@@ -171,7 +188,15 @@ def hybrid_search_tables(
 
 @tool
 async def get_table_profile(table_id: str) -> str:
-    """Get the lightweight column names/types for a table, and the Esca reference ID for the full profiling statistics. Use this before planning a query."""
+    """
+    Return lightweight table profile metadata and an Esca reference for full profiling data.
+    
+    Parameters:
+    	table_id (str): The table identifier.
+    
+    Returns:
+    	str: A JSON string containing the table name, row count, column metadata, and an Esca reference ID, or an error message if the table or its completed profile cannot be found.
+    """
     with Session(engine) as session:
         table = session.get(Table, table_id)
         if not table:
@@ -263,7 +288,17 @@ async def get_table_profile(table_id: str) -> str:
 
 
 async def schema_explorer_node(state: AgentState):
-    """RAG Schema Explorer sub-agent node, pausing for table selection if ambiguous."""
+    """
+    Build a schema query plan from the user request and verify referenced tables.
+    
+    The node finds candidate tables, fetches lightweight profiles for the top matches, asks the LLM to produce a structured schema plan, optionally pauses for user clarification when the table choice is ambiguous, and checks the plan's table references against cached existence data or the database catalog.
+    
+    Parameters:
+    	state (AgentState): Current agent state containing the user query, optional enrichment context, table restrictions, prior feedback, and retry counters.
+    
+    Returns:
+    	dict: Updated state containing the generated schema plan and, when applicable, hallucinated table names, feedback for a retry, an error message, and the next retry count.
+    """
     user_query = state["user_query"]
     enrichments = state.get("query_enrichments", [])
     allowed_tables = state.get("allowed_tables")
@@ -286,6 +321,16 @@ async def schema_explorer_node(state: AgentState):
     sem = asyncio.Semaphore(settings.PROFILE_FETCH_CONCURRENCY)
 
     async def fetch_profile(t_id, t_name):
+        """
+        Fetch a table profile under the concurrency limit.
+        
+        Parameters:
+        	t_id: Table identifier used to request the profile.
+        	t_name: Table name used in error messages.
+        
+        Returns:
+        	The parsed profile data, or ``None`` if fetching or parsing fails.
+        """
         async with sem:
             try:
                 profile_res = await get_table_profile.ainvoke({"table_id": t_id})

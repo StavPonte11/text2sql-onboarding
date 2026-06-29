@@ -19,6 +19,15 @@ REFINER_SCHEMA_CONTEXT_TABLES = 4
 
 
 def build_refiner_schema_context(state: AgentState) -> str:
+    """
+    Build schema context text for SQL refinement.
+    
+    Parameters:
+    	state (AgentState): The current agent state containing table profiles.
+    
+    Returns:
+    	str: Pretty-printed JSON for up to four table profiles, or "No schema context available." when no profiles are present.
+    """
     profiles = state.get("table_profiles")
     if not profiles:
         return "No schema context available."
@@ -29,7 +38,15 @@ def build_refiner_schema_context(state: AgentState) -> str:
 
 
 async def refiner_node(state: AgentState):
-    """Refine SQL against Trino."""
+    """
+    Executes the current SQL, refines it after Trino errors, and stores successful results.
+    
+    Parameters:
+    	state (AgentState): Current agent state containing the SQL query, refinement count, and error history.
+    
+    Returns:
+    	dict: Updated agent state with a refined SQL query after failure, or Trino error fields cleared and result data persisted after success.
+    """
     sql = state.get("sql_query")
     count = state.get("refinement_count", 0)
     error_history = state.get("error_history") or []

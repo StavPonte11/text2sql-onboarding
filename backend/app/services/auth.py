@@ -5,7 +5,16 @@ from sqlmodel import Session, select
 
 
 def get_user_by_email(email: str, session: Session) -> SecurityUser | None:
-    """Fetch a user from security.users by email."""
+    """
+    Find a security user by email.
+    
+    Parameters:
+    	email (str): The email address to match.
+    	session (Session): Database session used to query users.
+    
+    Returns:
+    	SecurityUser | None: The matching user, or None if no user has the given email.
+    """
     return session.exec(select(SecurityUser).where(SecurityUser.email == email)).first()
 
 

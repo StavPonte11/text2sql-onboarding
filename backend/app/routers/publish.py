@@ -29,6 +29,18 @@ def publish_table(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
+    """
+    Start the publishing workflow for a table after validating required prerequisites.
+    
+    Parameters:
+    	table_id (str): The table to publish.
+    
+    Returns:
+    	dict: A response containing the publishing status, message, and run ID.
+    
+    Raises:
+    	HTTPException: Raised with status code 404 if the table is not found, or 422 if required enrichment or golden questions are missing.
+    """
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")

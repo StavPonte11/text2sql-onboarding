@@ -21,7 +21,20 @@ async def chat_with_agent(
     extractors: list[str] | None = None,
     hitl_enabled: bool = True,
 ) -> str:
-    """Run the Text2SQL agent to answer database queries."""
+    """
+    Run the Text2SQL agent for a new query or resume an existing session.
+    
+    Parameters:
+    	query (str | None): The user question for a new session.
+    	thread_id (str | None): The session identifier to use or create.
+    	resume_value (str | dict | None): Payload used to resume a paused session.
+    	allowed_tables (list[str] | None): Tables the agent may access.
+    	allowed_statuses (list[str] | None): Status filters passed to the agent.
+    	extractors (list[str] | None): Extractor names or IDs to enable.
+    
+    Returns:
+    	str: A JSON string describing an error, interruption, or completed result.
+    """
     thread_id = thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},

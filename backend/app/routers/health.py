@@ -172,7 +172,12 @@ def recompute_health(table_id: str, session: Session = Depends(get_session)):
 
 @router.get("/health/all", response_model=list[TableHealthRead])
 def get_all_health(session: Session = Depends(get_session)):
-    """Returns the latest health record for every table (used in the table list view)."""
+    """
+    Return all table health records ordered by health score.
+    
+    Returns:
+    	list[TableHealth]: Table health records sorted by ascending health score.
+    """
     return session.exec(
         select(TableHealth).order_by(TableHealth.health_score.asc())
     ).all()
@@ -180,6 +185,13 @@ def get_all_health(session: Session = Depends(get_session)):
 
 @router.get("/health/judge")
 def get_judge_health():
+    """
+    Check whether the LLM judge is configured.
+    
+    Returns:
+    	status (str): `"ok"` when `OPENAI_API_KEY` is set, or `"error"` when it is missing.
+    	message (str): A human-readable configuration status message.
+    """
     from app.config import settings
 
     api_key = getattr(settings, "OPENAI_API_KEY", None)
@@ -190,6 +202,12 @@ def get_judge_health():
 
 @router.get("/health/esca")
 async def get_esca_health():
+    """
+    Check whether the ESCA service is configured and reachable.
+    
+    Returns:
+    	dict: A status payload indicating either a configuration error, successful reachability, or an HTTP error is raised when the connectivity check times out or fails.
+    """
     import asyncio
 
     try:
@@ -213,6 +231,12 @@ async def get_esca_health():
     client = EscaClient(api_key=api_key, base_url=base_url)
 
     async def _ping_esca():
+        """
+        Check whether the Esca client is reachable.
+        
+        Returns:
+        	The result of the client's connectivity check.
+        """
         if hasattr(client, "ping"):
             return await client.ping()
         else:

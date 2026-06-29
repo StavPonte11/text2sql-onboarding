@@ -83,6 +83,20 @@ def build_judge_prompt(
     expected_shape: ExpectedShape,
     schema_block: str,
 ) -> str:
+    """
+    Build the prompt used to evaluate a Text-to-SQL attempt.
+    
+    Parameters:
+        user_question (str): The original natural-language question.
+        expected_sql (str): The reference SQL query.
+        generated_sql (str): The SQL query produced by the agent.
+        execution (ExecutionResult): Execution details for the generated query.
+        expected_shape (ExpectedShape): Expected result shape constraints.
+        schema_block (str): Schema context included in the prompt.
+    
+    Returns:
+        str: The rendered judge prompt text.
+    """
     return INPUT_BLOCK_TEMPLATE.format(
         user_question=user_question,
         expected_sql=expected_sql or "N/A",
@@ -110,8 +124,18 @@ def evaluate_with_llm(
     schema_block: str,
 ) -> JudgeOutput:
     """
-    Executes the LLM-as-a-judge prompt to evaluate a SQL generation attempt.
-    This simulates an external API call to OpenAI/Anthropic using the strict JSON schema.
+    Evaluate a SQL generation attempt with an LLM judge.
+    
+    Parameters:
+    	user_question (str): The original question.
+    	expected_sql (str): The reference SQL query.
+    	generated_sql (str): The SQL query produced by the agent.
+    	execution (ExecutionResult): Execution result metadata for the generated SQL.
+    	expected_shape (ExpectedShape): Expected result shape for the reference query.
+    	schema_block (str): Table schema context included in the judge prompt.
+    
+    Returns:
+    	JudgeOutput: The judge scores, reasoning, and failure metadata.
     """
     user_prompt = build_judge_prompt(
         user_question,

@@ -7,7 +7,16 @@ from typing import Optional
 # We could dynamically configure settings based on the node name.
 # For now, it delegates to agent.config settings.
 def get_llm(node: str = "default", temperature: Optional[float] = 0.0) -> ChatOpenAI:
-    """Factory function for instantiating the unified LLM."""
+    """
+    Create a ChatOpenAI client configured from application settings.
+    
+    Parameters:
+    	node (str): Name used for debug logging.
+    	temperature (Optional[float]): Sampling temperature to pass to the model.
+    
+    Returns:
+    	ChatOpenAI: A configured chat model client.
+    """
     logging.debug(f"Instantiating LLM for node: {node}")
     return ChatOpenAI(
         model=settings.LLM_MODEL,

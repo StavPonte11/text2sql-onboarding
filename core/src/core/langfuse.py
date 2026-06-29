@@ -15,5 +15,10 @@ except Exception as e:
     _langfuse_handler = None
 
 def get_langfuse_handler() -> CallbackHandler | None:
-    """FastAPI dependency to inject the Langfuse CallbackHandler singleton."""
+    """
+    Provide the module-level Langfuse callback handler.
+    
+    Returns:
+        CallbackHandler | None: The initialized Langfuse callback handler, or ``None`` if initialization failed.
+    """
     return _langfuse_handler

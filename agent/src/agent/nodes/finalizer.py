@@ -13,7 +13,11 @@ llm = get_llm("finalizer")
 
 
 async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
-    """Load data from Esca and return a preview of the columns and the first few rows."""
+    """
+    Load an Esca data preview and format it as JSON.
+    
+    Returns a JSON string containing the available columns, the first few rows, the number of preview rows, and the total row count. If no Esca reference is provided, returns a message indicating that no data reference was found. If the preview cannot be loaded, returns an error message.
+    """
     if not esca_id:
         return "No data reference found."
 
@@ -42,7 +46,15 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
 
 
 async def get_sql_explanation(sql_query: str | None) -> str:
-    """Ask LLM to explain the SQL query in natural language."""
+    """
+    Explain a SQL query in natural language.
+    
+    Parameters:
+    	sql_query (str | None): The SQL query to explain.
+    
+    Returns:
+    	str: A natural-language explanation of the query, or "No SQL query was generated." when no query is provided.
+    """
     if not sql_query:
         return "No SQL query was generated."
 
@@ -59,7 +71,15 @@ async def get_sql_explanation(sql_query: str | None) -> str:
 
 
 async def finalizer_node(state: AgentState):
-    """Summarize data."""
+    """
+    Generate the final user-facing summary and SQL explanation.
+    
+    Parameters:
+    	state (AgentState): Current agent state containing the user query, SQL query, and optional data preview inputs.
+    
+    Returns:
+    	dict: A dictionary with ``summary`` and ``sql_explanation`` entries.
+    """
     raw_data_ref = state.get("raw_data_ref")
     esca_write_failed = state.get("esca_write_failed", False)
     inline_result_rows = state.get("inline_result_rows")

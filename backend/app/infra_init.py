@@ -540,8 +540,12 @@ def _trino_exec(sql: str, *, ignore_errors: bool = False) -> list:
 
 def _ensure_iceberg_tables() -> None:
     """
-    Ensure the Postgres tables required by the Iceberg JDBC catalog exist.
-    If they are missing, Trino fails to initialize the catalog.
+    Ensure the Postgres tables used by the Iceberg JDBC catalog exist.
+    
+    Creates the catalog metadata tables needed for Trino to initialize the Iceberg catalog.
+    
+    Raises:
+    	Exception: If the tables cannot be created.
     """
 
     import psycopg2
@@ -651,8 +655,9 @@ def _ensure_trino_tables() -> None:
 
 def _seed_trino_data() -> None:
     """
-    Seed sample rows into tables, clearing any existing data first to ensure
-    updated seeds are cleanly applied.
+    Seed sample rows into each configured Trino table after clearing existing data.
+    
+    The operation is best effort per table: failures while clearing or inserting one table do not stop seeding the remaining tables.
     """
     for table in _TABLES:
         try:
