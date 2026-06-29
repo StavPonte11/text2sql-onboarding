@@ -19,14 +19,20 @@ from app.services.trino_client import execute_query_sync
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-CATEGORICAL_DISTINCT_THRESHOLD = 50
-CATEGORICAL_COVERAGE_THRESHOLD = 0.90  # top-N values cover ≥90% → categorical
 SAMPLE_PERCENT = 10  # TABLESAMPLE BERNOULLI(10)
 SAMPLE_LIMIT = 10_000
 TOP_VALUES_LIMIT = 50
 QUERY_TIMEOUT_SECONDS = (
     settings.TRINO_REQUEST_TIMEOUT
 )  # Hard per-query timeout in seconds
+
+CATEGORICAL_DISTINCT_THRESHOLD = 50   # Max unique values for standard string categories
+NUMERIC_CATEGORICAL_THRESHOLD = 15    # Strict limit for integers (e.g., status codes)
+
+# 4-Layer String Engine Thresholds
+CARDINALITY_RATIO_IDENTIFIER = 0.90   # Layer 1 Uniqueness
+CARDINALITY_RATIO_DISPERSION = 0.50   # Layer 3 Dispersion trap
+TOP_10_COVERAGE_DISPERSION = 0.10     # Layer 3 Coverage trap
 
 NUMERIC_TYPES = {
     "bigint",
@@ -39,6 +45,14 @@ NUMERIC_TYPES = {
     "float",
     "number",
 }
+
+STRING_TYPES = {
+    "varchar",
+    "char",
+    "text",
+    "string",
+}
+
 TIME_TYPES = {
     "date",
     "timestamp",
@@ -84,9 +98,11 @@ class ColumnStats:
     null_rate: float = 0.0
     distinct_count: int = 0
     is_categorical: bool = False
+    is_large_categorical: bool = False
+    is_free_string: bool = False
     is_geo: bool = False
     is_time: bool = False
-    semantic_type: str = "continuous"  # categorical | continuous | time | geo
+    semantic_type: str = "continuous"  # categorical | continuous | time | geo | large_categorical | free_string
     top_values: list[dict] = field(default_factory=list)
     value_frequencies: dict[str, int] = field(default_factory=dict)
     min_value: str | None = None
@@ -208,7 +224,6 @@ def build_time_stats_query(fqn: str, col: str) -> str:
         f'FROM {fqn} WHERE "{col}" IS NOT NULL'
     )
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _fqn(catalog: str, schema: str, table: str) -> str:
     return f'"{catalog}"."{schema}"."{table}"'
@@ -322,15 +337,72 @@ def execute_with_timeout(query: str, table_id: str):
         )
 
 
-def _detect_semantic_type(is_categorical: bool, is_geo: bool, is_time: bool) -> str:
-    if is_geo:
-        return "geo"
-    if is_time:
-        return "time"
-    if is_categorical:
-        return "categorical"
+def _detect_semantic_type(
+    is_categorical: bool, 
+    is_geo: bool, 
+    is_time: bool, 
+    is_large_categorical: bool, 
+    is_free_string: bool,
+) -> str:
+    if is_geo: return "geo"
+    if is_time: return "time"
+    if is_categorical: return "categorical"
+    if is_large_categorical: return "large_categorical"
+    if is_free_string: return "free_string"
     return "continuous"
 
+
+
+def _evaluate_categorical_rules(
+    fqn: str,
+    col_expr: str,
+    table_id: str,
+    dtype_lower: str,
+    row_count: int,
+    null_count: int,
+    distinct_count: int,
+    top_values: list[dict],
+) -> tuple[bool, bool, bool]:
+    """
+    Runs the 4-Layer Categorical Engine.
+    Returns: (is_categorical, is_large_categorical, is_free_string)
+    """
+    is_cat = is_large_cat = is_free = False
+    
+    if row_count <= 0:
+        return is_cat, is_large_cat, is_free
+
+    is_string_type = any(t in dtype_lower for t in STRING_TYPES)
+    is_int_type = any(t in dtype_lower for t in NUMERIC_TYPES)
+
+    if is_string_type:
+        N = max(row_count - null_count, 1)
+        U = distinct_count
+        R = U / N
+        T_10 = sum(v["count"] for v in top_values[:10]) / N if top_values else 0.0
+            
+        # Layer 1: The Uniqueness Filter (Identifiers and highly unique strings)
+        if R >= CARDINALITY_RATIO_IDENTIFIER:
+            is_free = True
+                
+        # Layer 2: The Anchor Category
+        elif U <= CATEGORICAL_DISTINCT_THRESHOLD:
+            is_cat = True
+            
+        # Layer 3: The Dispersion Filter
+        elif (R >= CARDINALITY_RATIO_DISPERSION and T_10 <= TOP_10_COVERAGE_DISPERSION):
+            is_free = True
+            
+        # Layer 4: The Large Category Catch-All
+        else:
+            is_large_cat = True
+
+    elif is_int_type:
+        # STRICT Integer Categorization: Only small predefined sets (like status_id = 1, 2, 3)
+        if 0 < distinct_count <= NUMERIC_CATEGORICAL_THRESHOLD:
+            is_cat = True
+
+    return is_cat, is_large_cat, is_free
 
 # ── Row-type recursive analysis ────────────────────────────────────────────────
 def _analyze_row_column(
@@ -407,6 +479,21 @@ def _analyze_row_column(
                     child["distinct_count"] = len(top_vals)
                     child["top_values"] = top_vals
 
+            # Apply 4-Layer Categorical Logic
+            is_cat, is_lcat, is_free = _evaluate_categorical_rules(
+                fqn=fqn,
+                col_expr=field_path,
+                table_id=table_id,
+                dtype_lower=field_lower,
+                row_count=row_count,
+                null_count=nulls,
+                distinct_count=len(top_vals),
+                top_values=top_vals
+            )
+
+            child["semantic_type"] = _detect_semantic_type(
+                is_cat, is_geo, is_time, is_lcat, is_free
+            )
             # Full numeric stats (min/max/percentiles/stddev)
             if field_lower in NUMERIC_TYPES:
                 num_q = (
@@ -574,16 +661,6 @@ def _analyze_row_column(
                                 )
                             child_stats["histogram"] = hist_data
                             child["histogram"] = hist_data
-
-            if is_time:
-                child["semantic_type"] = "time"
-            elif is_geo:
-                child["semantic_type"] = "geo"
-            elif field_lower in NUMERIC_TYPES:
-                child["semantic_type"] = "continuous"
-            else:
-                child["semantic_type"] = "categorical"
-
             child["stats"] = child_stats
 
         children.append(child)
@@ -652,23 +729,30 @@ def _analyze_column(
             stats.errors.append(f"null_ratio: {r_null.error_message}")
 
     # 3. Top values + categorical detection
-    low_cardinality = 0 < stats.distinct_count < CATEGORICAL_DISTINCT_THRESHOLD
     top_values: list[dict] = []
 
-    if low_cardinality or not stats.is_time:
+    if not stats.is_time:
         r = execute_with_timeout(build_top_values_query(fqn, col_name), table_id)
         if r.success and r.rows:
             top_values = [
                 {"value": str(row[0]), "count": int(row[1])} for row in r.rows
             ]
-            top_coverage = sum(v["count"] for v in top_values) / max(row_count, 1)
-            stats.is_categorical = (
-                low_cardinality or top_coverage >= CATEGORICAL_COVERAGE_THRESHOLD
-            )
             stats.top_values = top_values
             stats.value_frequencies = {v["value"]: v["count"] for v in top_values}
         else:
             stats.errors.append(f"top_values: {r.error_message}")
+            
+    stats.is_categorical, stats.is_large_categorical, stats.is_free_string = _evaluate_categorical_rules(
+        fqn=fqn,
+        col_expr=f'"{col_name}"',
+        table_id=table_id,
+        dtype_lower=dtype_lower,
+        row_count=row_count,
+        null_count=stats.null_count,
+        distinct_count=stats.distinct_count,
+        top_values=top_values
+    )
+        
 
     # 4. Numeric stats
     if dtype_lower in NUMERIC_TYPES and not stats.is_categorical:
@@ -820,13 +904,17 @@ def _analyze_column(
 
     # 5. Semantic type
     stats.semantic_type = _detect_semantic_type(
-        stats.is_categorical, stats.is_geo, stats.is_time
+        stats.is_categorical, 
+        stats.is_geo, 
+        stats.is_time, 
+        stats.is_large_categorical, 
+        stats.is_free_string,       
     )
 
     # 6. stats_json blob (stored in column_profiles.stats_json)
-    if stats.is_categorical:
+    if stats.is_categorical or stats.is_large_categorical:
         stats.stats_json = {
-            "type": "categorical",
+            "type": stats.semantic_type,
             "values": [v["value"] for v in top_values],
             "frequencies": stats.value_frequencies,
             "distinct_count": stats.distinct_count,
@@ -1003,6 +1091,8 @@ def run_table_profiling(
                     "data_type": c.data_type,
                     "semantic_type": c.semantic_type,
                     "is_categorical": c.is_categorical,
+                    "is_large_categorical": c.is_large_categorical,
+                    "is_free_string": c.is_free_string,
                     "distinct_count": c.distinct_count,
                     "null_rate": c.null_rate,
                     "stats": c.stats_json,
@@ -1046,7 +1136,10 @@ def build_context_for_llm(
             "semantic_type": getattr(cp, "semantic_type", "continuous"),
             "null_rate": cp.null_rate,
         }
-        if getattr(cp, "is_categorical", False):
+        is_cat = getattr(cp, "is_categorical", False)
+        is_large_cat = getattr(cp, "is_large_categorical", False)
+
+        if is_cat or is_large_cat:
             col_ctx["values"] = stats.get("values", [])[:20]
         else:
             col_ctx["min"] = stats.get("min")

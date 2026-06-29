@@ -414,6 +414,10 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
       - POSTGRES_HOST=db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=text2sql
       - TRINO_HOST=trino
       - TRINO_PORT=8080
       - TRINO_USER=trino
@@ -427,7 +431,7 @@ services:
       - OPENMETADATA_SERVICE_NAME=local_trino
       - APP_ENV=production
       - JWT_SECRET=dev-secret-change-in-production
-      - AGENT_URL=http://agent:8001
+      - AGENT_URL=http://host.docker.internal:8001
       - LANGFUSE_PUBLIC_KEY=pk-lf-4d50ba92-b9b2-48bf-a395-3335e069fd2c
       - LANGFUSE_SECRET_KEY=sk-lf-0a4d3df1-573b-47a3-b534-52b59ba1bf8a
       - LANGFUSE_HOST=https://cloud.langfuse.com
@@ -445,50 +449,6 @@ services:
       retries: 5
       start_period: 10s
 
-  agent:
-    build:
-      context: .
-      dockerfile: ./agent/Dockerfile
-      secrets:
-        - deploy_key
-    env_file:
-      - ./agent/.env
-    ports:
-      - "8001:8001"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
-      - POSTGRES_HOST=db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=text2sql
-      - REDIS_URL=redis://redis:6379
-      - REDIS_SSL=false
-      - LLM_BASE_URL=http://host.docker.internal:11434/v1
-      - LLM_MODEL=gemma4:e4b
-      - LLM_API_KEY=ollama
-      - EMBEDDER_URL=http://host.docker.internal:11434
-      - EMBEDDER_MODEL=nomic-embed-text:latest
-      - ESCA_URL=http://host.docker.internal:7010
-      - MAX_PROFILES_TO_FETCH=4
-      - TRINO_HOST=trino
-      - TRINO_PORT=8080
-      - TRINO_USER=trino
-      - TRINO_PASSWORD=
-      - TRINO_CATALOG=minio
-      - TRINO_SCHEMA=simple_retail
-      - TRINO_HTTP_SCHEME=http
-      - TRINO_REQUEST_TIMEOUT=30.0
-      - TRINO_ENABLED=true
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      trino:
-        condition: service_healthy
 
   frontend:
     build:
@@ -498,7 +458,7 @@ services:
       - "3000:8080"
     environment:
       - BACKEND_URL=http://backend:8000
-      - AGENT_URL=http://agent:8001
+      - AGENT_URL=http://host.docker.internal:8001
     depends_on:
       backend:
         condition: service_healthy
