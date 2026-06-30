@@ -37,11 +37,17 @@ async def refiner_node(state: AgentState):
     else:
         # Success, save payload via Esca
         client = EscaClient(api_key=settings.ESCA_API_KEY, base_url=settings.ESCA_URL)
+        import datetime
+        def json_serial(obj):
+            if isinstance(obj, (datetime.datetime, datetime.date)):
+                return obj.isoformat()
+            raise TypeError("Type %s not serializable" % type(obj))
+
         payload_data = {
             "columns": result.columns,
             "rows": result.rows
         }
-        payload = json.dumps(payload_data).encode()
+        payload = json.dumps(payload_data, default=json_serial).encode()
         try:
             res = await client.save_data(payload)
             raw_ref = res.get("esca_id")

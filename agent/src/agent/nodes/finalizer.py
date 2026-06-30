@@ -29,13 +29,19 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
         # Take a slice of the rows to avoid context overload
         preview_rows = rows[:limit]
         
+        import datetime
+        def json_serial(obj):
+            if isinstance(obj, (datetime.datetime, datetime.date)):
+                return obj.isoformat()
+            raise TypeError("Type %s not serializable" % type(obj))
+
         preview_info = {
             "columns": columns,
             "preview_rows": preview_rows,
             "preview_count": len(preview_rows),
             "total_rows": total_rows
         }
-        return json.dumps(preview_info, indent=2)
+        return json.dumps(preview_info, default=json_serial, indent=2)
     except Exception as e:
         return f"Error retrieving data preview from Esca: {e}"
     finally:
