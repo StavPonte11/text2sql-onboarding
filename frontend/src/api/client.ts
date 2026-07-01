@@ -2,10 +2,9 @@ import axios from 'axios';
 
 import { API_BASE_URL } from '../config/constants';
 import { useAppStore } from '../store/appStore';
-import { useAdminStore } from '../store/adminStore';
+import { useAuthStore } from '../store/authStore';
 
 import type {
-
   AuditQuery,
   ColumnProfile,
   CrossTableProfile,
@@ -29,6 +28,7 @@ import type {
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
@@ -36,7 +36,7 @@ api.interceptors.request.use((config) => {
   if (scope) {
     config.headers['X-Scope-Id'] = scope.id;
   }
-  const user = useAdminStore.getState().user;
+  const user = useAuthStore.getState().user;
   if (user?.email) {
     config.headers['X-Admin-Email'] = user.email;
   }
@@ -46,11 +46,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 403 && error.config?.url?.startsWith('/flags')) {
-      useAdminStore.getState().logout();
+    if (error.response?.status === 401) {
+      // Clear auth state to trigger React Router's ProtectedRoute redirect
+      useAuthStore.getState().setAuth(null);
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 // ── Tables ────────────────────────────────────────────────────────────────────

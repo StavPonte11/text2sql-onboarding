@@ -215,7 +215,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = "==2.9.9" },
     { name = "pydantic", specifier = "==2.10.4" },
     { name = "pydantic-settings", specifier = "==2.7.0" },
-    { name = "python-core-utils", extras = ["postgres", "redis"], git = "https://github.com/matzpen-agency/python-core-utils.git?rev=main" },
+    { name = "python-core-utils", extras = ["postgres", "redis"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0" },
     { name = "sqlmodel", specifier = "==0.0.22" },
     { name = "trino", specifier = ">=0.328.0" },
 ]
@@ -1094,8 +1094,8 @@ wheels = [
 
 [[package]]
 name = "python-core-utils"
-version = "0.1.0"
-source = { git = "https://github.com/matzpen-agency/python-core-utils.git?rev=main#47764b545a0dac9d951a2b5fa77a5888ea120e1a" }
+version = "0.2.0"
+source = { git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0#969ebd9ab74e4f3d2af6b4b41da6869962b7cad9" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx2" },

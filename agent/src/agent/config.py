@@ -51,10 +51,10 @@ class AgentSettings(BaseSettings):
     DEFAULT_TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
 
     # ── G2-03: Advanced Schema Explorer phases ────────────────────────────────
-    ENABLE_SEMANTIC_TYPING: bool = True   # single batched LLM call — adds id/timestamp/category labels
+    ENABLE_SEMANTIC_TYPING: bool = False   # single batched LLM call — adds id/timestamp/category labels
     ENABLE_JOIN_GRAPH: bool = False
     ENABLE_SCHEMA_SUMMARIZATION: bool = False  # generated once at profile-time, not at runtime
-    ENABLE_AMBIGUITY_DETECT: bool = True
+    ENABLE_AMBIGUITY_DETECT: bool = False
     ENABLE_SKILL_INJECTION: bool = False
 
     # ── G2-04: Satisfaction Check ─────────────────────────────────────────────

@@ -6,10 +6,10 @@ import sys
 # Add the backend directory to python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlmodel import Session, select
-
 from core.db.engine import engine
 from core.models.models import Table, TableCreate
+from sqlmodel import Session, select
+
 from app.routers.tables import create_table
 from app.services.profiling_engine import run_table_profiling
 

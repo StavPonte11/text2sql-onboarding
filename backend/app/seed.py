@@ -410,4 +410,7 @@ def seed():
 
 
 if __name__ == "__main__":
-    seed()
+    if settings.RUN_SEED:
+        seed()
+    else:
+        print("Skipping seed initialization (RUN_SEED is False)")

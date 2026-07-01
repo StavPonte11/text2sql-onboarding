@@ -2,11 +2,11 @@ from unittest.mock import MagicMock, patch
 
 from core.models.models import (
     AuditQuery,
+    EnrichmentVersion,
     EvalStatus,
     GoldenQuestion,
     Table,
     TableStatus,
-    EnrichmentVersion
 )
 
 # ── Mock objects for testing ──────────────────────────────────────────────────

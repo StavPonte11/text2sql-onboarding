@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { ArrowRight, Code2, Cpu, LineChart, Shield, Zap } from 'lucide-react';
 
+import { useAuthStore } from '../store/authStore';
+
 import '../styles/LandingPage.css';
 
 const TypewriterText = ({ texts }: { texts: string[] }) => {
@@ -74,9 +76,16 @@ const staggerContainer = {
 
 export function LandingPage() {
   const navigate = useNavigate();
+  const { isAuthenticated, isLoading } = useAuthStore();
   const { scrollYProgress } = useScroll();
   const mockupY = useTransform(scrollYProgress, [0, 1], [0, -100]);
   const bgY = useTransform(scrollYProgress, [0, 1], [0, 200]);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      navigate('/control-center', { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate]);
 
   return (
     <div className="landing-layout">
@@ -139,9 +148,9 @@ export function LandingPage() {
               />
             </motion.h1>
             <motion.p variants={fadeInUp} className="hero-subtitle">
-              The internal Text-to-SQL layer for our organization. Connect your data, train
-              the semantic layer, and give your teams instant answers with enterprise-grade
-              governance and monitoring.
+              The internal Text-to-SQL layer for our organization. Connect your data, train the
+              semantic layer, and give your teams instant answers with enterprise-grade governance
+              and monitoring.
             </motion.p>
             <motion.div variants={fadeInUp} className="hero-cta">
               <button className="btn-primary large" onClick={() => navigate('/control-center')}>
@@ -352,18 +361,30 @@ export function LandingPage() {
           <div className="footer-links">
             <div className="footer-col">
               <h4>Platform</h4>
-              <a href="https://example.com/features" target="_blank" rel="noreferrer">Features</a>
-              <a href="https://example.com/integrations" target="_blank" rel="noreferrer">Integrations</a>
+              <a href="https://example.com/features" target="_blank" rel="noreferrer">
+                Features
+              </a>
+              <a href="https://example.com/integrations" target="_blank" rel="noreferrer">
+                Integrations
+              </a>
             </div>
             <div className="footer-col">
               <h4>Resources</h4>
-              <a href="https://example.com/docs" target="_blank" rel="noreferrer">Documentation</a>
-              <a href="https://example.com/api" target="_blank" rel="noreferrer">API Reference</a>
+              <a href="https://example.com/docs" target="_blank" rel="noreferrer">
+                Documentation
+              </a>
+              <a href="https://example.com/api" target="_blank" rel="noreferrer">
+                API Reference
+              </a>
             </div>
             <div className="footer-col">
               <h4>Support</h4>
-              <a href="https://example.com/help" target="_blank" rel="noreferrer">Help Center</a>
-              <a href="https://example.com/support" target="_blank" rel="noreferrer">IT Service Desk</a>
+              <a href="https://example.com/help" target="_blank" rel="noreferrer">
+                Help Center
+              </a>
+              <a href="https://example.com/support" target="_blank" rel="noreferrer">
+                IT Service Desk
+              </a>
             </div>
           </div>
         </div>

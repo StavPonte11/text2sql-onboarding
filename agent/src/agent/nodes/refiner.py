@@ -5,7 +5,7 @@ import logging
 from langchain_core.runnables.config import RunnableConfig
 from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
-from core import execute_query_sync
+from core.trino import execute_query_sync
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langchain_core.prompts import ChatPromptTemplate

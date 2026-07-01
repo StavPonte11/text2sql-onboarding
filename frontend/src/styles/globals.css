@@ -250,6 +250,13 @@ body,
   outline: none;
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+  box-shadow: none !important;
+}
+
 .btn--primary {
   background: var(--accent);
   color: #fff;
@@ -372,6 +379,18 @@ body,
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.form-input--error,
+.form-textarea--error,
+.form-select--error {
+  border-color: var(--status-degraded) !important;
+}
+
+.form-input--error:focus,
+.form-textarea--error:focus,
+.form-select--error:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
 }
 
 /* ── Tabs ── */
