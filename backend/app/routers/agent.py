@@ -11,10 +11,13 @@ Endpoints:
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from core.db.engine import get_session
+from core.models.models import Table, TableRead, TableStatus
+from fastapi import APIRouter, Depends, HTTPException
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.config import settings
 
@@ -166,3 +169,17 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     result = await _call_agent_mcp(tool_arguments)
     return ChatResponse(**result)
+
+
+@router.get("/tables", response_model=list[TableRead])
+def get_agent_tables(
+    status: TableStatus | None = None, session: Session = Depends(get_session)
+):
+    """
+    Internal endpoint for the agent and evaluation service to fetch available tables
+    without requiring user SSO authentication.
+    """
+    q = select(Table)
+    if status:
+        q = q.where(Table.status == status)
+    return session.exec(q).all()

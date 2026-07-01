@@ -15,7 +15,6 @@ On fail  → table.status = sandbox   + alert created
 
 import logging
 from datetime import datetime
-from typing import Literal
 
 import requests
 from core.db.engine import engine, get_session
@@ -45,40 +44,80 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["evaluation"])
 
 
-class EvalAPIRequest(BaseModel):
-    tables_names: list[str]
-    dataset_name: str
+class LatencyStatsDTO(BaseModel):
+    p50: float
+    p95: float
+    p99: float
+    average: float
+    minimum: float
+    maximum: float
+    total_samples: int
 
 
-class EvalAPIQuestionMetrics(BaseModel):
-    exact_match: float
-    exact_execution_accuracy: float
-    contains_execution_accuracy: float
+class AccuracyStatsDTO(BaseModel):
+    execution_accuracy: float
+    contains_accuracy: float
+    sql_exact_match: float
+    time_shift_score: float
+    component_match: float
+    schema_hallucination: float
+    dialect_error: float
+    composite_score: float
 
 
-class EvalAPIQuestionResult(BaseModel):
+class FailureCategoryDTO(BaseModel):
+    category: str
+    count: int
+    rate: float
+
+
+class FailureAnalysisDTO(BaseModel):
+    total_failures: int
+    failure_rate: float
+    agent_crash_count: int
+    agent_crash_rate: float
+    sql_execution_failure_count: int
+    sql_execution_failure_rate: float
+    trino_failure_count: int
+    trino_failure_rate: float
+    timeout_count: int
+    timeout_rate: float
+    validation_failure_count: int
+    validation_failure_rate: float
+    categories: list[FailureCategoryDTO]
+
+
+class PerformanceStatsDTO(BaseModel):
+    average_total_execution_time_ms: float
+    average_time_to_first_row_ms: float
+    total_token_usage: int
+    average_token_usage: float
+    average_refiner_iterations: float
+
+
+class RunDatasetCaseResultDTO(BaseModel):
     question_id: str
     generated_sql: str | None = None
-    metrics: EvalAPIQuestionMetrics
-    status: Literal["pass", "fail"]
-    error_message: str | None = None
-    row_count: int | None = None
+    expected_sql: str | None = None
+    succeeded: bool
+    error: str | None = None
+    scores: dict[str, float]
 
 
-class EvalAPIOverallMetrics(BaseModel):
-    contains_execution_accuracy: float
-    exact_execution_accuracy: float
-    exact_match: float
-    total_questions: int
-    pass_rate: float
-    fail_rate: float
-
-
-class EvalAPIResponse(BaseModel):
+class RunDatasetResponse(BaseModel):
+    dataset_name: str
     run_id: str
-    status: Literal["completed", "failed"]
-    overall_metrics: EvalAPIOverallMetrics
-    results: list[EvalAPIQuestionResult]
+    total_cases: int
+    passed: int
+    failed: int
+    failure_rate: float
+    latency: LatencyStatsDTO
+    accuracy: AccuracyStatsDTO
+    failure_analysis: FailureAnalysisDTO
+    performance: PerformanceStatsDTO
+    langfuse_trace_id: str | None = None
+    duration_seconds: float
+    cases: list[RunDatasetCaseResultDTO]
 
 
 # Name of the single shared Langfuse dataset for all production table questions
@@ -131,6 +170,65 @@ def _build_questions_payload(questions: list, table: Table) -> list:
 # ─── Core evaluation runner (single dataset) ───────────────────────────────────
 
 
+def _map_and_save_run_metrics(
+    run: EvalRun, eval_resp: RunDatasetResponse, session: Session, run_id: str
+):
+    run.score = eval_resp.accuracy.contains_accuracy
+    run.pass_rate = 1.0 - eval_resp.failure_rate
+    run.fail_rate = eval_resp.failure_rate
+    run.total_questions = eval_resp.total_cases
+    run.duration_seconds = eval_resp.duration_seconds
+    run.status = EvalStatus.completed
+    run.completed_at = datetime.now()
+
+    # Store failure breakdown details
+    failure_breakdown = {
+        c.category: c.count for c in eval_resp.failure_analysis.categories
+    }
+    failure_breakdown.update(
+        {
+            "agent_crash": eval_resp.failure_analysis.agent_crash_count,
+            "sql_execution_failure": eval_resp.failure_analysis.sql_execution_failure_count,
+            "trino_failure": eval_resp.failure_analysis.trino_failure_count,
+            "timeout": eval_resp.failure_analysis.timeout_count,
+            "validation_failure": eval_resp.failure_analysis.validation_failure_count,
+        }
+    )
+    run.failure_breakdown = failure_breakdown
+
+    run.dimension_averages = {
+        "contains_execution_accuracy": eval_resp.accuracy.contains_accuracy,
+        "exact_execution_accuracy": eval_resp.accuracy.execution_accuracy,
+        "exact_match": eval_resp.accuracy.sql_exact_match,
+        "time_shift_score": eval_resp.accuracy.time_shift_score,
+        "component_match": eval_resp.accuracy.component_match,
+        "schema_hallucination": eval_resp.accuracy.schema_hallucination,
+        "dialect_error": eval_resp.accuracy.dialect_error,
+    }
+    session.add(run)
+
+    # Only insert EvalResult rows for question_ids that are valid FK references
+    # (i.e. exist in golden_questions). External benchmark cases (e.g. Spider2) won't match.
+    if eval_resp.cases:
+        case_ids = [c.question_id for c in eval_resp.cases]
+        valid_ids = set(
+            session.exec(
+                select(GoldenQuestion.id).where(GoldenQuestion.id.in_(case_ids))
+            ).all()
+        )
+        for case in eval_resp.cases:
+            if case.question_id in valid_ids:
+                session.add(
+                    EvalResult(
+                        run_id=run_id,
+                        question_id=case.question_id,
+                        score=case.scores.get("contains_accuracy", 0.0),
+                        status="pass" if case.succeeded else "fail",
+                        error_type=case.error,
+                    )
+                )
+
+
 @observe(name="eval-single-table")
 def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
     run = session.get(EvalRun, run_id)
@@ -143,10 +241,10 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 
     if not questions:
         run.status = EvalStatus.failed
-        run.score = -1.0
+        run.score = 0.0
         session.add(run)
         session.commit()
-        return -1.0
+        return 0.0
 
     langfuse_context.update_current_trace(
         metadata={"table_id": table_id, "run_id": run_id},
@@ -157,52 +255,36 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     dataset_name = f"text2sql_sandbox_{table_id}"
 
     if langfuse_client.enabled:
-        langfuse_client.ensure_dataset_synced(
-            dataset_name, _build_questions_payload(questions, table)
-        )
+        try:
+            langfuse_client.ensure_dataset_synced(
+                dataset_name, _build_questions_payload(questions, table)
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Eval] Langfuse dataset sync failed (eval will continue): {e}"
+            )
 
     try:
-        req = EvalAPIRequest(tables_names=[table.name], dataset_name=dataset_name)
+        req = {
+            "dataset_name": dataset_name,
+            "additional_tables": [table.name],
+        }
         resp = requests.post(
             f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req.model_dump(),
+            json=req,
             timeout=600,
         )
         resp.raise_for_status()
-        eval_resp = EvalAPIResponse(**resp.json())
-        if eval_resp.status == "failed":
-            raise Exception("API returned failed status")
+        eval_resp = RunDatasetResponse(**resp.json())
     except Exception as e:
         logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
         run.status = EvalStatus.failed
-        run.score = -1.0
+        run.score = 0.0
         session.add(run)
         session.commit()
-        return -1.0
+        return 0.0
 
-    metrics = eval_resp.overall_metrics
-    run.score = metrics.contains_execution_accuracy
-    run.pass_rate = metrics.pass_rate
-    run.fail_rate = metrics.fail_rate
-    run.total_questions = metrics.total_questions
-    run.status = EvalStatus.completed
-    run.completed_at = datetime.now()
-    run.dimension_averages = {
-        "contains_execution_accuracy": metrics.contains_execution_accuracy,
-        "exact_execution_accuracy": metrics.exact_execution_accuracy,
-        "exact_match": metrics.exact_match,
-    }
-    session.add(run)
-
-    for q_res in eval_resp.results:
-        session.add(
-            EvalResult(
-                run_id=run_id,
-                question_id=q_res.question_id,
-                score=q_res.metrics.contains_execution_accuracy,
-                status=q_res.status,
-            )
-        )
+    _map_and_save_run_metrics(run, eval_resp, session, run_id)
 
     # Lifecycle: draft → sandbox on first evaluation only
     if table and table.status == TableStatus.draft:
@@ -212,17 +294,17 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
     session.commit()
 
     logger.info(
-        f"[Eval] Table {table_id}: contains_exec_accuracy={metrics.contains_execution_accuracy} "
-        f"exact_exec_accuracy={metrics.exact_execution_accuracy} exact_match={metrics.exact_match} "
-        f"({metrics.total_questions} questions, pass_rate={metrics.pass_rate})"
+        f"[Eval] Table {table_id}: contains_accuracy={eval_resp.accuracy.contains_accuracy} "
+        f"exec_accuracy={eval_resp.accuracy.execution_accuracy} exact_match={eval_resp.accuracy.sql_exact_match} "
+        f"({eval_resp.total_cases} questions, pass_rate={1.0 - eval_resp.failure_rate})"
     )
     langfuse_context.update_current_trace(
         output={
-            "score": metrics.contains_execution_accuracy,
-            "pass_rate": metrics.pass_rate,
+            "score": eval_resp.accuracy.contains_accuracy,
+            "pass_rate": 1.0 - eval_resp.failure_rate,
         }
     )
-    return metrics.contains_execution_accuracy
+    return eval_resp.accuracy.contains_accuracy
 
 
 # ─── Phase A: measure baseline score on production dataset ────────────────────
@@ -274,57 +356,34 @@ def _run_production_dataset_eval(
 
     table_names = [t.name for t in prod_tables]
     try:
-        req = EvalAPIRequest(
-            tables_names=table_names, dataset_name=PRODUCTION_DATASET_NAME
-        )
+        req = {
+            "dataset_name": PRODUCTION_DATASET_NAME,
+            "additional_tables": table_names,
+        }
         resp = requests.post(
             f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req.model_dump(),
+            json=req,
             timeout=600,
         )
         resp.raise_for_status()
-        eval_resp = EvalAPIResponse(**resp.json())
-        if eval_resp.status == "failed":
-            raise Exception("API returned failed status")
+        eval_resp = RunDatasetResponse(**resp.json())
     except Exception as e:
         logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
         run.status = EvalStatus.failed
-        run.score = -1.0
+        run.score = 0.0
         session.add(run)
         session.commit()
-        return -1.0
+        return 0.0
 
-    metrics = eval_resp.overall_metrics
-    run.score = metrics.contains_execution_accuracy
-    run.pass_rate = metrics.pass_rate
-    run.fail_rate = metrics.fail_rate
-    run.total_questions = metrics.total_questions
-    run.status = EvalStatus.completed
-    run.completed_at = datetime.now()
-    run.dimension_averages = {
-        "contains_execution_accuracy": metrics.contains_execution_accuracy,
-        "exact_execution_accuracy": metrics.exact_execution_accuracy,
-        "exact_match": metrics.exact_match,
-    }
-    session.add(run)
-
-    for q_res in eval_resp.results:
-        session.add(
-            EvalResult(
-                run_id=run.id,
-                question_id=q_res.question_id,
-                score=q_res.metrics.contains_execution_accuracy,
-                status=q_res.status,
-            )
-        )
+    _map_and_save_run_metrics(run, eval_resp, session, run.id)
     session.commit()
 
     logger.info(
-        f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {metrics.contains_execution_accuracy:.3f} "
-        f"exact_exec_accuracy = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f} "
-        f"({metrics.total_questions} questions)"
+        f"[Promotion/Phase-A] Baseline contains_exec_accuracy = {eval_resp.accuracy.contains_accuracy:.3f} "
+        f"exact_exec_accuracy = {eval_resp.accuracy.execution_accuracy:.3f} exact_match = {eval_resp.accuracy.sql_exact_match:.3f} "
+        f"({eval_resp.total_cases} questions)"
     )
-    return metrics.contains_execution_accuracy
+    return eval_resp.accuracy.contains_accuracy
 
 
 # We no longer use a fixed dataset name to avoid soft-delete conflicts and question accumulation.
@@ -359,60 +418,37 @@ def _run_candidate_eval(
             logger.error(f"[Promotion/Phase-B] Candidate eval prep failed: {e}")
 
     try:
-        req = EvalAPIRequest(tables_names=[table.name], dataset_name=dataset_name)
+        req = {
+            "dataset_name": dataset_name,
+            "additional_tables": [table.name],
+        }
         resp = requests.post(
             f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req.model_dump(),
+            json=req,
             timeout=600,
         )
         resp.raise_for_status()
-        eval_resp = EvalAPIResponse(**resp.json())
-        if eval_resp.status == "failed":
-            raise Exception("API returned failed status")
+        eval_resp = RunDatasetResponse(**resp.json())
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
         run.status = EvalStatus.failed
-        run.score = -1.0
+        run.score = 0.0
         session.add(run)
         session.commit()
-        return -1.0
+        return 0.0
 
-    metrics = eval_resp.overall_metrics
-    run.score = metrics.contains_execution_accuracy
-    run.pass_rate = metrics.pass_rate
-    run.fail_rate = metrics.fail_rate
-    run.total_questions = metrics.total_questions
-    run.status = EvalStatus.completed
-    run.completed_at = datetime.now()
-    run.dimension_averages = {
-        "contains_execution_accuracy": metrics.contains_execution_accuracy,
-        "exact_execution_accuracy": metrics.exact_execution_accuracy,
-        "exact_match": metrics.exact_match,
-    }
-    session.add(run)
-
-    for q_res in eval_resp.results:
-        session.add(
-            EvalResult(
-                run_id=run.id,
-                question_id=q_res.question_id,
-                score=q_res.metrics.contains_execution_accuracy,
-                status=q_res.status,
-            )
-        )
+    _map_and_save_run_metrics(run, eval_resp, session, run.id)
     session.commit()
 
     logger.info(
-        f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {metrics.contains_execution_accuracy:.3f} "
-        f"exact_score = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f}"
+        f"[Promotion/Phase-B] Candidate '{table.name}' contains_score = {eval_resp.accuracy.contains_accuracy:.3f} "
+        f"exact_score = {eval_resp.accuracy.execution_accuracy:.3f} exact_match = {eval_resp.accuracy.sql_exact_match:.3f}"
     )
 
     if langfuse_client.enabled:
-        # Since API might be async or Langfuse is async, we may still need to clear dataset
-        # Here we don't wait for traces, just clear it after evaluation finishes
         langfuse_client.clear_dataset(dataset_name)
 
-    return metrics.contains_execution_accuracy
+    return eval_resp.accuracy.contains_accuracy
 
 
 def _run_regression_eval(
@@ -441,56 +477,33 @@ def _run_regression_eval(
     session.refresh(run)
 
     try:
-        req = EvalAPIRequest(
-            tables_names=table_names, dataset_name=PRODUCTION_DATASET_NAME
-        )
+        req = {
+            "dataset_name": PRODUCTION_DATASET_NAME,
+            "additional_tables": table_names,
+        }
         resp = requests.post(
             f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req.model_dump(),
+            json=req,
             timeout=600,
         )
         resp.raise_for_status()
-        eval_resp = EvalAPIResponse(**resp.json())
-        if eval_resp.status == "failed":
-            raise Exception("API returned failed status")
+        eval_resp = RunDatasetResponse(**resp.json())
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
         run.status = EvalStatus.failed
-        run.score = -1.0
+        run.score = 0.0
         session.add(run)
         session.commit()
-        return -1.0
+        return 0.0
 
-    metrics = eval_resp.overall_metrics
-    run.score = metrics.contains_execution_accuracy
-    run.pass_rate = metrics.pass_rate
-    run.fail_rate = metrics.fail_rate
-    run.total_questions = metrics.total_questions
-    run.status = EvalStatus.completed
-    run.completed_at = datetime.now()
-    run.dimension_averages = {
-        "contains_execution_accuracy": metrics.contains_execution_accuracy,
-        "exact_execution_accuracy": metrics.exact_execution_accuracy,
-        "exact_match": metrics.exact_match,
-    }
-    session.add(run)
-
-    for q_res in eval_resp.results:
-        session.add(
-            EvalResult(
-                run_id=run.id,
-                question_id=q_res.question_id,
-                score=q_res.metrics.contains_execution_accuracy,
-                status=q_res.status,
-            )
-        )
+    _map_and_save_run_metrics(run, eval_resp, session, run.id)
     session.commit()
 
     logger.info(
-        f"[Promotion/Phase-B] Regression contains_score (with candidate) = {metrics.contains_execution_accuracy:.3f} "
-        f"exact_score = {metrics.exact_execution_accuracy:.3f} exact_match = {metrics.exact_match:.3f}"
+        f"[Promotion/Phase-B] Regression contains_score (with candidate) = {eval_resp.accuracy.contains_accuracy:.3f} "
+        f"exact_score = {eval_resp.accuracy.execution_accuracy:.3f} exact_match = {eval_resp.accuracy.sql_exact_match:.3f}"
     )
-    return metrics.contains_execution_accuracy
+    return eval_resp.accuracy.contains_accuracy
 
 
 # ─── Main promotion workflow ───────────────────────────────────────────────────
