@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -7,48 +8,40 @@ import {
   InputNumber,
   message,
   Modal,
-  Popconfirm,
   Select,
   Switch,
   Tag,
   Tooltip,
 } from 'antd';
-import {
-  AlertTriangle,
-  ChevronDown,
-  Edit3,
-  Plus,
-  RotateCcw,
-  Save,
-  SlidersHorizontal,
-  Trash2,
-  X,
-  Zap,
-} from 'lucide-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ChevronDown, Plus, SlidersHorizontal, Trash2 } from 'lucide-react';
 
-import { flagsApi, type FeatureFlag, type ExecutionMode } from '../api/flags';
-import { QUERY_KEYS } from '../config/constants';
-import { useAdminStore } from '../store/adminStore';
-import './FlagsPage.css';
-
+import { type ExecutionMode, type FeatureFlag, flagsApi } from '../api/flags';
 import { FlagEditor } from '../components/flags/FlagEditor';
 import { ModeCard } from '../components/flags/ModeCard';
+import { QUERY_KEYS } from '../config/constants';
 import { FLAG_CATEGORIES, TYPE_COLORS } from '../config/flagsConfig';
+import { useAdminStore } from '../store/adminStore';
+
+import './FlagsPage.css';
 
 export function FlagsPage() {
   const queryClient = useQueryClient();
   const user = useAdminStore((state) => state.user);
-  
+
   type TabKey = 'flags' | 'modes';
   const [activeTab, setActiveTab] = useState<TabKey>('flags');
   const [search, setSearch] = useState('');
   const [modeModalOpen, setModeModalOpen] = useState(false);
   const [editingMode, setEditingMode] = useState<ExecutionMode | null>(null);
-  const [modeDraft, setModeDraft] = useState({ name: '', description: '', flag_overrides: '{}', is_active: true });
+  const [modeDraft, setModeDraft] = useState({
+    name: '',
+    description: '',
+    flag_overrides: '{}',
+    is_active: true,
+  });
   const [savingFlags, setSavingFlags] = useState<Record<string, boolean>>({});
   const [resettingFlags, setResettingFlags] = useState<Record<string, boolean>>({});
-  
+
   // Overrides list for the interactive builder
   const [overridesList, setOverridesList] = useState<{ name: string; value: any }[]>([]);
   const [selectedFlagToAdd, setSelectedFlagToAdd] = useState<string | null>(null);
@@ -67,12 +60,12 @@ export function FlagsPage() {
 
   // Get all flags that are not yet overridden
   const availableFlags = useMemo(() => {
-    const overriddenNames = new Set(overridesList.map(o => o.name));
-    return flags.filter(f => !overriddenNames.has(f.name));
+    const overriddenNames = new Set(overridesList.map((o) => o.name));
+    return flags.filter((f) => !overriddenNames.has(f.name));
   }, [flags, overridesList]);
 
   const handleAddOverride = (flagName: string) => {
-    const flagMeta = flags.find(f => f.name === flagName);
+    const flagMeta = flags.find((f) => f.name === flagName);
     if (!flagMeta) return;
 
     let defaultValue: any = '';
@@ -86,11 +79,11 @@ export function FlagsPage() {
   };
 
   const handleUpdateOverride = (name: string, value: any) => {
-    setOverridesList(overridesList.map(item => item.name === name ? { ...item, value } : item));
+    setOverridesList(overridesList.map((item) => (item.name === name ? { ...item, value } : item)));
   };
 
   const handleRemoveOverride = (name: string) => {
-    setOverridesList(overridesList.filter(item => item.name !== name));
+    setOverridesList(overridesList.filter((item) => item.name !== name));
   };
 
   const updateFlagMutation = useMutation({
@@ -139,31 +132,31 @@ export function FlagsPage() {
   });
 
   // Group and filter flags
-  const flagMap = useMemo(
-    () => Object.fromEntries(flags.map((f) => [f.name, f])),
-    [flags],
-  );
+  const flagMap = useMemo(() => Object.fromEntries(flags.map((f) => [f.name, f])), [flags]);
 
   const filteredCategories = useMemo(() => {
     const q = search.toLowerCase();
     const categorizedFlagNames = new Set<string>();
 
-    const categories = Object.entries(FLAG_CATEGORIES).filter(([cat, names]) => {
-      if (!q) return true;
-      return cat.toLowerCase().includes(q) || names.some((n) => n.toLowerCase().includes(q));
-    }).map(([cat, names]) => {
-      const catFlags = names
-        .filter((n) => !q || n.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
-        .map((n) => {
-          categorizedFlagNames.add(n);
-          return flagMap[n];
-        })
-        .filter(Boolean) as FeatureFlag[];
-      return { cat, flags: catFlags };
-    }).filter((g) => g.flags.length > 0);
+    const categories = Object.entries(FLAG_CATEGORIES)
+      .filter(([cat, names]) => {
+        if (!q) return true;
+        return cat.toLowerCase().includes(q) || names.some((n) => n.toLowerCase().includes(q));
+      })
+      .map(([cat, names]) => {
+        const catFlags = names
+          .filter((n) => !q || n.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
+          .map((n) => {
+            categorizedFlagNames.add(n);
+            return flagMap[n];
+          })
+          .filter(Boolean) as FeatureFlag[];
+        return { cat, flags: catFlags };
+      })
+      .filter((g) => g.flags.length > 0);
 
     const uncategorizedFlags = flags.filter(
-      (f) => !categorizedFlagNames.has(f.name) && (!q || f.name.toLowerCase().includes(q))
+      (f) => !categorizedFlagNames.has(f.name) && (!q || f.name.toLowerCase().includes(q)),
     );
 
     if (uncategorizedFlags.length > 0) {
@@ -204,13 +197,13 @@ export function FlagsPage() {
     for (const item of overridesList) {
       overridesObj[item.name] = item.value;
     }
-    
+
     upsertModeMutation.mutate({
       name: modeDraft.name.trim(),
-      data: { 
-        description: modeDraft.description, 
-        flag_overrides: overridesObj, 
-        is_active: modeDraft.is_active 
+      data: {
+        description: modeDraft.description,
+        flag_overrides: overridesObj,
+        is_active: modeDraft.is_active,
       },
     });
   };
@@ -248,8 +241,8 @@ export function FlagsPage() {
             Feature Flags
           </h1>
           <p className="page__subtitle">
-            Configure agent parameters and execution modes without redeployment.
-            Changes take effect within 30 seconds.
+            Configure agent parameters and execution modes without redeployment. Changes take effect
+            within 30 seconds.
           </p>
         </div>
       </div>
@@ -261,14 +254,24 @@ export function FlagsPage() {
           onClick={() => setActiveTab('flags')}
         >
           Feature Flags
-          <Badge count={flags.length} showZero color="var(--color-text-tertiary)" style={{ marginLeft: 6 }} />
+          <Badge
+            count={flags.length}
+            showZero
+            color="var(--color-text-tertiary)"
+            style={{ marginLeft: 6 }}
+          />
         </button>
         <button
           className={`flags-tab ${activeTab === 'modes' ? 'flags-tab--active' : ''}`}
           onClick={() => setActiveTab('modes')}
         >
           Execution Modes
-          <Badge count={modes.length} showZero color="var(--color-text-tertiary)" style={{ marginLeft: 6 }} />
+          <Badge
+            count={modes.length}
+            showZero
+            color="var(--color-text-tertiary)"
+            style={{ marginLeft: 6 }}
+          />
         </button>
       </div>
 
@@ -286,7 +289,10 @@ export function FlagsPage() {
             />
             <div className="flags-toolbar__info">
               <AlertTriangle size={13} />
-              <span>Changes are audited and cached for 30s. Restart the agent process if you need immediate effect.</span>
+              <span>
+                Changes are audited and cached for 30s. Restart the agent process if you need
+                immediate effect.
+              </span>
             </div>
           </div>
 
@@ -308,13 +314,10 @@ export function FlagsPage() {
         <div className="flags-content">
           <div className="flags-toolbar">
             <p className="modes-description">
-              Execution modes are named sets of flag overrides. Pass <code>execution_mode="cost_saving"</code> to the MCP tool to activate a preset.
+              Execution modes are named sets of flag overrides. Pass{' '}
+              <code>execution_mode="cost_saving"</code> to the MCP tool to activate a preset.
             </p>
-            <Button
-              type="primary"
-              icon={<Plus size={14} />}
-              onClick={openNewMode}
-            >
+            <Button type="primary" icon={<Plus size={14} />} onClick={openNewMode}>
               New Mode
             </Button>
           </div>
@@ -349,17 +352,34 @@ export function FlagsPage() {
         <div className="mode-form" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {!editingMode && (
             <div className="mode-form__field">
-              <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Mode Name <span className="required" style={{ color: 'red' }}>*</span></label>
+              <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>
+                Mode Name{' '}
+                <span className="required" style={{ color: 'red' }}>
+                  *
+                </span>
+              </label>
               <Input
                 placeholder="e.g. my_experiment"
                 value={modeDraft.name}
                 onChange={(e) => setModeDraft((d) => ({ ...d, name: e.target.value }))}
               />
-              <span className="mode-form__hint" style={{ fontSize: 11, color: 'var(--color-text-tertiary, #bfbfbf)', display: 'block', marginTop: 4 }}>Used as the value for execution_mode in MCP calls.</span>
+              <span
+                className="mode-form__hint"
+                style={{
+                  fontSize: 11,
+                  color: 'var(--color-text-tertiary, #bfbfbf)',
+                  display: 'block',
+                  marginTop: 4,
+                }}
+              >
+                Used as the value for execution_mode in MCP calls.
+              </span>
             </div>
           )}
           <div className="mode-form__field">
-            <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Description</label>
+            <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>
+              Description
+            </label>
             <Input.TextArea
               rows={2}
               value={modeDraft.description}
@@ -367,17 +387,29 @@ export function FlagsPage() {
               placeholder="What is this mode for?"
             />
           </div>
-          
-          <div className="mode-form__field" style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+
+          <div
+            className="mode-form__field"
+            style={{ display: 'flex', gap: 20, alignItems: 'center' }}
+          >
             <div style={{ flex: 1 }}>
-              <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Created By</label>
+              <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>
+                Created By
+              </label>
               <Input
-                value={editingMode ? editingMode.created_by : (user?.email || 'admin@company.com')}
+                value={editingMode ? editingMode.created_by : user?.email || 'admin@company.com'}
                 disabled
                 style={{ cursor: 'not-allowed' }}
               />
             </div>
-            <div style={{ width: 100, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <div
+              style={{
+                width: 100,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+              }}
+            >
               <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Active</label>
               <Switch
                 checked={modeDraft.is_active}
@@ -386,20 +418,31 @@ export function FlagsPage() {
             </div>
           </div>
 
-          <div className="mode-form__field" style={{ borderTop: '1px solid var(--color-border-subtle)', paddingTop: 16 }}>
-            <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div
+            className="mode-form__field"
+            style={{ borderTop: '1px solid var(--color-border-subtle)', paddingTop: 16 }}
+          >
+            <label
+              style={{
+                fontWeight: 600,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 10,
+              }}
+            >
               <span>Configuration Overrides</span>
               <span className="mode-form__hint">{overridesList.length} override(s) configured</span>
             </label>
-            
+
             <div className="overrides-builder">
               {overridesList.length > 0 ? (
                 <div className="overrides-builder-list">
                   {overridesList.map((item) => {
-                    const flagMeta = flags.find(f => f.name === item.name);
+                    const flagMeta = flags.find((f) => f.name === item.name);
                     const flagType = flagMeta ? flagMeta.type : 'string';
                     const flagDesc = flagMeta ? flagMeta.description : '';
-                    
+
                     return (
                       <div key={item.name} className="override-builder-item">
                         <div className="override-builder-item__info">
@@ -407,45 +450,55 @@ export function FlagsPage() {
                             <span className="override-builder-item__name">{item.name}</span>
                           </Tooltip>
                           <span className="override-builder-item__type">
-                            Type: <Tag color={TYPE_COLORS[flagType]} style={{ fontSize: 9, lineHeight: '14px', height: 16 }}>{flagType}</Tag>
+                            Type:{' '}
+                            <Tag
+                              color={TYPE_COLORS[flagType]}
+                              style={{ fontSize: 9, lineHeight: '14px', height: 16 }}
+                            >
+                              {flagType}
+                            </Tag>
                           </span>
                         </div>
-                        
+
                         <div className="override-builder-item__value">
                           {flagType === 'bool' && (
-                            <Switch 
-                              checked={!!item.value} 
-                              onChange={(v) => handleUpdateOverride(item.name, v)} 
+                            <Switch
+                              checked={!!item.value}
+                              onChange={(v) => handleUpdateOverride(item.name, v)}
                             />
                           )}
                           {flagType === 'int' && (
-                            <InputNumber 
-                              value={item.value as number} 
-                              step={1} 
-                              precision={0} 
+                            <InputNumber
+                              value={item.value as number}
+                              step={1}
+                              precision={0}
                               onChange={(v) => handleUpdateOverride(item.name, v)}
-                              style={{ width: '100%', maxWidth: 140 }} 
+                              style={{ width: '100%', maxWidth: 140 }}
                             />
                           )}
                           {flagType === 'float' && (
-                            <InputNumber 
-                              value={item.value as number} 
-                              step={0.1} 
+                            <InputNumber
+                              value={item.value as number}
+                              step={0.1}
                               onChange={(v) => handleUpdateOverride(item.name, v)}
-                              style={{ width: '100%', maxWidth: 140 }} 
+                              style={{ width: '100%', maxWidth: 140 }}
                             />
                           )}
                           {flagType === 'string' && (
-                            <Input 
-                              value={item.value as string} 
-                              onChange={(e) => handleUpdateOverride(item.name, e.target.value)} 
+                            <Input
+                              value={item.value as string}
+                              onChange={(e) => handleUpdateOverride(item.name, e.target.value)}
                               style={{ width: '100%', maxWidth: 160 }}
                             />
                           )}
                           {flagType === 'json' && (
-                            <Input.TextArea 
+                            <Input.TextArea
                               rows={2}
-                              value={typeof item.value === 'string' ? item.value : JSON.stringify(item.value, null, 2)} 
+                              value={
+                                typeof item.value === 'string'
+                                  ? item.value
+                                  : JSON.stringify(item.value, null, 2)
+                              }
                               onChange={(e) => {
                                 let parsedVal;
                                 try {
@@ -455,18 +508,23 @@ export function FlagsPage() {
                                 }
                                 handleUpdateOverride(item.name, parsedVal);
                               }}
-                              style={{ fontFamily: 'monospace', fontSize: 11, width: '100%', maxWidth: 180 }}
+                              style={{
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                width: '100%',
+                                maxWidth: 180,
+                              }}
                             />
                           )}
                         </div>
-                        
-                        <Button 
-                          type="text" 
-                          danger 
-                          size="small" 
+
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
                           className="override-builder-item__delete"
-                          icon={<Trash2 size={13} />} 
-                          onClick={() => handleRemoveOverride(item.name)} 
+                          icon={<Trash2 size={13} />}
+                          onClick={() => handleRemoveOverride(item.name)}
                           aria-label={`Delete ${item.name} override`}
                         />
                       </div>
@@ -488,21 +546,43 @@ export function FlagsPage() {
                     onChange={(val) => handleAddOverride(val)}
                     showSearch
                     optionFilterProp="label"
-                    options={availableFlags.map(f => ({
+                    options={availableFlags.map((f) => ({
                       value: f.name,
                       label: f.name,
-                      desc: f.description
+                      desc: f.description,
                     }))}
                     optionRender={(option) => (
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: 12, fontFamily: 'monospace' }}>{option.data.label}</div>
-                        <div style={{ fontSize: 10, color: 'var(--color-text-tertiary, #bfbfbf)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 440 }}>{option.data.desc}</div>
+                        <div style={{ fontWeight: 600, fontSize: 12, fontFamily: 'monospace' }}>
+                          {option.data.label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: 'var(--color-text-tertiary, #bfbfbf)',
+                            textOverflow: 'ellipsis',
+                            overflow: 'hidden',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 440,
+                          }}
+                        >
+                          {option.data.desc}
+                        </div>
                       </div>
                     )}
                   />
                 </div>
               ) : (
-                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textAlign: 'right', marginTop: 8 }}>All parameters overridden</div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--color-text-tertiary)',
+                    textAlign: 'right',
+                    marginTop: 8,
+                  }}
+                >
+                  All parameters overridden
+                </div>
               )}
             </div>
           </div>

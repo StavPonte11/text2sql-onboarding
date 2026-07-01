@@ -915,7 +915,7 @@ export function AgentTestingPage() {
     setLoadingTrace(true);
     let attempts = 0;
     const maxAttempts = 5;
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
     let isSubscribed = true;
 
     const fetchTrace = () => {
