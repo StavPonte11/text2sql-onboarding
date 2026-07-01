@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
+
 from sqlalchemy import JSON, Column, ForeignKey
 from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
@@ -13,6 +14,14 @@ class TableStatus(StrEnum):
     verified = "verified"
     production = "production"
     degraded = "degraded"
+
+
+class FeatureFlagType(StrEnum):
+    bool = "bool"
+    int = "int"
+    float = "float"
+    string = "string"
+    json = "json"
 
 
 class Table(SQLModel, table=True):
@@ -256,12 +265,7 @@ class EvaluationHistoryMetric(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class EvaluationHistoryMetricRead(SQLModel):
-    id: str
-    run_id: str
-    metric_name: str
-    metric_value: float
-    created_at: datetime
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,9 +311,7 @@ class EvaluationAlertRead(SQLModel):
     created_at: datetime
 
 
-class EvalResultStatus(StrEnum):
-    pass_ = "pass"
-    fail = "fail"
+
 
 
 class EvalResult(SQLModel, table=True):
@@ -811,3 +813,92 @@ class HttpExtractorRead(SQLModel):
     status: ExtractorStatus
     created_at: datetime
     updated_at: datetime
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIG SCHEMA: FEATURE FLAGS & EXECUTION MODES (G4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class FeatureFlag(SQLModel, table=True):
+    """
+    A single runtime-configurable parameter.
+    Stored in the config schema so it's logically separated from app data.
+    A *missing* row means "no DB override" — callers fall back to the
+    AgentSettings env-var default.
+    """
+
+    __tablename__ = "feature_flags"
+    __table_args__ = {"schema": "config"}
+
+    name: str = Field(primary_key=True)
+    value: Any | None = Field(default=None, sa_column=Column(JSON))
+    type: FeatureFlagType = Field(description="bool | int | float | string | json")
+    description: str = Field(default="")
+    owner: str = Field(default="")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_modified_by: str = Field(default="")
+    last_modified_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FeatureFlagRead(SQLModel):
+    name: str
+    value: Any | None
+    type: Literal["bool", "int", "float", "string", "json"]
+    description: str
+    owner: str
+    created_at: datetime
+    last_modified_by: str
+    last_modified_at: datetime
+
+
+class FeatureFlagUpdate(SQLModel):
+    value: Any
+
+
+class FeatureFlagAuditLog(SQLModel, table=True):
+    """Immutable audit trail for every flag mutation."""
+
+    __tablename__ = "feature_flag_audit_log"
+    __table_args__ = {"schema": "config"}
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    flag_name: str = Field(index=True)
+    actor: str
+    old_value: Any | None = Field(default=None, sa_column=Column(JSON))
+    new_value: Any | None = Field(default=None, sa_column=Column(JSON))
+    changed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutionMode(SQLModel, table=True):
+    """
+    A named set of flag overrides that DS researchers select by name
+    when calling the MCP agent tool (execution_mode="cost_saving").
+    """
+
+    __tablename__ = "execution_modes"
+    __table_args__ = {"schema": "config"}
+
+    name: str = Field(primary_key=True)
+    description: str = Field(default="")
+    flag_overrides: Any = Field(default_factory=dict, sa_column=Column(JSON))
+    is_active: bool = Field(default=True)
+    created_by: str = Field(default="system")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutionModeRead(SQLModel):
+    name: str
+    description: str
+    flag_overrides: dict
+    is_active: bool
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExecutionModeUpsert(SQLModel):
+    description: str = ""
+    flag_overrides: dict = Field(default_factory=dict)
+    is_active: bool = True

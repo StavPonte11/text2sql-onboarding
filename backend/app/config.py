@@ -4,17 +4,28 @@ from python_core_utils.auth.config import SSOSettings
 
 
 class AuthSettings(SSOSettings):
-    pass
+    # If a user belongs to this SSO group/claim they are granted admin privileges.
+    # Set to empty string "" to disable group-based admin promotion.
+    SSO_ADMIN_GROUP: str = "Agency"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "sqlite:///./text2sql.db"
+    REDIS_URL: str = "redis://localhost:6379"
+    LLM_API_KEY: str = "ollama"
+    LLM_BASE_URL: str = "http://localhost:11434/v1"
+    LLM_MODEL: str = "gemma4:e4b"
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080", "http://host.docker.internal:5173"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://host.docker.internal:5173",
+    ]
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
@@ -78,7 +89,6 @@ class Settings(BaseSettings):
             self.OPENMETADATA_SERVICE_NAME = "galaxy_trino"
         return self
 
-
     # Langfuse run-item finalization wait (used by wait_for_run_items to gate cleanup)
     # Increase LANGFUSE_WAIT_MAX_ATTEMPTS on slow private-network deployments.
     LANGFUSE_WAIT_MAX_ATTEMPTS: int = 20
@@ -95,6 +105,9 @@ class Settings(BaseSettings):
     EMBEDDER_URL: str = "http://host.docker.internal:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     EMBEDDER_KEY: str = ""
+
+    FLAG_CACHE_TTL: int = 30
+    MODE_CACHE_TTL: int = 30
 
 
 settings = Settings()

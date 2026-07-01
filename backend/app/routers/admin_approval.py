@@ -10,9 +10,10 @@ from core.models.models import (
     Table,
     TableStatus,
 )
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
+
 from app.core.auth import check_admin
 from app.services.langfuse_client import langfuse_client
 
@@ -25,8 +26,6 @@ PRODUCTION_DATASET_NAME = "text2sql_production"
 
 class RejectionNote(BaseModel):
     note: str
-
-
 
 
 def _sync_questions_to_production_dataset(session: Session):

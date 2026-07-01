@@ -1,4 +1,4 @@
-import { useEffect,useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -200,23 +200,31 @@ export function TableList() {
       {/* Create Modal */}
       {showCreate && (
         <div className="modal-overlay" onClick={handleCloseCreate}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit(onSubmit)}>
+          <form
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleSubmit(onSubmit)}
+          >
             <h2 className="modal__title">Create New Table</h2>
 
             {createMutation.isError && (
-              <div style={{
-                padding: '10px 12px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(239, 68, 68, 0.08)',
-                color: 'var(--status-degraded)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-                fontSize: '13px',
-                marginBottom: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                {(createMutation.error as any)?.response?.data?.detail || createMutation.error?.message || 'Failed to create table'}
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  color: 'var(--status-degraded)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  fontSize: '13px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                {(createMutation.error as any)?.response?.data?.detail ||
+                  createMutation.error?.message ||
+                  'Failed to create table'}
               </div>
             )}
 

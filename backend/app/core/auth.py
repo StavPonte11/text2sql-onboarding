@@ -3,6 +3,8 @@ from core.models.models import Organization, SecurityUser
 from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
+from app.config import auth_settings
+
 
 def sync_user_from_payload(db: Session, payload: dict, provider: str) -> SecurityUser:
     email = payload.get("email")
@@ -17,7 +19,9 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
 
     user = None
     if sso_id:
-        user = db.exec(select(SecurityUser).where(SecurityUser.sso_id == sso_id)).first()
+        user = db.exec(
+            select(SecurityUser).where(SecurityUser.sso_id == sso_id)
+        ).first()
 
     if not user and email:
         user = db.exec(select(SecurityUser).where(SecurityUser.email == email)).first()
@@ -27,12 +31,7 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
         email = f"{sso_id}@{provider}.sso"
 
     if not user:
-        user = SecurityUser(
-            email=email,
-            name=name,
-            sso_id=sso_id,
-            provider=provider
-        )
+        user = SecurityUser(email=email, name=name, sso_id=sso_id, provider=provider)
         db.add(user)
     else:
         user.name = name
@@ -42,28 +41,41 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
 
     # Handle SSO groups mapping
     groups = payload.get("groups", [])
-    if groups:
-        cleaned_groups = [g.lstrip('/') for g in groups]
+    cleaned_groups = [g.lstrip("/") for g in groups]
+
+    if cleaned_groups:
         user_org_ids = {org.id for org in user.organizations}
 
         for group_name in cleaned_groups:
-            org = db.exec(select(Organization).where(Organization.name == group_name)).first()
+            org = db.exec(
+                select(Organization).where(Organization.name == group_name)
+            ).first()
             if not org:
                 org = Organization(name=group_name)
                 db.add(org)
-                db.flush() # flush to get id
+                db.flush()  # flush to get id
 
             if org.id not in user_org_ids:
                 user.organizations.append(org)
                 user_org_ids.add(org.id)
 
-        user.organizations = [org for org in user.organizations if org.name in cleaned_groups]
+        user.organizations = [
+            org for org in user.organizations if org.name in cleaned_groups
+        ]
+
+    # Promote/demote admin based on SSO group membership
+    admin_group = auth_settings.SSO_ADMIN_GROUP
+    if admin_group:
+        user.is_admin = admin_group in cleaned_groups
 
     db.commit()
     db.refresh(user)
     return user
 
-def get_current_user(request: Request, db: Session = Depends(get_session)) -> SecurityUser:
+
+def get_current_user(
+    request: Request, db: Session = Depends(get_session)
+) -> SecurityUser:
     user_id = request.session.get("user_id")
     if not user_id:
         raise HTTPException(
@@ -79,10 +91,11 @@ def get_current_user(request: Request, db: Session = Depends(get_session)) -> Se
         )
     return user
 
+
 def check_admin(current_user: SecurityUser = Depends(get_current_user)) -> SecurityUser:
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrative privileges required"
+            detail="Administrative privileges required",
         )
     return current_user

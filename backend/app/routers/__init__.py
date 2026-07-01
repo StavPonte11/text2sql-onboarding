@@ -2,10 +2,10 @@ from app.routers import (
     audit,
     enrichment,
     evaluation,
-    publish,
+    flags,
     questions,
     scopes,
     tables,
 )
 
-__all__ = [tables, enrichment, questions, evaluation, publish, scopes, audit]
+__all__ = ["tables", "enrichment", "questions", "evaluation", "flags", "scopes", "audit"]

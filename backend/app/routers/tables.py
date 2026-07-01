@@ -36,7 +36,9 @@ def get_om_token(force_refresh: bool = False) -> str:
         return _cached_om_token
 
     try:
-        b64_password = base64.b64encode(settings.OPENMETADATA_ADMIN_PASSWORD.encode()).decode()
+        b64_password = base64.b64encode(
+            settings.OPENMETADATA_ADMIN_PASSWORD.encode()
+        ).decode()
         r = httpx.post(
             f"{settings.OPENMETADATA_URL}/api/v1/users/login",
             json={"email": settings.OPENMETADATA_ADMIN_EMAIL, "password": b64_password},
@@ -57,13 +59,19 @@ def get_om_token(force_refresh: bool = False) -> str:
 def om_get_request(url: str) -> httpx.Response:
     token = get_om_token()
     headers = {"Authorization": f"Bearer {token}"}
-    response = httpx.get(url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL)
+    response = httpx.get(
+        url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL
+    )
 
     if response.status_code == 401:
-        logger.info("OpenMetadata request returned 401. Retrying with a refreshed token...")
+        logger.info(
+            "OpenMetadata request returned 401. Retrying with a refreshed token..."
+        )
         token = get_om_token(force_refresh=True)
         headers = {"Authorization": f"Bearer {token}"}
-        response = httpx.get(url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL)
+        response = httpx.get(
+            url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL
+        )
 
     return response
 
@@ -150,11 +158,11 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
         if e.response.status_code == 404:
             raise HTTPException(
                 status_code=404,
-                detail=f"Table '{fqn}' not found in metadata repository."
+                detail=f"Table '{fqn}' not found in metadata repository.",
             )
         raise HTTPException(
             status_code=e.response.status_code,
-            detail=f"Failed to fetch table metadata: {e!s}"
+            detail=f"Failed to fetch table metadata: {e!s}",
         )
     except Exception as e:
         raise HTTPException(
@@ -254,11 +262,11 @@ def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
         if e.response.status_code == 404:
             raise HTTPException(
                 status_code=404,
-                detail=f"Table '{fqn}' not found in metadata repository."
+                detail=f"Table '{fqn}' not found in metadata repository.",
             )
         raise HTTPException(
             status_code=e.response.status_code,
-            detail=f"Failed to refetch table metadata: {e!s}"
+            detail=f"Failed to refetch table metadata: {e!s}",
         )
     except Exception as e:
         raise HTTPException(

@@ -13,15 +13,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from core.trino import execute_query_sync
+
 from app.config import settings
-from core import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 CATEGORICAL_DISTINCT_THRESHOLD = 50
 CATEGORICAL_COVERAGE_THRESHOLD = 0.90  # top-N values cover ≥90% → categorical
-SAMPLE_PERCENT = 10  # TABLESAMPLE BERNOULLI(10)
+
 SAMPLE_LIMIT = 10_000
 TOP_VALUES_LIMIT = 50
 QUERY_TIMEOUT_SECONDS = (
@@ -1061,3 +1062,66 @@ def build_context_for_llm(
         "columns": context_columns,
         "insights": (profile_json or {}).get("insights", []),
     }
+
+
+# ── One-time LLM Table Summarization (called during profiling) ─────────────────
+
+
+def generate_table_summary(result: "TableProfilingResult") -> str:
+    """
+    Generate a ≤3-sentence plain-English description of a table using the LLM.
+    Called once at the end of `_run_profile_job` and stored in EnrichmentVersion.
+
+    Uses the same LLM endpoint as the agent (LLM_BASE_URL / LLM_API_KEY / LLM_MODEL).
+    Returns an empty string on any failure so profiling is never blocked.
+    """
+    import os
+
+    llm_base_url = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
+    llm_api_key = os.environ.get("LLM_API_KEY", "ollama")
+    llm_model = os.environ.get("LLM_MODEL", "gemma4:e4b")
+
+    try:
+        col_lines = []
+        for c in result.column_stats[:30]:
+            parts = [f"{c.column_name} ({c.data_type}, {c.semantic_type})"]
+            if c.is_categorical and c.top_values:
+                vals = [str(v["value"]) for v in c.top_values[:5]]
+                parts.append(f"values: {', '.join(vals)}")
+            elif c.min_value or c.max_value:
+                parts.append(f"range: {c.min_value}-{c.max_value}")
+            col_lines.append(" — ".join(parts))
+
+        prompt = (
+            f"Table: {result.table_fqn}\n"
+            f"Row count: {result.row_count:,}\n"
+            f"Columns ({result.column_count} total):\n"
+            + "\n".join(f"  • {line}" for line in col_lines)
+            + "\n\nWrite a concise ≤3-sentence description of this table's purpose, "
+            "what business domain it represents, and which columns are most important "
+            "for querying. Be specific about what the table contains."
+        )
+
+        import httpx
+
+        payload = {
+            "model": llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "stream": False,
+        }
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{llm_base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {llm_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        logger.warning("[ProfilingEngine] generate_table_summary failed: %s", exc)
+        return ""

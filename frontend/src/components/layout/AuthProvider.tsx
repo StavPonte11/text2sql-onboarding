@@ -9,7 +9,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    authApi.getMe()
+    authApi
+      .getMe()
       .then((user) => {
         if (mounted) setAuth(user);
       })

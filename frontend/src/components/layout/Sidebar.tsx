@@ -8,6 +8,7 @@ import {
   Database,
   LayoutDashboard,
   Shield,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { LogOut } from 'lucide-react';
 
@@ -52,7 +53,10 @@ const NAV_GROUPS = [
   },
   {
     label: 'Administration',
-    items: [{ to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' }],
+    items: [
+      { to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' },
+      { to: '/flags', icon: SlidersHorizontal, key: 'nav.flags', label: 'Feature Flags' },
+    ],
   },
 ];
 
@@ -140,51 +144,59 @@ export function Sidebar() {
             : 'Loading…'}
         </div>
         {user && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '10px',
-            marginTop: '12px',
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '6px',
-          }}>
-            <div style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+          <div
+            style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              color: '#ffffff',
-              fontWeight: 700,
-              fontSize: '11px',
-              flexShrink: 0,
-            }}>
+              gap: '10px',
+              padding: '10px',
+              marginTop: '12px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: '6px',
+            }}
+          >
+            <div
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: '11px',
+                flexShrink: 0,
+              }}
+            >
               {user.name ? user.name.slice(0, 2).toUpperCase() : 'U'}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: '12px',
-                fontWeight: 600,
-                color: 'var(--text-primary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                lineHeight: 1.2,
-              }}>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  lineHeight: 1.2,
+                }}
+              >
                 {user.name}
               </div>
-              <div style={{
-                fontSize: '10px',
-                color: 'var(--text-muted)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                marginTop: '1px',
-              }}>
+              <div
+                style={{
+                  fontSize: '10px',
+                  color: 'var(--text-muted)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  marginTop: '1px',
+                }}
+              >
                 {user.email}
               </div>
             </div>

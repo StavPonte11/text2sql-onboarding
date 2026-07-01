@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Button, Card, Spin,Typography } from 'antd';
+import { Button, Card, Spin, Typography } from 'antd';
 
 import { authApi, type AuthConfig } from '../api/auth';
 import { API_BASE_URL } from '../config/constants';
@@ -14,7 +14,8 @@ export function LoginPage() {
   const [configLoading, setConfigLoading] = useState(true);
 
   useEffect(() => {
-    authApi.getConfig()
+    authApi
+      .getConfig()
       .then(setConfig)
       .catch(console.error)
       .finally(() => setConfigLoading(false));
@@ -22,7 +23,9 @@ export function LoginPage() {
 
   if (isLoading || configLoading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+      <div
+        style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}
+      >
         <Spin size="large" />
       </div>
     );
@@ -33,12 +36,22 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0f172a' }}>
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        background: '#0f172a',
+      }}
+    >
       <Card
         style={{ width: 400, textAlign: 'center', background: '#1e293b', borderColor: '#334155' }}
         styles={{ body: { padding: '32px' } }}
       >
-        <Title level={2} style={{ color: '#fff', marginBottom: '8px' }}>Sign In</Title>
+        <Title level={2} style={{ color: '#fff', marginBottom: '8px' }}>
+          Sign In
+        </Title>
         <Text style={{ color: '#94a3b8', display: 'block', marginBottom: '32px' }}>
           Welcome to Jarvis Studio
         </Text>

@@ -214,9 +214,7 @@ export function GoldenQuestions({ tableId }: Props) {
               <select
                 className="form-select"
                 value={form.question_type}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, question_type: e.target.value as any }))
-                }
+                onChange={(e) => setForm((f) => ({ ...f, question_type: e.target.value as any }))}
               >
                 <option value="join">Join</option>
                 <option value="simple">Simple</option>

@@ -43,14 +43,26 @@ function fmtDate(ts: any) {
     else if (ts > 1e14) ms = Math.floor(ts / 1000); // Microseconds
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
     }
     return String(ts);
   }
-  
+
   const d = new Date(ts);
   if (!isNaN(d.getTime())) {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
   return String(ts).split(' ')[0];
 }

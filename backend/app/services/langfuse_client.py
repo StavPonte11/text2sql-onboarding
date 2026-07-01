@@ -28,10 +28,7 @@ from typing import Any
 
 import langfuse as sdk
 import requests
-from langfuse.api.resources.dataset_run_items.types.create_dataset_run_item_request import (
-    CreateDatasetRunItemRequest,
-)
-from langfuse.decorators import langfuse_context
+from langfuse.api import CreateDatasetRunItemRequest
 
 from app.config import settings
 
@@ -160,7 +157,7 @@ class LangfuseTracer(Connection):
         if self.client:
             try:
                 self.client.flush()
-                langfuse_context.flush()
+
                 self.logger.info("[LangfuseTracer] Flushed and logged out.")
             except Exception as exc:
                 self.logger.warning(f"[LangfuseTracer] Logout warning: {exc}")
@@ -184,24 +181,6 @@ class LangfuseTracer(Connection):
             return self.client.get_prompt(name)
         except Exception as exc:
             self.logger.error(f"[LangfuseTracer] get_prompt('{name}') failed: {exc}")
-            return None
-
-    def get_prompt_as_langchain(self, name: str) -> Any | None:
-        """
-        Fetch a Langfuse prompt and return it as a LangChain-compatible prompt.
-
-        Requires langchain to be installed in the environment.
-        Returns None if the prompt or langchain is unavailable.
-        """
-        prompt = self.get_prompt(name)
-        if prompt is None:
-            return None
-        try:
-            return prompt.get_langchain_prompt()
-        except Exception as exc:
-            self.logger.error(
-                f"[LangfuseTracer] get_prompt_as_langchain('{name}') failed: {exc}"
-            )
             return None
 
     # ── Convenience property ───────────────────────────────────────────────────
@@ -243,7 +222,6 @@ class LangfuseDatasetService:
     def flush(self) -> None:
         if self._tracer.client:
             self._tracer.client.flush()
-            langfuse_context.flush()
 
     # ── Dataset helpers ────────────────────────────────────────────────────────
 

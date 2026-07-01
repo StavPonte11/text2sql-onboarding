@@ -1,7 +1,8 @@
 import { create } from 'zustand';
+
 import type { components } from '../api/schema';
 
-export type User = components["schemas"]["SecurityUserRead"];
+export type User = components['schemas']['SecurityUserRead'];
 
 interface AuthState {
   user: User | null;

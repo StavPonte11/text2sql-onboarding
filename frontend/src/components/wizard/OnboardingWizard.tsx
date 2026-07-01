@@ -1,5 +1,5 @@
-import { useEffect,useState } from 'react';
-import { useFieldArray,useForm } from 'react-hook-form';
+import { useEffect, useState } from 'react';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 import { enrichmentApi, questionsApi, tablesApi } from '../../api/client';
 
-import type { EnrichmentData,GoldenQuestionCreate, Table } from '../../types';
+import type { EnrichmentData, GoldenQuestionCreate, Table } from '../../types';
 
 const STEPS = ['select', 'schema', 'enrichment', 'validate', 'questions', 'submit'] as const;
 
@@ -67,12 +67,21 @@ export function OnboardingWizard() {
     mode: 'onTouched',
   });
 
-  const { fields: columnFields, replace: replaceColumns, append: appendColumn, remove: removeColumn } = useFieldArray({
+  const {
+    fields: columnFields,
+    replace: replaceColumns,
+    append: appendColumn,
+    remove: removeColumn,
+  } = useFieldArray({
     control,
     name: 'columns',
   });
 
-  const { fields: questionFields, append: appendQuestion, remove: removeQuestion } = useFieldArray({
+  const {
+    fields: questionFields,
+    append: appendQuestion,
+    remove: removeQuestion,
+  } = useFieldArray({
     control,
     name: 'questions',
   });
@@ -96,8 +105,6 @@ export function OnboardingWizard() {
   useEffect(() => {
     setSubmitError(null);
   }, [watchOasisSourceId, watchTableDescription, watchColumns.length, watchQuestions.length]);
-
-
 
   const handleFetchSchema = () => {
     setIsFetchingSchema(true);
@@ -128,7 +135,9 @@ export function OnboardingWizard() {
 
     try {
       if (step === 'select') {
-        const t = await createTableMutation.mutateAsync({ oasis_source_id: getValues('oasis_source_id') });
+        const t = await createTableMutation.mutateAsync({
+          oasis_source_id: getValues('oasis_source_id'),
+        });
         setCreatedTableId(t.id);
         setCreatedTable(t);
       }
@@ -145,7 +154,7 @@ export function OnboardingWizard() {
       if (step === 'questions' && createdTableId) {
         const qs = getValues('questions') || [];
         await Promise.all(
-          qs.map(q => createQuestionMutation.mutateAsync({ id: createdTableId, q }))
+          qs.map((q) => createQuestionMutation.mutateAsync({ id: createdTableId, q })),
         );
         message.success('Golden questions added');
         qc.invalidateQueries({ queryKey: ['tables'] });
@@ -161,7 +170,12 @@ export function OnboardingWizard() {
   };
 
   const addQuestion = () =>
-    appendQuestion({ question: '', expected_sql: '', difficulty: 'simple', question_type: 'simple' });
+    appendQuestion({
+      question: '',
+      expected_sql: '',
+      difficulty: 'simple',
+      question_type: 'simple',
+    });
 
   if (done) {
     return (
@@ -228,18 +242,20 @@ export function OnboardingWizard() {
       {/* Step content */}
       <div className="card" style={{ marginBottom: 24 }}>
         {submitError && (
-          <div style={{
-            padding: '10px 12px',
-            borderRadius: 'var(--radius-sm)',
-            background: 'rgba(239, 68, 68, 0.08)',
-            color: 'var(--status-degraded)',
-            border: '1px solid rgba(239, 68, 68, 0.2)',
-            fontSize: '13px',
-            marginBottom: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
+          <div
+            style={{
+              padding: '10px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(239, 68, 68, 0.08)',
+              color: 'var(--status-degraded)',
+              border: '1px solid rgba(239, 68, 68, 0.2)',
+              fontSize: '13px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
             {submitError}
           </div>
         )}
@@ -388,12 +404,8 @@ export function OnboardingWizard() {
                   </div>
                   {(nameError || descError) && (
                     <div style={{ display: 'flex', gap: 16, marginTop: 4 }}>
-                      {nameError && (
-                        <div className="form-error">{nameError.message}</div>
-                      )}
-                      {descError && (
-                        <div className="form-error">{descError.message}</div>
-                      )}
+                      {nameError && <div className="form-error">{nameError.message}</div>}
+                      {descError && <div className="form-error">{descError.message}</div>}
                     </div>
                   )}
                 </div>
@@ -415,7 +427,14 @@ export function OnboardingWizard() {
                   className="card card--elevated"
                   style={{ padding: 12, marginBottom: 16 }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 8,
+                    }}
+                  >
                     <span className="text-sm fw-600 text-muted">Question #{i + 1}</span>
                     <button
                       type="button"
@@ -434,9 +453,7 @@ export function OnboardingWizard() {
                       placeholder="How many orders were placed last month?"
                       {...register(`questions.${i}.question`)}
                     />
-                    {questionError && (
-                      <div className="form-error">{questionError.message}</div>
-                    )}
+                    {questionError && <div className="form-error">{questionError.message}</div>}
                   </div>
 
                   <div className="form-group">
@@ -454,10 +471,7 @@ export function OnboardingWizard() {
 
                   <div className="form-group">
                     <label className="form-label">Difficulty</label>
-                    <select
-                      className="form-select"
-                      {...register(`questions.${i}.difficulty`)}
-                    >
+                    <select className="form-select" {...register(`questions.${i}.difficulty`)}>
                       <option value="simple">Simple</option>
                       <option value="medium">Medium</option>
                       <option value="complex">Complex</option>
@@ -466,10 +480,7 @@ export function OnboardingWizard() {
 
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Question Type</label>
-                    <select
-                      className="form-select"
-                      {...register(`questions.${i}.question_type`)}
-                    >
+                    <select className="form-select" {...register(`questions.${i}.question_type`)}>
                       <option value="join">Join</option>
                       <option value="simple">Simple</option>
                       <option value="complex">Complex</option>
@@ -501,7 +512,11 @@ export function OnboardingWizard() {
       {/* Navigation */}
       <div className="flex gap-2" style={{ justifyContent: 'flex-end' }}>
         {currentStep > 0 && (
-          <button type="button" className="btn btn--ghost" onClick={() => setCurrentStep((s) => s - 1)}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setCurrentStep((s) => s - 1)}
+          >
             {t('wizard.back')}
           </button>
         )}

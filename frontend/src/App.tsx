@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -16,6 +17,7 @@ import { AgentTestingPage } from './pages/AgentTestingPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { EvaluationsPage } from './pages/EvaluationsPage';
+import { FlagsPage } from './pages/FlagsPage';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { ScopesPage } from './pages/ScopesPage';
@@ -52,7 +54,7 @@ function LanguageToggle() {
 
 function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
   const { user, isAuthenticated, isLoading } = useAuthStore();
-  
+
   if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>;
   if (!isAuthenticated || !user?.is_admin) {
     return <Navigate to="/control-center" replace />;
@@ -62,7 +64,7 @@ function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
-  
+
   if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>;
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -80,21 +82,92 @@ function AppLayout() {
           <LanguageToggle />
         </div>
         <Routes>
-          <Route path="/control-center" element={<ProtectedRoute><ControlCenterPage /></ProtectedRoute>} />
-          <Route path="/evaluations" element={<ProtectedRoute><EvaluationsPage /></ProtectedRoute>} />
-          <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
-          <Route path="/tables" element={<ProtectedRoute><TableList /></ProtectedRoute>} />
+          <Route
+            path="/control-center"
+            element={
+              <ProtectedRoute>
+                <ControlCenterPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/evaluations"
+            element={
+              <ProtectedRoute>
+                <EvaluationsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <AnalyticsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tables"
+            element={
+              <ProtectedRoute>
+                <TableList />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
-          <Route path="/tables/:id/:tab" element={<ProtectedRoute><TableDetails /></ProtectedRoute>} />
-          <Route path="/wizard" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
-          <Route path="/monitoring" element={<ProtectedRoute><MonitoringPage /></ProtectedRoute>} />
-          <Route path="/permissions" element={<ProtectedRoute><ScopesPage /></ProtectedRoute>} />
-          <Route path="/agent-testing" element={<ProtectedRoute><AgentTestingPage /></ProtectedRoute>} />
+          <Route
+            path="/tables/:id/:tab"
+            element={
+              <ProtectedRoute>
+                <TableDetails />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/wizard"
+            element={
+              <ProtectedRoute>
+                <OnboardingWizard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/monitoring"
+            element={
+              <ProtectedRoute>
+                <MonitoringPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/permissions"
+            element={
+              <ProtectedRoute>
+                <ScopesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/agent-testing"
+            element={
+              <ProtectedRoute>
+                <AgentTestingPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/admin"
             element={
               <ProtectedAdminRoute>
                 <AdminPanelPage />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
+            path="/flags"
+            element={
+              <ProtectedAdminRoute>
+                <FlagsPage />
               </ProtectedAdminRoute>
             }
           />
@@ -107,16 +180,29 @@ function AppLayout() {
 }
 
 export default function App() {
+  const { i18n } = useTranslation();
+
+  useEffect(() => {
+    document.documentElement.dir = i18n.language === 'he' ? 'rtl' : 'ltr';
+    document.documentElement.lang = i18n.language;
+  }, [i18n.language]);
+
   return (
     <ConfigProvider
       theme={{
         algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: '#0ea5e9',
-          fontFamily: "'Plus Jakarta Sans', sans-serif",
-          borderRadius: 6,
+          colorPrimary: '#22C55E',
+          fontFamily: '"Fira Sans", system-ui, "Segoe UI", Roboto, sans-serif',
+          colorBgBase: '#020617',
+          colorBgContainer: '#0F172A',
+          colorBgElevated: '#1E293B',
+          colorBorder: '#1E293B',
+          colorTextBase: '#F8FAFC',
+          colorTextSecondary: '#94A3B8',
         },
       }}
+      direction={i18n.language === 'he' ? 'rtl' : 'ltr'}
     >
       <AntApp>
         <QueryClientProvider client={queryClient}>

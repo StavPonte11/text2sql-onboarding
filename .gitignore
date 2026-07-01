@@ -35,3 +35,13 @@ __pycache__/
 
 # Private keys / Secrets
 deploy_key
+
+# Scratch files
+agent/scratch/*
+fix_agent_langfuse.py
+fix_langfuse.py
+
+# Playwright
+playwright-report/
+test-results/
+junit.xml

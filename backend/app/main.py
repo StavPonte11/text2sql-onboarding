@@ -1,5 +1,4 @@
 import logging
-import sys
 import time
 from contextlib import asynccontextmanager
 
@@ -7,12 +6,15 @@ from core.db.engine import create_db_and_tables, engine
 from core.models.models import AuditQuery
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from python_core_utils import setup_logging
+from python_core_utils.logging import CorrelationIdMiddleware
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.api import auth as auth_api
 from app.config import auth_settings, settings
 from app.core.auth import get_current_user
-from app.api import auth as auth_api
 from app.routers import (
     admin_approval,
     admin_auth,
@@ -32,19 +34,17 @@ from app.routers import (
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
 
-from python_core_utils import setup_logging
-from python_core_utils.logging import CorrelationIdMiddleware
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-
 setup_logging(
     log_level="DEBUG" if settings.APP_ENV == "development" else "INFO",
-    logger_names=["app", "uvicorn", "fastapi"]
+    logger_names=["app", "uvicorn", "fastapi"],
 )
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not settings.LLM_API_KEY:
+        logger.warning("Startup failed: LLM_API_KEY is missing. LLM judge cannot run.")
     try:
         create_db_and_tables()
         start_scheduler()
@@ -109,9 +109,9 @@ async def audit_middleware(request: Request, call_next):
         try:
             with Session(engine) as session:
                 audit = AuditQuery(
-                    table_id=table_id
-                    if table_id and len(table_id) == 36
-                    else None,  # quick check for uuid
+                    table_id=(
+                        table_id if table_id and len(table_id) == 36 else None
+                    ),  # quick check for uuid
                     user_id=user_id,
                     raw_question=query_desc,
                     execution_time_ms=process_time_ms,
