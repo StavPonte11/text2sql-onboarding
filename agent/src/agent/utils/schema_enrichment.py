@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 class SemanticAnnotation(BaseModel):
     table_column: str = Field(description="The full table_name.column_name identifier")
-    semantic_type: str = Field(description="Must be one of: id | timestamp | category | metric | text | geo | unknown")
+    semantic_type: Literal["id", "timestamp", "category", "metric", "text", "geo", "unknown"] = Field(description="Must be one of: id | timestamp | category | metric | text | geo | unknown")
 
 
 class SemanticTypingOutput(BaseModel):

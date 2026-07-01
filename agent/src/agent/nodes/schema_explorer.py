@@ -26,7 +26,6 @@ from sqlmodel import Session, select
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
-from agent.utils.esca import get_esca_client
 from agent.utils.schema_enrichment import (
     run_semantic_typing,
     run_join_graph,
@@ -296,7 +295,7 @@ def hybrid_search_tables(
 
 @tool
 async def get_table_profile(table_id: str) -> str:
-    """Get the lightweight column names/types for a table, and the Esca reference ID for the full profiling statistics. Use this before planning a query."""
+    """Get the lightweight column names/types for a table. Use this before planning a query."""
     cache_hit = False
 
     with Session(engine) as session:
@@ -331,47 +330,6 @@ async def get_table_profile(table_id: str) -> str:
             select(ColumnProfile).where(ColumnProfile.profile_id == profile.id)
         ).all()
 
-        # Heavy data to pass by reference to Esca
-        profile_data = {
-            "table_id": table_id,
-            "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
-            "catalog": table.catalog,
-            "schema": table.schema_name,
-            "row_count": profile.row_count,
-            "sample_data": profile.sample_data,
-            "auto_insights": profile.auto_insights,
-            "profile_json": profile.profile_json,
-            "columns": [
-                {
-                    "name": cp.column_name,
-                    "type": cp.data_type,
-                    "null_rate": cp.null_rate,
-                    "distinct_count": cp.distinct_count,
-                    "top_values": cp.top_values,
-                }
-                for cp in columns
-            ],
-        }
-
-        # Save heavy data in Esca
-        esca_payload = json.dumps(profile_data).encode()
-
-        async with get_esca_client() as client:
-            try:
-                res = await client.save_data(esca_payload)
-                esca_id = res.get("esca_id")
-            except Exception as e:
-                esca_id = None
-                if langfuse_client and langfuse_client.get_current_trace_id():
-                    langfuse_client.update_current_span(
-                        level="WARNING",
-                        status_message=f"ESCA write failed for profile: {e}",
-                    )
-                else:
-                    logger.warning(
-                        f"Error: Failed to save profile to Esca for table {table_id}: {e}"
-                    )
-
         # ── Fetch table description from EnrichmentVersion ─────────────────────
         table_description = ""
         enrichment = session.exec(
@@ -392,11 +350,7 @@ async def get_table_profile(table_id: str) -> str:
             "description": table_description,
             "row_count": profile.row_count,
             "columns": [_build_column_context(cp) for cp in columns],
-            "esca_reference_id": esca_id,
         }
-        
-        if esca_id is None:
-            lightweight["esca_write_failed"] = True
 
         # ── G2-05: Populate cache ─────────────────────────────────────────────
         await _cache.set_json(cache_key, lightweight, settings.PROFILE_CACHE_TTL)
@@ -443,6 +397,9 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     )
     schema_ambiguity_detect = _parse_bool_flag(
         runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
+    )
+    schema_skill_injection = _parse_bool_flag(
+        runtime_flags.get("SCHEMA_SKILL_INJECTION", settings.ENABLE_SKILL_INJECTION)
     )
     scoping_mode_flag = runtime_flags.get(
         "DEFAULT_TABLE_SCOPING_MODE", settings.DEFAULT_TABLE_SCOPING_MODE
@@ -540,35 +497,35 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         )
 
     # Phase A: Semantic Typing
-    # if schema_semantic_typing and profile_details:
-    #     try:
-    #         profile_details = await run_semantic_typing(profile_details, _llm)
-    #         active_phases.append("SCHEMA_SEMANTIC_TYPING")
-    #     except Exception as exc:
-    #         logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
+    if schema_semantic_typing and profile_details:
+        try:
+            profile_details = await run_semantic_typing(profile_details, _llm)
+            active_phases.append("SCHEMA_SEMANTIC_TYPING")
+        except Exception as exc:
+            logger.warning("SCHEMA_SEMANTIC_TYPING phase failed: %s", exc)
 
     # Phase B: Join Graph
-    # if schema_join_graph and len(table_ids) >= 2:
-    #     try:
-    #         join_paths_json = await run_join_graph(table_ids)
-    #         if join_paths_json:
-    #             human_message += (
-    #                 "\n\n[JOIN GRAPH] Shortest join paths between candidate tables:\n"
-    #                 + join_paths_json
-    #             )
-    #             active_phases.append("SCHEMA_JOIN_GRAPH")
-    #     except Exception as exc:
-    #         logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
+    if schema_join_graph and len(table_ids) >= 2:
+        try:
+            join_paths_json = await run_join_graph(table_ids)
+            if join_paths_json:
+                human_message += (
+                    "\n\n[JOIN GRAPH] Shortest join paths between candidate tables:\n"
+                    + join_paths_json
+                )
+                active_phases.append("SCHEMA_JOIN_GRAPH")
+        except Exception as exc:
+            logger.warning("SCHEMA_JOIN_GRAPH phase failed: %s", exc)
 
     # ── G3: Skill Injection ───────────────────────────────────────────────────
-    # loaded_skills = state.get("loaded_skills")
-    # if loaded_skills:
-    #     try:
-    #         skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
-    #         if skill_prompts:
-    #             human_message += f"\n\n[APPLIED SKILLS]{skill_prompts}"
-    #     except Exception as e:
-    #         logger.warning(f"Failed to inject skills: {e}")
+    loaded_skills = state.get("loaded_skills")
+    if schema_skill_injection and loaded_skills:
+        try:
+            skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
+            if skill_prompts:
+                human_message += f"\n\n[APPLIED SKILLS]{skill_prompts}"
+        except Exception as e:
+            logger.warning(f"Failed to inject skills: {e}")
 
     # Phase C: Schema Summarization (replaces profiles_json in prompt)
     profiles_json_str = json.dumps(profile_details, indent=2)
@@ -584,14 +541,14 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
             logger.warning("SCHEMA_SUMMARIZATION phase failed: %s", exc)
 
     # Phase D: Ambiguity Detection
-    # if schema_ambiguity_detect and profile_details:
-    #     try:
-    #         notes = await run_ambiguity_detection(profile_details, user_query, _llm)
-    #         if notes:
-    #             human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
-    #             active_phases.append("SCHEMA_AMBIGUITY_DETECT")
-    #     except Exception as exc:
-    #         logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
+    if schema_ambiguity_detect and profile_details:
+        try:
+            notes = await run_ambiguity_detection(profile_details, user_query, _llm)
+            if notes:
+                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
+                active_phases.append("SCHEMA_AMBIGUITY_DETECT")
+        except Exception as exc:
+            logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
 
     # ── Langfuse trace metadata ───────────────────────────────────────────────
     try:
@@ -714,7 +671,6 @@ async def sql_static_validations_node(state: AgentState, config: RunnableConfig 
     retry_count = state.get("schema_explorer_retry_count", 0) or 0
     result_state: dict = {
         "schema_explorer_retry_count": retry_count,
-        "esca_write_failed": any(p.get("esca_write_failed") for p in profile_details) if profile_details else False,
     }
     
     if hallucinated:

@@ -69,8 +69,10 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
     runtime_flags = state.get("runtime_flags") or {}
     llm = get_llm("finalizer", runtime_flags=runtime_flags)
 
+    esca_write_enabled = str(runtime_flags.get("ESCA_WRITE_ENABLED", settings.ESCA_WRITE_ENABLED)).lower() == "true"
+    
     preview_str = ""
-    if esca_write_failed or not raw_data_ref:
+    if not esca_write_enabled:
         if inline_result_rows is not None:
             limit = 5
             preview_rows = inline_result_rows[:limit]

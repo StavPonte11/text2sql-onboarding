@@ -30,8 +30,8 @@ class AgentSettings(BaseSettings):
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
 
     # ── G4: Feature Flags & Execution Modes ──────────────────────────────────
-    BACKEND_URL: str  # Studio backend URL for flag reads (e.g. http://backend:8000)
-
+    BACKEND_URL: str = "http://localhost:8000"  # Studio backend URL
+    REDIS_URL: str = "redis://localhost:6379"
 
     # Langfuse prompt names
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
@@ -55,6 +55,7 @@ class AgentSettings(BaseSettings):
     ENABLE_JOIN_GRAPH: bool = False
     ENABLE_SCHEMA_SUMMARIZATION: bool = False  # generated once at profile-time, not at runtime
     ENABLE_AMBIGUITY_DETECT: bool = True
+    ENABLE_SKILL_INJECTION: bool = False
 
     # ── G2-04: Satisfaction Check ─────────────────────────────────────────────
     SATISFACTION_CHECK_ENABLED: bool = True
