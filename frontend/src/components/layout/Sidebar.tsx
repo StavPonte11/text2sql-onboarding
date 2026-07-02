@@ -8,9 +8,13 @@ import {
   Database,
   LayoutDashboard,
   Shield,
+  SlidersHorizontal,
 } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 
+import { authApi } from '../../api/auth';
 import { orchestrationApi } from '../../api/orchestration';
+import { useAuthStore } from '../../store/authStore';
 
 import './Sidebar.css';
 
@@ -49,7 +53,10 @@ const NAV_GROUPS = [
   },
   {
     label: 'Administration',
-    items: [{ to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' }],
+    items: [
+      { to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' },
+      { to: '/flags', icon: SlidersHorizontal, key: 'nav.flags', label: 'Feature Flags' },
+    ],
   },
 ];
 
@@ -61,6 +68,7 @@ function AlertDot({ count }: { count: number }) {
 
 export function Sidebar() {
   const { t } = useTranslation();
+  const { user } = useAuthStore();
 
   const { data: health } = useQuery({
     queryKey: ['system-health'],
@@ -106,24 +114,27 @@ export function Sidebar() {
       )}
 
       <nav className="sidebar__nav sidebar-nav-container">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label} className="sidebar-nav-group">
-            <div className="sidebar-nav-label">{group.label}</div>
-            {group.items.map(({ to, icon: Icon, key, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                className={({ isActive }) =>
-                  `sidebar__nav-item${isActive ? ' sidebar__nav-item--active' : ''}`
-                }
-              >
-                <Icon size={15} />
-                {t(key, label)}
-                {to === '/control-center' && <AlertDot count={activeAlerts} />}
-              </NavLink>
-            ))}
-          </div>
-        ))}
+        {NAV_GROUPS.map((group) => {
+          if (group.label === 'Administration' && !user?.is_admin) return null;
+          return (
+            <div key={group.label} className="sidebar-nav-group">
+              <div className="sidebar-nav-label">{group.label}</div>
+              {group.items.map(({ to, icon: Icon, key, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    `sidebar__nav-item${isActive ? ' sidebar__nav-item--active' : ''}`
+                  }
+                >
+                  <Icon size={15} />
+                  {t(key, label)}
+                  {to === '/control-center' && <AlertDot count={activeAlerts} />}
+                </NavLink>
+              ))}
+            </div>
+          );
+        })}
       </nav>
 
       <div className="sidebar-footer">
@@ -132,6 +143,93 @@ export function Sidebar() {
             ? `${health.production_tables} prod · ${health.total_tables} total tables`
             : 'Loading…'}
         </div>
+        {user && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '10px',
+              marginTop: '12px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: '6px',
+            }}
+          >
+            <div
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: '11px',
+                flexShrink: 0,
+              }}
+            >
+              {user.name ? user.name.slice(0, 2).toUpperCase() : 'U'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  lineHeight: 1.2,
+                }}
+              >
+                {user.name}
+              </div>
+              <div
+                style={{
+                  fontSize: '10px',
+                  color: 'var(--text-muted)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  marginTop: '1px',
+                }}
+              >
+                {user.email}
+              </div>
+            </div>
+            <button
+              onClick={() => authApi.logout()}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#ef4444',
+                opacity: 0.8,
+                padding: '4px',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+                e.currentTarget.style.opacity = '1';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'none';
+                e.currentTarget.style.opacity = '0.8';
+              }}
+              title="Sign Out"
+              aria-label="Sign Out"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

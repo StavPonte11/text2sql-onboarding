@@ -22,9 +22,11 @@
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@hookform/resolvers": "^5.4.0",
     "@tanstack/react-query": "^5.62.7",
     "@tanstack/react-query-devtools": "^5.62.7",
     "@types/recharts": "^1.8.29",
+    "@xyflow/react": "^12.11.0",
     "antd": "^5.22.0",
     "axios": "^1.7.9",
     "dayjs": "^1.11.13",
@@ -34,15 +36,19 @@
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-hook-form": "^7.78.0",
     "react-i18next": "^15.4.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.28.0",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
+    "uuid": "^14.0.0",
+    "zod": "^4.4.3",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.61.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -63,6 +69,7 @@
     "typescript": "~5.6.2",
     "typescript-eslint": "^8.60.0",
     "vite": "^6.0.5",
+    "react-json-view": "^1.8.0",
     "vitest": "^4.1.7"
   }
 }

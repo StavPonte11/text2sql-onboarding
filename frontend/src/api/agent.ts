@@ -1,13 +1,27 @@
 import axios from 'axios';
 
+import { useAuthStore } from '../store/authStore';
 const api = axios.create({
   baseURL: '/api/agent',
   headers: { 'Content-Type': 'application/json' },
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear auth state to trigger React Router's ProtectedRoute redirect
+      useAuthStore.getState().setAuth(null);
+    }
+    return Promise.reject(error);
+  },
+);
+
 export interface QueryApproval {
   approved: boolean;
+  rejection_category?: string;
   feedback?: string;
+  suggested_fix?: string;
 }
 
 export interface ChatRequest {
@@ -29,9 +43,15 @@ export interface ChatResponse {
   sql_query?: string;
   sql_explanation?: string;
   schema_plan?: string;
+  trace_id?: string;
+  execution_path?: string[];
 }
 
 export const agentApi = {
   chat: (payload: ChatRequest): Promise<ChatResponse> =>
     api.post<ChatResponse>('/chat', payload).then((r) => r.data),
+  suggestFixes: async (threadId: string, category: string): Promise<string[]> => {
+    const response = await api.post<string[]>('/suggest_fixes', { thread_id: threadId, category });
+    return response.data;
+  },
 };

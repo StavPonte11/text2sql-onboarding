@@ -22,10 +22,10 @@ import random
 from abc import ABC, abstractmethod
 from typing import Any
 
-from langfuse.decorators import langfuse_context, observe
+from core.models.models import EvalResult, GoldenQuestion
+from langfuse import observe
 from sqlmodel import Session
 
-from core.models.models import EvalResult, GoldenQuestion
 from app.services.langfuse_client import Evaluation, langfuse_client as _lf_client
 
 logger = logging.getLogger(__name__)
@@ -120,8 +120,8 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Returns:
             dict with keys: response (generated SQL), question_id, expected_sql
         """
-        trace_id = langfuse_context.get_current_trace_id()
-        observation_id = langfuse_context.get_current_observation_id()
+        trace_id = _lf_client.client.get_current_trace_id() if _lf_client.client else None
+        observation_id = _lf_client.client.get_current_observation_id() if _lf_client.client else None
 
         q_id = item.metadata.get("question_id")
         question_obj = self.session.get(GoldenQuestion, q_id)
@@ -142,7 +142,8 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
             run_metadata={"table_id": self.table_id},
         )
 
-        langfuse_context.update_current_trace(
+        if _lf_client.client and trace_id:
+            _lf_client.client.trace(id=trace_id,
             input={
                 "query": question_obj.question,
                 "databases": [question_obj.table_id],
@@ -158,7 +159,8 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         #   generated_sql = tool_response.data["result"]
         generated_sql = f"SELECT * FROM {question_obj.table_id} LIMIT 100"  # STUB
 
-        langfuse_context.update_current_trace(output={"response": generated_sql})
+        if _lf_client.client and trace_id:
+            _lf_client.client.trace(id=trace_id,output={"response": generated_sql})
 
         # Persist EvalResult (score will be updated by evaluators after task returns)
         result_db = EvalResult(

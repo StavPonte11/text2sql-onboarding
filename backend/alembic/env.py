@@ -1,11 +1,14 @@
 from logging.config import fileConfig
 
+from core.models.models import *  # noqa: F403
 from sqlalchemy import engine_from_config, pool
+from sqlmodel import SQLModel
 
 from alembic import context
 from sqlmodel import SQLModel
 from app.config import settings
 from core.models.models import *  # Import all models so SQLModel.metadata is populated
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -17,7 +20,6 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-
 
 target_metadata = SQLModel.metadata
 

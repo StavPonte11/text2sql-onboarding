@@ -41,8 +41,9 @@ def test_http_extractor_success(mock_post):
     
     assert len(entries) == 1
     assert entries[0].term == "test"
+    assert entries[0].term == "test"
     assert entries[0].context == "test context"
-    mock_post.assert_called_once_with("http://test-url", json={"query": "test query"}, timeout=50)
+    mock_post.assert_called_once_with("http://test-url", json={"query": "test query", "runtime_flags": {}}, timeout=50)
 
 @patch("agent.nodes.extractor.requests.post")
 def test_http_extractor_failure(mock_post):

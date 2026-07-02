@@ -8,38 +8,64 @@ the entire data layer is self-healing after `docker compose down/up`:
   2. Trino  — create minio catalog schemas & tables (IF NOT EXISTS)
   3. Trino  — seed sample rows (only when table is empty)
   4. OpenMetadata — register local_trino service / database / schemas / tables
+  5. Airlines  — register Snowflake/airlines tables in the backend DB and
+                 trigger a profiling job for each (idempotent).
 
 All steps are fully idempotent. Running this multiple times is safe.
 """
 
 import base64
+import concurrent.futures
 import logging
+import os
+import re
+import threading
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
+import httpx
 import trino
 import trino.dbapi
 from minio import Minio
 from minio.error import S3Error
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-# ── Connection params (resolved from environment / compose) ────────────────────
-_MINIO_HOST = "minio:9000"
-_MINIO_ACCESS_KEY = "admin"
-_MINIO_SECRET_KEY = "password123"
+_MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
+_MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+_MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password123")
 _WAREHOUSE_BUCKET = "warehouse"
 
-_TRINO_HOST = "trino"
-_TRINO_PORT = 8080
-_TRINO_USER = "trino"
-_TRINO_CATALOG = "minio"
+_TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
+_TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+_TRINO_USER = os.getenv("TRINO_USER", "trino")
 
-_OM_URL = "http://openmetadata-server:8585"
+
+_OM_URL = os.getenv("OPENMETADATA_URL", "http://localhost:8585")
 _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
 _TRINO_READY_INTERVAL = 5  # seconds between retries
+
+# ── Airlines Snowflake catalog ─────────────────────────────────────────────────
+# System owner used for infrastructure-seeded tables
+_SYSTEM_OWNER_ID = "system"
+
+# Each entry maps to one Table row in the backend DB.
+# Add new Snowflake databases/schemas here to include them in auto-profiling.
+_AIRLINES_TABLES: list[dict[str, str]] = [
+    {"name": "aircrafts_data", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "airports_data", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "boarding_passes", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "bookings", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "flights", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "seats", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "ticket_flights", "schema_name": "airlines", "catalog": "airlines"},
+    {"name": "tickets", "schema_name": "airlines", "catalog": "airlines"},
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,7 +137,7 @@ _TABLES: list[dict[str, Any]] = [
   ('ORD-027','Alice Cohen','alice@example.com','Desk Lamp',1,45.0,45.0,'delivered',DATE '2024-03-12'),
   ('ORD-028','Bob Levi','bob@example.com','Laptop',1,1200.0,1200.0,'shipped',DATE '2024-03-15'),
   ('ORD-029','Carol Mizrahi','carol@example.com','Smartphone',1,800.0,800.0,'delivered',DATE '2024-03-18'),
-  ('ORD-030','Dan Shapiro','dan@example.com','Tablet',1,400.0,400.0,'delivered',DATE '2024-03-20')"""
+  ('ORD-030','Dan Shapiro','dan@example.com','Tablet',1,400.0,400.0,'delivered',DATE '2024-03-20')""",
     },
     # ── complex_retail ─────────────────────────────────────────────────────
     {
@@ -153,7 +179,7 @@ _TABLES: list[dict[str, Any]] = [
   ('C22','Victor','Hugo','victor@example.com','France','Paris',TIMESTAMP '2024-01-02 10:00:00'),
   ('C23','Wendy','Darling','wendy@example.com','Canada','Toronto',TIMESTAMP '2024-01-10 15:45:00'),
   ('C24','Xavier','Charles','xavier@example.com','Canada','Vancouver',TIMESTAMP '2024-01-15 09:00:00'),
-  ('C25','Yasmine','Bleeth','yasmine@example.com','USA','Miami',TIMESTAMP '2024-01-22 13:15:00')"""
+  ('C25','Yasmine','Bleeth','yasmine@example.com','USA','Miami',TIMESTAMP '2024-01-22 13:15:00')""",
     },
     {
         "fqn": "minio.complex_retail.products",
@@ -183,7 +209,7 @@ _TABLES: list[dict[str, Any]] = [
   ('P12','Standing Desk','Furniture','Tables',600.0,25),
   ('P13','Notebook','Office Supplies','Paper',5.0,500),
   ('P14','Gel Pens Pack','Office Supplies','Writing',12.0,400),
-  ('P15','Backpack','Office Supplies','Bags',80.0,100)"""
+  ('P15','Backpack','Office Supplies','Bags',80.0,100)""",
     },
     {
         "fqn": "minio.complex_retail.orders",
@@ -238,7 +264,7 @@ _TABLES: list[dict[str, Any]] = [
   ('O37','C22',DATE '2024-03-02','delivered',180.0,'Paris, Rue de Rivoli 20'),
   ('O38','C23',DATE '2024-03-03','pending',100.0,'Toronto, Yonge St 100'),
   ('O39','C24',DATE '2024-03-04','delivered',75.0,'Vancouver, Georgia St 50'),
-  ('O40','C09',DATE '2024-03-05','delivered',60.0,'London, Baker St 221B')"""
+  ('O40','C09',DATE '2024-03-05','delivered',60.0,'London, Baker St 221B')""",
     },
     {
         "fqn": "minio.complex_retail.order_items",
@@ -280,7 +306,7 @@ _TABLES: list[dict[str, Any]] = [
   ('I24','O22','P08',2,90.0,0.0),
   ('I25','O23','P02',4,25.0,0.0),
   ('I26','O24','P03',1,75.0,0.0),
-  ('I27','O25','P04',2,350.0,0.0)"""
+  ('I27','O25','P04',2,350.0,0.0)""",
     },
 ]
 
@@ -549,7 +575,9 @@ def _ensure_iceberg_tables() -> None:
     logger.info("[InfraInit] Ensuring Iceberg JDBC catalog tables exist in Postgres …")
 
     # We use psycopg2 directly since it's already installed via pyproject.toml
-    conn_str = "postgresql://postgres:postgres@db:5432/text2sql"
+    conn_str = os.getenv(
+        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/text2sql"
+    )
     try:
         with psycopg2.connect(conn_str) as conn:
             with conn.cursor() as cur:
@@ -590,13 +618,12 @@ def _wait_for_trino() -> None:
     logger.info("[InfraInit] Waiting for Trino minio catalog to become ready …")
     for attempt in range(1, _TRINO_READY_RETRIES + 1):
         try:
-            rows = _trino_exec("SHOW SCHEMAS FROM minio", ignore_errors=True)
-            if rows is not None:
-                logger.info(
-                    "[InfraInit] Trino minio catalog ready after %d attempt(s) ✓",
-                    attempt,
-                )
-                return
+            _trino_exec("SHOW SCHEMAS FROM minio")
+            logger.info(
+                "[InfraInit] Trino minio catalog ready after %d attempt(s) ✓",
+                attempt,
+            )
+            return
         except Exception as exc:
             logger.debug(
                 "[InfraInit] Trino not ready (attempt %d/%d): %s",
@@ -630,6 +657,28 @@ def _ensure_trino_schemas() -> None:
                 raise
 
 
+def _delete_minio_prefix(prefix: str) -> None:
+    """Idempotently delete all objects under a given prefix in the warehouse bucket."""
+    logger.info("[InfraInit] Cleaning MinIO prefix '%s' …", prefix)
+    client = Minio(
+        _MINIO_HOST,
+        access_key=_MINIO_ACCESS_KEY,
+        secret_key=_MINIO_SECRET_KEY,
+        secure=False,
+    )
+    try:
+        objects = client.list_objects(_WAREHOUSE_BUCKET, prefix=prefix, recursive=True)
+        obj_list = list(objects)
+        if obj_list:
+            for obj in obj_list:
+                client.remove_object(_WAREHOUSE_BUCKET, obj.object_name)
+            logger.info("[InfraInit] Cleaned MinIO prefix '%s' successfully", prefix)
+        else:
+            logger.info("[InfraInit] MinIO prefix '%s' is already empty", prefix)
+    except Exception as exc:
+        logger.warning("[InfraInit] Failed to clean MinIO prefix '%s': %s", prefix, exc)
+
+
 def _ensure_trino_tables() -> None:
     """Create all required Trino tables (IF NOT EXISTS — idempotent)."""
     for table in _TABLES:
@@ -642,6 +691,40 @@ def _ensure_trino_tables() -> None:
                 logger.info(
                     "[InfraInit] Trino table '%s' already exists — OK", table["fqn"]
                 )
+            elif "non-empty location" in err:
+                match = re.search(
+                    r"location\s*=\s*'s3://warehouse/([^']+)'",
+                    table["create_sql"],
+                    re.IGNORECASE,
+                )
+                if match:
+                    prefix = match.group(1)
+                    logger.info(
+                        "[InfraInit] Non-empty location error for '%s'. Cleaning MinIO prefix '%s' and retrying...",
+                        table["fqn"],
+                        prefix,
+                    )
+                    _delete_minio_prefix(prefix)
+                    try:
+                        _trino_exec(table["create_sql"])
+                        logger.info(
+                            "[InfraInit] Trino table '%s' ensured after cleanup ✓",
+                            table["fqn"],
+                        )
+                    except Exception as retry_exc:
+                        logger.error(
+                            "[InfraInit] Failed to create table '%s' on retry: %s",
+                            table["fqn"],
+                            retry_exc,
+                        )
+                        raise retry_exc
+                else:
+                    logger.error(
+                        "[InfraInit] Failed to parse location prefix from SQL for '%s': %s",
+                        table["fqn"],
+                        exc,
+                    )
+                    raise
             else:
                 logger.error(
                     "[InfraInit] Failed to create table '%s': %s", table["fqn"], exc
@@ -662,7 +745,7 @@ def _seed_trino_data() -> None:
             except Exception as e:
                 # If DELETE is not supported (e.g. some Iceberg configs require specific formats), we ignore and fall back to count checks
                 logger.debug("DELETE on %s failed: %s", table["fqn"], e)
-                
+
             _trino_exec(table["seed_sql"])
             logger.info("[InfraInit] Seeded sample data into '%s' ✓", table["fqn"])
         except Exception as exc:
@@ -678,8 +761,6 @@ def _seed_trino_data() -> None:
 
 def _om_login() -> str:
     """Log in to OpenMetadata and return an access token."""
-    import httpx
-
     b64_password = base64.b64encode(b"admin").decode()
     try:
         r = httpx.post(
@@ -699,8 +780,6 @@ def _om_login() -> str:
 
 
 def _om_get(path: str, token: str) -> tuple[str, dict]:
-    import httpx
-
     try:
         r = httpx.get(
             f"{_OM_URL}/api/v1/{path}",
@@ -713,8 +792,6 @@ def _om_get(path: str, token: str) -> tuple[str, dict]:
 
 
 def _om_post(path: str, body: dict, token: str) -> tuple[str, dict]:
-    import httpx
-
     try:
         r = httpx.post(
             f"{_OM_URL}/api/v1/{path}",
@@ -777,6 +854,9 @@ def _ensure_openmetadata_registration() -> None:
         columns = _OM_TABLE_COLUMNS.get(col_key, [])
         _ensure_om_table(token, table_fqn, table["name"], schema_fqn, columns)
 
+    # 4. Ingestion Pipeline
+    _ensure_om_ingestion_pipeline(token, svc_id)
+
 
 def _ensure_om_service(token: str) -> str | None:
     status, data = _om_get(f"services/databaseServices/name/{_OM_SERVICE_NAME}", token)
@@ -796,7 +876,6 @@ def _ensure_om_service(token: str) -> str | None:
                     "type": "Trino",
                     "hostPort": "trino:8080",
                     "username": "trino",
-                    "catalog": "minio",
                 }
             },
         },
@@ -809,6 +888,55 @@ def _ensure_om_service(token: str) -> str | None:
 
     logger.error("[InfraInit] Failed to create OM service (HTTP %s): %s", status, data)
     return None
+
+
+def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
+    pipeline_name = "local_trino_metadata"
+    pipeline_fqn = f"{_OM_SERVICE_NAME}.{pipeline_name}"
+
+    status, data = _om_get(f"services/ingestionPipelines/name/{pipeline_fqn}", token)
+    if status == "200":
+        logger.info(
+            "[InfraInit] OM ingestion pipeline '%s' already exists — OK", pipeline_name
+        )
+        pid = data["id"]
+        # Trigger it on startup to ensure latest data
+        _om_post(f"services/ingestionPipelines/trigger/{pid}", {}, token)
+        return
+
+    status, data = _om_post(
+        "services/ingestionPipelines",
+        {
+            "name": pipeline_name,
+            "displayName": "Local Trino Metadata Ingestion",
+            "pipelineType": "metadata",
+            "sourceConfig": {
+                "config": {"type": "DatabaseMetadata", "markDeletedTables": True}
+            },
+            "airflowConfig": {"startDate": "2023-01-01T00:00:00Z"},
+            "service": {"id": svc_id, "type": "databaseService"},
+        },
+        token,
+    )
+
+    if status in ("200", "201"):
+        logger.info("[InfraInit] OM ingestion pipeline '%s' created ✓", pipeline_name)
+        pid = data["id"]
+
+        # Deploy it to Airflow
+        status_deploy, _ = _om_post(
+            f"services/ingestionPipelines/deploy/{pid}", {}, token
+        )
+        logger.info("[InfraInit] Deployed pipeline: %s", status_deploy)
+
+        # We can't trigger it immediately because Airflow takes a few seconds to load the new DAG.
+        # But Airflow will pick it up and run it on schedule.
+        # Alternatively, the user can manually trigger it from the UI.
+        return
+
+    logger.error(
+        "[InfraInit] Failed to create OM ingestion pipeline (HTTP %s): %s", status, data
+    )
 
 
 def _ensure_om_database(token: str, db_fqn: str, svc_id: str) -> str | None:
@@ -901,6 +1029,259 @@ def _ensure_om_table(
         )
 
 
+def _verify_custom_catalogs() -> None:
+    """
+    Detect all non-default catalogs loaded in Trino (excluding system, minio, tpch)
+    and verify their connectivity by running SHOW SCHEMAS in parallel.
+    """
+    logger.info("[InfraInit] Scanning Trino for custom Snowflake/external catalogs...")
+    try:
+        catalogs = _trino_exec("SHOW CATALOGS")
+        custom_catalogs = []
+        for row in catalogs:
+            name = row[0]
+            if name not in ("system", "minio", "tpch"):
+                custom_catalogs.append(name)
+
+        if not custom_catalogs:
+            logger.info("[InfraInit] No custom catalogs detected in Trino.")
+            return
+
+        logger.info(
+            "[InfraInit] Found %d custom catalog(s). Verifying connections in parallel...",
+            len(custom_catalogs),
+        )
+
+        def verify_one(catalog: str) -> None:
+            logger.info("[InfraInit] Verifying connection to catalog '%s'...", catalog)
+            schemas = _trino_exec(f"SHOW SCHEMAS FROM {catalog}")
+            logger.info(
+                "[InfraInit] Catalog '%s' connection verified successfully ✓ (%d schema(s) found: %s)",
+                catalog,
+                len(schemas),
+                [s[0] for s in schemas],
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            list(executor.map(verify_one, custom_catalogs))
+
+    except Exception as exc:
+        logger.error("[InfraInit] Verification of custom catalogs failed: %s", exc)
+        raise
+
+
+def _ensure_airlines_registered() -> None:
+    """
+    Idempotently register every table in _AIRLINES_TABLES into the backend DB
+    and trigger a profiling job (in a background thread) for any table that
+    has no completed profile yet.
+
+    To add more Snowflake databases/schemas in the future, simply append entries
+    to the _AIRLINES_TABLES list at the top of this file.
+    """
+    from core.db.engine import engine
+    from core.models.models import (
+        ColumnProfile,
+        ProfilingStatus,
+        SecurityUser,
+        Table,
+        TableProfile,
+        TableStatus,
+    )
+    from sqlmodel import Session, select
+
+    from app.services.profiling_engine import run_table_profiling
+
+    logger.info("[InfraInit] Registering airlines Snowflake tables...")
+
+    registered_ids: list[str] = []
+
+    with Session(engine) as session:
+        # Seed the system user if it doesn't exist
+        system_user = session.get(SecurityUser, _SYSTEM_OWNER_ID)
+        if not system_user:
+            system_user = SecurityUser(
+                id=_SYSTEM_OWNER_ID,
+                email="system@text2sql.ai",
+                name="System Account",
+                is_admin=True,
+            )
+            session.add(system_user)
+            session.commit()
+            logger.info("[InfraInit] Seeded system user (id=%s) ✓", _SYSTEM_OWNER_ID)
+
+        for tdef in _AIRLINES_TABLES:
+            # Check whether this table already exists in the DB
+            existing = session.exec(
+                select(Table).where(
+                    Table.name == tdef["name"],
+                    Table.schema_name == tdef["schema_name"],
+                    Table.catalog == tdef["catalog"],
+                )
+            ).first()
+
+            if existing:
+                logger.info(
+                    "[InfraInit] Table '%s.%s.%s' already registered (id=%s) — OK",
+                    tdef["catalog"],
+                    tdef["schema_name"],
+                    tdef["name"],
+                    existing.id,
+                )
+                registered_ids.append(existing.id)
+            else:
+                table = Table(
+                    name=tdef["name"],
+                    schema_name=tdef["schema_name"],
+                    catalog=tdef["catalog"],
+                    service="local_trino",
+                    status=TableStatus.production,
+                    owner_id=_SYSTEM_OWNER_ID,
+                    oasis_source_id=f"airlines.{tdef['schema_name']}.{tdef['name']}",
+                )
+                session.add(table)
+                session.flush()  # generate the id
+                registered_ids.append(table.id)
+                logger.info(
+                    "[InfraInit] Registered table '%s.%s.%s' (id=%s) ✓",
+                    tdef["catalog"],
+                    tdef["schema_name"],
+                    tdef["name"],
+                    table.id,
+                )
+
+        session.commit()
+
+    logger.info(
+        "[InfraInit] Airlines tables registered: %d total.", len(registered_ids)
+    )
+
+    def _run_profile(
+        table_id: str, table_name: str, schema_name: str, catalog: str
+    ) -> None:
+        """Background worker: run profiling and persist results for one table."""
+        try:
+            with Session(engine) as session:
+                # Create a pending profile record
+                profile = TableProfile(
+                    table_id=table_id,
+                    status=ProfilingStatus.running,
+                    version=1,
+                )
+                session.add(profile)
+                session.commit()
+                session.refresh(profile)
+                profile_id = profile.id
+
+            # Run the profiling engine (outside the DB session to avoid long holds)
+            result = run_table_profiling(
+                table_id=table_id,
+                catalog=catalog,
+                schema=schema_name,
+                table=table_name,
+                version=1,
+            )
+
+            # Persist results
+            with Session(engine) as session:
+                profile = session.get(TableProfile, profile_id)
+                if not profile:
+                    return
+                profile.status = (
+                    ProfilingStatus.completed
+                    if result.success
+                    else ProfilingStatus.failed
+                )
+                profile.version = result.version
+                profile.row_count = result.row_count
+                profile.sample_size = result.sample_size
+                profile.column_count = result.column_count
+                profile.null_rate_avg = result.null_rate_avg
+                profile.auto_insights = result.auto_insights
+                profile.sample_data = result.sample_data
+                profile.profile_json = result.profile_json
+                profile.cached_until = datetime.utcnow() + timedelta(hours=24)
+                profile.updated_at = datetime.utcnow()
+                session.add(profile)
+
+                for cs in result.column_stats:
+                    cp = ColumnProfile(
+                        table_id=table_id,
+                        profile_id=profile_id,
+                        column_name=cs.column_name,
+                        data_type=cs.data_type,
+                        null_count=cs.null_count,
+                        null_rate=cs.null_rate,
+                        distinct_count=cs.distinct_count,
+                        min_value=cs.min_value,
+                        max_value=cs.max_value,
+                        avg_value=cs.avg_value,
+                        median_value=cs.median_value,
+                        top_values=cs.top_values,
+                        is_categorical=cs.is_categorical,
+                        is_geo=cs.is_geo,
+                        is_time=cs.is_time,
+                        semantic_type=cs.semantic_type,
+                        stats_json=cs.stats_json,
+                    )
+                    session.add(cp)
+
+                session.commit()
+
+            logger.info(
+                "[InfraInit] Profiling complete for '%s.%s.%s': %d cols, %s rows",
+                catalog,
+                schema_name,
+                table_name,
+                len(result.column_stats),
+                format(result.row_count or 0, ","),
+            )
+        except Exception as exc:
+            logger.error("[InfraInit] Profiling failed for table %s: %s", table_id, exc)
+
+    # Trigger profiling in background threads for tables without a completed profile
+    threads_started = 0
+    with Session(engine) as session:
+        # Collect table metadata needed for profiling
+        table_meta: list[tuple[str, str, str, str]] = []
+        for table_id in registered_ids:
+            completed = session.exec(
+                select(TableProfile).where(
+                    TableProfile.table_id == table_id,
+                    TableProfile.status == ProfilingStatus.completed,
+                )
+            ).first()
+            if completed:
+                logger.info(
+                    "[InfraInit] Table %s already has a completed profile — skipping.",
+                    table_id,
+                )
+                continue
+
+            tbl = session.get(Table, table_id)
+            if tbl:
+                table_meta.append((table_id, tbl.name, tbl.schema_name, tbl.catalog))
+
+    for table_id, tname, sname, cat in table_meta:
+        t = threading.Thread(
+            target=_run_profile,
+            args=(table_id, tname, sname, cat),
+            daemon=True,
+            name=f"profile-{cat}.{sname}.{tname}",
+        )
+        t.start()
+        threads_started += 1
+        logger.info(
+            "[InfraInit] Started profiling thread for '%s.%s.%s' ✓", cat, sname, tname
+        )
+
+    logger.info(
+        "[InfraInit] Airlines profiling: %d background thread(s) started for %d table(s).",
+        threads_started,
+        len(registered_ids),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -924,6 +1305,13 @@ def init_infrastructure() -> None:
     try:
         _ensure_iceberg_tables()
         _wait_for_trino()
+        logger.info(
+            "[InfraInit] Starting custom catalog verification in background thread..."
+        )
+        t = threading.Thread(
+            target=_verify_custom_catalogs, daemon=True, name="verify-custom-catalogs"
+        )
+        t.start()
         _ensure_trino_schemas()
         _ensure_trino_tables()
         _seed_trino_data()
@@ -939,11 +1327,24 @@ def init_infrastructure() -> None:
             "[InfraInit] OpenMetadata registration failed (non-fatal): %s", exc
         )
 
+    try:
+        _ensure_airlines_registered()
+    except Exception as exc:
+        # Airlines registration failure is non-fatal
+        logger.warning(
+            "[InfraInit] Airlines table registration failed (non-fatal): %s", exc
+        )
+
     logger.info("[InfraInit] ═══════════════════════════════════════")
     logger.info("[InfraInit] Infrastructure initialization complete ✓")
     logger.info("[InfraInit] ═══════════════════════════════════════")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    init_infrastructure()
+    if getattr(settings, "RUN_INFRA_INIT", True):
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+        init_infrastructure()
+    else:
+        logger.warning(
+            "Skipping infrastructure initialization (RUN_INFRA_INIT is False)"
+        )

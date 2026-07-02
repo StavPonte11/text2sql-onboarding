@@ -9,9 +9,6 @@ Publish triggers an asynchronous promotion workflow that:
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlmodel import Session, select
-
 from core.db.engine import get_session
 from core.models.models import (
     EnrichmentVersion,
@@ -20,6 +17,9 @@ from core.models.models import (
     GoldenQuestion,
     Table,
 )
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlmodel import Session, select
+
 from app.routers.evaluation import promote_table_to_production_workflow
 from app.services.scoring import REGRESSION_BLOCK
 

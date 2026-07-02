@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: env.VITE_API_URL || 'http://localhost:8000',
           changeOrigin: true,
+          xfwd: true,
         },
       },
     },
@@ -20,6 +21,7 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'jsdom',
       setupFiles: './src/tests/setup.tsx',
+      include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
     },
   };
 });

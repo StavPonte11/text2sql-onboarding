@@ -16,6 +16,7 @@ from core.models.models import (
     ColumnProfileRead,
     CrossTableProfile,
     CrossTableProfileRead,
+    EnrichmentVersion,
     ProfilingStatus,
     Table,
     TableProfile,
@@ -27,11 +28,49 @@ from sqlmodel import Session, select
 from app.services.join_detection import discover_joins_for_table
 from app.services.profiling_engine import (
     build_context_for_llm,
+    generate_table_summary,
     run_table_profiling,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["profiling"])
+
+
+def _upsert_ai_summary(session: Session, table_id: str, summary: str) -> None:
+    """
+    Write the LLM-generated summary into EnrichmentVersion.
+    - If no enrichment exists yet: creates version 1 with ai_summary.
+    - If a human table_description exists: stores under 'ai_summary' key (non-destructive).
+    - If no human description: also copies to 'table_description' so the agent can find it.
+    """
+
+    existing = session.exec(
+        select(EnrichmentVersion)
+        .where(EnrichmentVersion.table_id == table_id)
+        .order_by(EnrichmentVersion.version.desc())
+    ).first()
+
+    next_version = (existing.version + 1) if existing else 1
+    existing_data: dict = dict(existing.data) if (existing and existing.data) else {}
+
+    has_human_description = bool(existing_data.get("table_description", "").strip())
+
+    new_data = dict(existing_data)
+    new_data["ai_summary"] = summary
+    if not has_human_description:
+        # Promote ai_summary to table_description only when no human annotation exists
+        new_data["table_description"] = summary
+
+    ev = EnrichmentVersion(
+        table_id=table_id,
+        version=next_version,
+        data=new_data,
+    )
+    session.add(ev)
+    session.commit()
+    logger.info(
+        "[Profiling] Stored AI summary for table %s (v%d)", table_id, next_version
+    )
 
 
 # ── Background worker ──────────────────────────────────────────────────────────
@@ -128,6 +167,15 @@ def _run_profile_job(table_id: str):
             f"[Profiling] Persisted profile {profile.id} for table {table_id} "
             f"({len(result.column_stats)} columns)"
         )
+
+    # Generate one-time LLM summary and persist into EnrichmentVersion
+    try:
+        summary = generate_table_summary(result)
+        if summary:
+            with Session(engine) as session:
+                _upsert_ai_summary(session, table_id, summary)
+    except Exception as exc:
+        logger.warning("[Profiling] AI summary step failed for %s: %s", table_id, exc)
 
 
 # ── GET /tables/{id}/profile ───────────────────────────────────────────────────

@@ -1,14 +1,16 @@
 import urllib.parse
 
+import core.db.engine
 import psycopg2
 import pytest
+from core.db.engine import get_session
+from core.models.models import SecurityUser
 from fastapi.testclient import TestClient
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlmodel import Session, SQLModel, create_engine
 
-import core.db.engine
 from app.config import settings
-from core.db.engine import get_session
+from app.core.auth import get_current_user
 from app.main import app as fastapi_app
 
 # Parse the database URL from settings
@@ -80,6 +82,7 @@ def test_engine(setup_test_db):
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS security"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS config"))
         conn.commit()
 
     # Create all tables programmatically
@@ -112,7 +115,20 @@ def client(test_engine):
         with Session(test_engine) as session:
             yield session
 
+
+
+    def override_get_current_user():
+        return SecurityUser(
+            id="test-user-id",
+            email="test-user@example.com",
+            name="Test User",
+            is_active=True,
+            is_admin=True,
+        )
+
     fastapi_app.dependency_overrides[get_session] = override_get_session
+    fastapi_app.dependency_overrides[get_current_user] = override_get_current_user
     with TestClient(fastapi_app) as test_client:
         yield test_client
     fastapi_app.dependency_overrides.clear()
+
