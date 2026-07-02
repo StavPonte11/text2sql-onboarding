@@ -27,12 +27,13 @@ from core.models.models import (
     EvalRunRead,
     EvalStatus,
     EvaluationAlert,
+    EvaluationHistoryMetric,
     GoldenQuestion,
     Table,
     TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from langfuse import observe
+from langfuse import observe, propagate_attributes
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
@@ -218,97 +219,96 @@ def _map_and_save_run_metrics(
         )
         for case in eval_resp.cases:
             if case.question_id in valid_ids:
+                score = case.scores.get("contains_accuracy", 0.0)
+                status = "pass" if score >= 0.5 else "fail"
+                error_type = None if status == "pass" else case.error
                 session.add(
                     EvalResult(
                         run_id=run_id,
                         question_id=case.question_id,
-                        score=case.scores.get("contains_accuracy", 0.0),
-                        status="pass" if case.succeeded else "fail",
-                        error_type=case.error,
+                        score=score,
+                        status=status,
+                        error_type=error_type,
                     )
                 )
 
 
 @observe(name="eval-single-table")
 def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
-    run = session.get(EvalRun, run_id)
-    if not run:
-        return -1.0
+    with propagate_attributes(
+        metadata={"table_id": table_id, "run_id": run_id},
+        tags=["eval-run", f"table:{table_id}"],
+    ):
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return -1.0
 
-    questions = session.exec(
-        select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
-    ).all()
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+        ).all()
 
-    if not questions:
-        run.status = EvalStatus.failed
-        run.score = 0.0
-        session.add(run)
-        session.commit()
-        return 0.0
+        if not questions:
+            run.status = EvalStatus.failed
+            run.score = 0.0
+            session.add(run)
+            session.commit()
+            return 0.0
 
-    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(
-            id=langfuse_client.client.get_current_trace_id(),
-            metadata={"table_id": table_id, "run_id": run_id},
-            tags=["eval-run", f"table:{table_id}"],
-        )
+        table = session.get(Table, table_id)
+        dataset_name = f"text2sql_sandbox_{table_id}"
 
-    table = session.get(Table, table_id)
-    dataset_name = f"text2sql_sandbox_{table_id}"
+        if langfuse_client.enabled:
+            try:
+                langfuse_client.ensure_dataset_synced(
+                    dataset_name, _build_questions_payload(questions, table)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Eval] Langfuse dataset sync failed (eval will continue): {e}"
+                )
 
-    if langfuse_client.enabled:
         try:
-            langfuse_client.ensure_dataset_synced(
-                dataset_name, _build_questions_payload(questions, table)
+            req = {
+                "dataset_name": dataset_name,
+                "additional_tables": [table.name],
+            }
+            resp = requests.post(
+                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+                json=req,
+                timeout=600,
             )
+            resp.raise_for_status()
+            eval_resp = RunDatasetResponse(**resp.json())
         except Exception as e:
-            logger.warning(
-                f"[Eval] Langfuse dataset sync failed (eval will continue): {e}"
-            )
+            logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
+            run.status = EvalStatus.failed
+            run.score = 0.0
+            session.add(run)
+            session.commit()
+            return 0.0
 
-    try:
-        req = {
-            "dataset_name": dataset_name,
-            "additional_tables": [table.name],
-        }
-        resp = requests.post(
-            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        eval_resp = RunDatasetResponse(**resp.json())
-    except Exception as e:
-        logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
-        run.status = EvalStatus.failed
-        run.score = 0.0
-        session.add(run)
+        _map_and_save_run_metrics(run, eval_resp, session, run_id)
+
+        # Lifecycle: draft → sandbox on first evaluation only
+        if table and table.status == TableStatus.draft:
+            table.status = TableStatus.sandbox
+            session.add(table)
+
         session.commit()
-        return 0.0
 
-    _map_and_save_run_metrics(run, eval_resp, session, run_id)
-
-    # Lifecycle: draft → sandbox on first evaluation only
-    if table and table.status == TableStatus.draft:
-        table.status = TableStatus.sandbox
-        session.add(table)
-
-    session.commit()
-
-    logger.info(
-        f"[Eval] Table {table_id}: contains_accuracy={eval_resp.accuracy.contains_accuracy} "
-        f"exec_accuracy={eval_resp.accuracy.execution_accuracy} exact_match={eval_resp.accuracy.sql_exact_match} "
-        f"({eval_resp.total_cases} questions, pass_rate={1.0 - eval_resp.failure_rate})"
-    )
-    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(
-            id=langfuse_client.client.get_current_trace_id(),
-            output={
-                "score": eval_resp.accuracy.contains_accuracy,
-                "pass_rate": 1.0 - eval_resp.failure_rate,
-            },
+        logger.info(
+            f"[Eval] Table {table_id}: contains_accuracy={eval_resp.accuracy.contains_accuracy} "
+            f"exec_accuracy={eval_resp.accuracy.execution_accuracy} exact_match={eval_resp.accuracy.sql_exact_match} "
+            f"({eval_resp.total_cases} questions, pass_rate={1.0 - eval_resp.failure_rate})"
         )
-    return eval_resp.accuracy.contains_accuracy
+        if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+            langfuse_client.client.set_current_trace_io(
+                output={
+                    "score": eval_resp.accuracy.contains_accuracy,
+                    "pass_rate": 1.0 - eval_resp.failure_rate,
+                },
+            )
+        return eval_resp.accuracy.contains_accuracy
 
 
 # ─── Phase A: measure baseline score on production dataset ────────────────────
@@ -627,10 +627,145 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
         logger.info(f"[Promotion] Done. Table '{table.name}' → {table.status}")
 
 
+REGRESSION_BLOCK_DELTA = 0.10
+REGRESSION_WARNING_DELTA = 0.05
+LOW_SCORE_THRESHOLD = 0.70
+
+
+def _create_alert(
+    session: Session,
+    run_id: str | None,
+    table_id: str | None,
+    alert_type: str,
+    severity: AlertSeverity,
+    message: str,
+    details: dict | None = None,
+):
+    alert = EvaluationAlert(
+        run_id=run_id,
+        table_id=table_id,
+        alert_type=alert_type,
+        severity=severity,
+        message=message,
+        details=details,
+    )
+    session.add(alert)
+    session.commit()
+
+
 @observe(name="eval-run")
 def _run_evaluation_pipeline(table_id: str, run_id: str):
     with Session(engine) as session:
-        execute_single_table_eval(table_id, run_id, session)
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return
+
+        try:
+            score = execute_single_table_eval(table_id, run_id, session)
+
+            # Fetch updated run state
+            session.refresh(run)
+
+            # Detect regression vs previous run
+            prev_runs = session.exec(
+                select(EvalRun)
+                .where(
+                    EvalRun.table_id == table_id,
+                    EvalRun.status == EvalStatus.completed,
+                    EvalRun.id != run_id,
+                )
+                .order_by(EvalRun.created_at.desc())
+                .limit(1)
+            ).first()
+
+            regression_detected = False
+            regression_delta = None
+
+            if prev_runs and prev_runs.score > 0:
+                delta = prev_runs.score - score
+                if delta > REGRESSION_BLOCK_DELTA:
+                    regression_detected = True
+                    regression_delta = round(delta, 4)
+                    _create_alert(
+                        session,
+                        run_id,
+                        table_id,
+                        "regression",
+                        AlertSeverity.critical,
+                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                        {
+                            "previous_score": prev_runs.score,
+                            "current_score": score,
+                            "delta": delta,
+                        },
+                    )
+                elif delta > REGRESSION_WARNING_DELTA:
+                    regression_detected = True
+                    regression_delta = round(delta, 4)
+                    _create_alert(
+                        session,
+                        run_id,
+                        table_id,
+                        "regression",
+                        AlertSeverity.warning,
+                        f"Score warning: {delta:.1%} drop detected",
+                        {
+                            "previous_score": prev_runs.score,
+                            "current_score": score,
+                            "delta": delta,
+                        },
+                    )
+
+            # Low score alert
+            if score < LOW_SCORE_THRESHOLD:
+                _create_alert(
+                    session,
+                    run_id,
+                    table_id,
+                    "low_score",
+                    AlertSeverity.warning,
+                    f"Table performance is low ({score:.1%})",
+                )
+
+            # Finalize run orchestration fields
+            run.regression_detected = regression_detected
+            run.regression_delta = regression_delta
+            session.add(run)
+
+            # Persist metrics for analytics
+            metrics_to_save = [
+                ("accuracy", score if score is not None else 0.0),
+            ]
+            if run.dimension_averages:
+                for dim_name, dim_val in run.dimension_averages.items():
+                    metrics_to_save.append(
+                        (dim_name, dim_val if dim_val is not None else 0.0)
+                    )
+            if run.failure_breakdown:
+                for fail_type, count in run.failure_breakdown.items():
+                    metrics_to_save.append(
+                        (fail_type, float(count) if count is not None else 0.0)
+                    )
+
+            for metric_name, m_val in metrics_to_save:
+                metric = EvaluationHistoryMetric(
+                    run_id=run_id, metric_name=metric_name, metric_value=m_val
+                )
+                session.add(metric)
+
+            session.commit()
+        except Exception as e:
+            logger.error(
+                f"[Eval] Error in evaluation pipeline run {run_id}: {e}", exc_info=True
+            )
+            try:
+                session.refresh(run)
+                run.status = EvalStatus.failed
+                run.score = 0.0
+                session.add(run)
+                session.commit()
+            except Exception as db_err:
+                logger.error(f"[Eval] Failed to mark run {run_id} as failed: {db_err}")
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────

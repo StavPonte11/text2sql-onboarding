@@ -10,6 +10,7 @@ New endpoints:
   System:      GET /evaluations/system-health
 """
 
+import logging
 from datetime import datetime, timedelta
 
 from core.db.engine import engine, get_session
@@ -31,11 +32,12 @@ from core.models.models import (
     Table,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse import observe
+from langfuse import observe, propagate_attributes
 from sqlmodel import Session, select
 
 from app.routers.evaluation import execute_single_table_eval
-from app.services.langfuse_client import langfuse_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -56,117 +58,130 @@ def _run_full_pipeline(
     table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
 ):
     """Run evaluation for multiple tables (one run per table)."""
-    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(
-            id=langfuse_client.client.get_current_trace_id(),
-            tags=["evaluation_run"],
-            metadata={
-                "table_ids": table_ids,
-                "run_ids": run_ids,
-                "triggered_by": triggered_by,
-            },
-        )
+    with propagate_attributes(
+        tags=["evaluation_run"],
+        metadata={
+            "table_ids": table_ids,
+            "run_ids": run_ids,
+            "triggered_by": triggered_by,
+        },
+    ):
+        for table_id, run_id in zip(table_ids, run_ids, strict=False):
+            with Session(engine) as session:
+                run = session.get(EvalRun, run_id)
+                if not run:
+                    continue
 
-    for table_id, run_id in zip(table_ids, run_ids, strict=False):
-        with Session(engine) as session:
-            run = session.get(EvalRun, run_id)
-            if not run:
-                continue
+                try:
+                    # ── Delegate to shared core logic ───────────────────────────
+                    score = execute_single_table_eval(table_id, run_id, session)
 
-            # ── Delegate to shared core logic ───────────────────────────
-            score = execute_single_table_eval(table_id, run_id, session)
+                    # Fetch updated run state
+                    session.refresh(run)
 
-            # Fetch updated run state
-            session.refresh(run)
+                    # Detect regression vs previous run
+                    prev_runs = session.exec(
+                        select(EvalRun)
+                        .where(
+                            EvalRun.table_id == table_id,
+                            EvalRun.status == EvalStatus.completed,
+                            EvalRun.id != run_id,
+                        )
+                        .order_by(EvalRun.created_at.desc())
+                        .limit(1)
+                    ).first()
 
-            # Detect regression vs previous run
-            prev_runs = session.exec(
-                select(EvalRun)
-                .where(
-                    EvalRun.table_id == table_id,
-                    EvalRun.status == EvalStatus.completed,
-                    EvalRun.id != run_id,
-                )
-                .order_by(EvalRun.created_at.desc())
-                .limit(1)
-            ).first()
+                    regression_detected = False
+                    regression_delta = None
 
-            regression_detected = False
-            regression_delta = None
+                    if prev_runs and prev_runs.score > 0:
+                        delta = prev_runs.score - score
+                        if delta > REGRESSION_BLOCK_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.critical,
+                                f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
+                        elif delta > REGRESSION_WARNING_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.warning,
+                                f"Score warning: {delta:.1%} drop detected",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
 
-            if prev_runs and prev_runs.score > 0:
-                delta = prev_runs.score - score
-                if delta > REGRESSION_BLOCK_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.critical,
-                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
+                    # Low score alert
+                    if score < LOW_SCORE_THRESHOLD:
+                        _create_alert(
+                            session,
+                            run_id,
+                            table_id,
+                            "low_score",
+                            AlertSeverity.warning,
+                            f"Table performance is low ({score:.1%})",
+                        )
+
+                    # Finalize run orchestration fields
+                    run.regression_detected = regression_detected
+                    run.regression_delta = regression_delta
+                    session.add(run)
+
+                    # Persist metrics for analytics
+                    metrics_to_save = [
+                        ("accuracy", score if score is not None else 0.0),
+                    ]
+                    if run.dimension_averages:
+                        for dim_name, dim_val in run.dimension_averages.items():
+                            metrics_to_save.append(
+                                (dim_name, dim_val if dim_val is not None else 0.0)
+                            )
+                    if run.failure_breakdown:
+                        for fail_type, count in run.failure_breakdown.items():
+                            metrics_to_save.append(
+                                (fail_type, float(count) if count is not None else 0.0)
+                            )
+
+                    for metric_name, m_val in metrics_to_save:
+                        metric = EvaluationHistoryMetric(
+                            run_id=run_id, metric_name=metric_name, metric_value=m_val
+                        )
+                        session.add(metric)
+
+                    session.commit()
+                except Exception as e:
+                    logger.error(
+                        f"[Orchestrator] Error evaluating table {table_id} in run {run_id}: {e}",
+                        exc_info=True,
                     )
-                elif delta > REGRESSION_WARNING_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.warning,
-                        f"Score warning: {delta:.1%} drop detected",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
-                    )
-
-            # Low score alert
-            if score < LOW_SCORE_THRESHOLD:
-                _create_alert(
-                    session,
-                    run_id,
-                    table_id,
-                    "low_score",
-                    AlertSeverity.warning,
-                    f"Table performance is low ({score:.1%})",
-                )
-
-            # Finalize run orchestration fields
-            run.regression_detected = regression_detected
-            run.regression_delta = regression_delta
-            session.add(run)
-
-            # Persist metrics for analytics
-            metrics_to_save = [
-                ("accuracy", score if score is not None else 0.0),
-            ]
-            if run.dimension_averages:
-                for dim_name, dim_val in run.dimension_averages.items():
-                    metrics_to_save.append(
-                        (dim_name, dim_val if dim_val is not None else 0.0)
-                    )
-            if run.failure_breakdown:
-                for fail_type, count in run.failure_breakdown.items():
-                    metrics_to_save.append(
-                        (fail_type, float(count) if count is not None else 0.0)
-                    )
-
-            for metric_name, m_val in metrics_to_save:
-                metric = EvaluationHistoryMetric(
-                    run_id=run_id, metric_name=metric_name, metric_value=m_val
-                )
-                session.add(metric)
-
-            session.commit()
+                    try:
+                        session.refresh(run)
+                        run.status = EvalStatus.failed
+                        run.score = 0.0
+                        session.add(run)
+                        session.commit()
+                    except Exception as db_err:
+                        logger.error(
+                            f"[Orchestrator] Failed to mark run {run_id} as failed: {db_err}"
+                        )
 
 
 def _create_alert(

@@ -149,8 +149,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         )
 
         if _lf_client.client and trace_id:
-            _lf_client.client.trace(
-                id=trace_id,
+            _lf_client.client.set_current_trace_io(
                 input={
                     "query": question_obj.question,
                     "databases": [question_obj.table_id],
@@ -167,7 +166,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         generated_sql = f"SELECT * FROM {question_obj.table_id} LIMIT 100"  # STUB
 
         if _lf_client.client and trace_id:
-            _lf_client.client.trace(id=trace_id, output={"response": generated_sql})
+            _lf_client.client.set_current_trace_io(output={"response": generated_sql})
 
         # Persist EvalResult (score will be updated by evaluators after task returns)
         result_db = EvalResult(
