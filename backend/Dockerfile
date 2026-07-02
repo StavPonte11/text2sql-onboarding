@@ -23,3 +23,5 @@ RUN --mount=type=secret,id=deploy_key,target=/root/.ssh/id_rsa,mode=0600 \
 
 # Add virtualenv bin to PATH to run uvicorn
 ENV PATH="/app/backend/.venv/bin:$PATH"
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
