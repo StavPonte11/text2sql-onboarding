@@ -451,10 +451,16 @@ services:
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
       - FRONTEND_DEFAULT_REDIRECT=${FRONTEND_DEFAULT_REDIRECT}
       - SSO_REDIRECT_URI=${SSO_REDIRECT_URI}
-      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-text2sql-dev-session-secret-change-in-prod}
+      - MINIO_HOST=minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - REDIS_URL=redis://redis:6379
+      - REDIS_SSL=false
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_started
       trino:
         condition: service_healthy
       openmetadata-server:

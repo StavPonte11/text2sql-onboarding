@@ -8,6 +8,7 @@ import {
   Database,
   LayoutDashboard,
   Shield,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { LogOut } from 'lucide-react';
 
@@ -52,7 +53,10 @@ const NAV_GROUPS = [
   },
   {
     label: 'Administration',
-    items: [{ to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' }],
+    items: [
+      { to: '/admin', icon: Shield, key: 'nav.admin', label: 'Admin Panel' },
+      { to: '/flags', icon: SlidersHorizontal, key: 'nav.flags', label: 'Feature Flags' },
+    ],
   },
 ];
 

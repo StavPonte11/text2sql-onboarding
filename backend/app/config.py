@@ -4,13 +4,19 @@ from python_core_utils.auth.config import SSOSettings
 
 
 class AuthSettings(SSOSettings):
-    pass
+    # If a user belongs to this SSO group/claim they are granted admin privileges.
+    # Set to empty string "" to disable group-based admin promotion.
+    SSO_ADMIN_GROUP: str = "Agency"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "sqlite:///./text2sql.db"
+    REDIS_URL: str = "redis://localhost:6379"
+    LLM_API_KEY: str = "ollama"
+    LLM_BASE_URL: str = "http://localhost:11434/v1"
+    LLM_MODEL: str = "gemma4:e4b"
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
@@ -99,6 +105,9 @@ class Settings(BaseSettings):
     EMBEDDER_URL: str = "http://host.docker.internal:11434/v1/embeddings"
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     EMBEDDER_KEY: str = ""
+
+    FLAG_CACHE_TTL: int = 30
+    MODE_CACHE_TTL: int = 30
 
 
 settings = Settings()

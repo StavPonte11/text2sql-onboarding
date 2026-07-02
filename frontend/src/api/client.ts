@@ -36,6 +36,10 @@ api.interceptors.request.use((config) => {
   if (scope) {
     config.headers['X-Scope-Id'] = scope.id;
   }
+  const user = useAuthStore.getState().user;
+  if (user?.email) {
+    config.headers['X-Admin-Email'] = user.email;
+  }
   return config;
 });
 

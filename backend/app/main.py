@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not settings.LLM_API_KEY:
+        logger.warning("Startup failed: LLM_API_KEY is missing. LLM judge cannot run.")
     try:
         create_db_and_tables()
         start_scheduler()
@@ -108,9 +110,9 @@ async def audit_middleware(request: Request, call_next):
         try:
             with Session(engine) as session:
                 audit = AuditQuery(
-                    table_id=table_id
-                    if table_id and len(table_id) == 36
-                    else None,  # quick check for uuid
+                    table_id=(
+                        table_id if table_id and len(table_id) == 36 else None
+                    ),  # quick check for uuid
                     user_id=user_id,
                     raw_question=query_desc,
                     execution_time_ms=process_time_ms,

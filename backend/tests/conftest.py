@@ -82,6 +82,7 @@ def test_engine(setup_test_db):
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS security"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS config"))
         conn.commit()
 
     # Create all tables programmatically

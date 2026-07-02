@@ -3,6 +3,8 @@ from core.models.models import Organization, SecurityUser
 from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
+from app.config import auth_settings
+
 
 def sync_user_from_payload(db: Session, payload: dict, provider: str) -> SecurityUser:
     email = payload.get("email")
@@ -39,8 +41,9 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
 
     # Handle SSO groups mapping
     groups = payload.get("groups", [])
-    if groups:
-        cleaned_groups = [g.lstrip("/") for g in groups]
+    cleaned_groups = [g.lstrip("/") for g in groups]
+
+    if cleaned_groups:
         user_org_ids = {org.id for org in user.organizations}
 
         for group_name in cleaned_groups:
@@ -59,6 +62,11 @@ def sync_user_from_payload(db: Session, payload: dict, provider: str) -> Securit
         user.organizations = [
             org for org in user.organizations if org.name in cleaned_groups
         ]
+
+    # Promote/demote admin based on SSO group membership
+    admin_group = auth_settings.SSO_ADMIN_GROUP
+    if admin_group:
+        user.is_admin = admin_group in cleaned_groups
 
     db.commit()
     db.refresh(user)

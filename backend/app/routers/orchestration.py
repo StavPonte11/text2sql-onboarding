@@ -10,10 +10,8 @@ New endpoints:
   System:      GET /evaluations/system-health
 """
 
-import random
 from datetime import datetime, timedelta
 
-from core import execute_query_sync
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
@@ -33,10 +31,11 @@ from core.models.models import (
     Table,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse.decorators import langfuse_context, observe
+from langfuse import observe
 from sqlmodel import Session, select
 
 from app.routers.evaluation import execute_single_table_eval
+from app.services.langfuse_client import langfuse_client
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -49,59 +48,6 @@ LOW_SCORE_THRESHOLD = 0.70
 # ── Stubbed external calls (same as in evaluation.py) ─────────────────────────
 
 
-@observe(as_type="generation", name="text2sql_agent")
-def run_text2sql_agent(question: str, table_id: str) -> dict:
-    """Simulates the LangGraph Text2SQL agent flow with up to 4 refinement iterations."""
-    # In reality, this would invoke the LangGraph text2sql workflow
-    # For evaluation, we execute the generated SQL against real Trino
-
-    generated_sql = f'SELECT id, name, value FROM "{table_id[:8]}" LIMIT 100'
-
-    # Execute against Trino
-    trino_result = execute_query_sync(generated_sql, table_id)
-
-    iterations = random.choices([1, 2, 3, 4], weights=[60, 25, 10, 5])[0]
-
-    langfuse_context.update_current_trace(
-        tags=["evaluation", f"table_{table_id[:8]}"],
-        metadata={"iterations": iterations, "success": trino_result.success},
-    )
-
-    return {
-        "generated_sql": generated_sql,
-        "tables_used": [f"{table_id[:8]}"],
-        "generated_columns": trino_result.columns,
-        "refiner_iterations": iterations,
-        "execution": {
-            "success": trino_result.success,
-            "rows": trino_result.rows,
-            "columns": trino_result.columns,
-            "row_count": trino_result.row_count,
-            "execution_time_ms": trino_result.execution_time_ms,
-            "error_message": trino_result.error_message,
-        },
-    }
-
-
-def _stub_judge(exec_success: bool) -> dict:
-    # INCREASED BASE SCORE: 0.70 to 0.95 for success, 0.2 to 0.45 for fail
-    base = random.uniform(0.70, 0.95) if exec_success else random.uniform(0.20, 0.45)
-    failure_types = [None, None, None, "wrong_table", "wrong_join", "wrong_filter"]
-    return {
-        "table_selection_correctness": round(
-            min(1.0, base + random.uniform(-0.1, 0.1)), 3
-        ),
-        "sql_semantic_equivalence": round(
-            min(1.0, base + random.uniform(-0.15, 0.1)), 3
-        ),
-        "result_correctness": round(min(1.0, base + random.uniform(-0.05, 0.1)), 3),
-        "hallucination_detected": random.random() < 0.05,
-        "failure_type": random.choice(failure_types) if not exec_success else None,
-        "reasoning": {},
-        "confidence_in_judgment": round(random.uniform(0.7, 0.95), 3),
-    }
-
-
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 
@@ -110,14 +56,16 @@ def _run_full_pipeline(
     table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
 ):
     """Run evaluation for multiple tables (one run per table)."""
-    langfuse_context.update_current_trace(
-        tags=["evaluation_run"],
-        metadata={
-            "table_ids": table_ids,
-            "run_ids": run_ids,
-            "triggered_by": triggered_by,
-        },
-    )
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            tags=["evaluation_run"],
+            metadata={
+                "table_ids": table_ids,
+                "run_ids": run_ids,
+                "triggered_by": triggered_by,
+            },
+        )
 
     for table_id, run_id in zip(table_ids, run_ids, strict=False):
         with Session(engine) as session:

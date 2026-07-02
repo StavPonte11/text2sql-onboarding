@@ -134,35 +134,34 @@ export function LandingPage() {
             variants={staggerContainer}
           >
             <motion.div variants={fadeInUp} className="hero-badge">
-              Enterprise AI Data Gateway
+              Organizational AI Data Gateway
             </motion.div>
             <motion.h1 variants={fadeInUp} className="hero-title">
               Query Your Database <br />
               <TypewriterText
                 texts={[
                   'in Natural Language',
-                  'with Plain English',
+                  'with Plain Hebrew',
                   'using AI Models',
                   'without writing SQL',
                 ]}
               />
             </motion.h1>
             <motion.p variants={fadeInUp} className="hero-subtitle">
-              The production-ready Text-to-SQL layer for your enterprise. Connect your data, train
-              the semantic layer, and give your teams instant answers with enterprise-grade
-              governance and monitoring.
+              The internal Text-to-SQL layer for our organization. Connect your data, train the
+              semantic layer, and give your teams instant answers with enterprise-grade governance
+              and monitoring.
             </motion.p>
             <motion.div variants={fadeInUp} className="hero-cta">
               <button className="btn-primary large" onClick={() => navigate('/control-center')}>
-                Start Building Free <ArrowRight size={20} />
+                Open Console <ArrowRight size={20} />
               </button>
-              <button className="btn-outline large">Book a Demo</button>
             </motion.div>
 
             <motion.div variants={fadeInUp} className="hero-stats">
               <div className="stat-item">
-                <span className="stat-value">99.9%</span>
-                <span className="stat-label">Uptime SLA</span>
+                <span className="stat-value">Internal</span>
+                <span className="stat-label">Secure Access</span>
               </div>
               <div className="stat-item">
                 <span className="stat-value">50ms</span>
@@ -250,9 +249,9 @@ export function LandingPage() {
           viewport={{ once: true, margin: '-100px' }}
           variants={staggerContainer}
         >
-          <motion.p variants={fadeInUp}>TRUSTED BY DATA TEAMS AT LEADING COMPANIES</motion.p>
+          <motion.p variants={fadeInUp}>USED BY DEPARTMENTS ACROSS OUR ORGANIZATION</motion.p>
           <div className="logos-grid">
-            {['Acme Corp', 'GlobalBank', 'TechFlow', 'DataSync', 'HealthTech'].map((logo) => (
+            {['Finance', 'HR', 'Sales', 'Engineering', 'Marketing'].map((logo) => (
               <motion.div key={logo} variants={fadeInUp} className="logo-placeholder">
                 {logo}
               </motion.div>
@@ -269,7 +268,7 @@ export function LandingPage() {
             viewport={{ once: true, margin: '-100px' }}
             variants={staggerContainer}
           >
-            <motion.h2 variants={fadeInUp}>Everything you need for production TextToSQL</motion.h2>
+            <motion.h2 variants={fadeInUp}>Everything you need for internal TextToSQL</motion.h2>
             <motion.p variants={fadeInUp}>
               A complete gateway that handles schema translation, query generation, caching, and
               safety.
@@ -287,22 +286,22 @@ export function LandingPage() {
               {
                 icon: Zap,
                 title: 'Instant Schema Sync',
-                desc: 'Automatically synchronize your database schemas, tables, and column metadata. Add descriptions to improve LLM accuracy.',
+                desc: 'Automatically synchronize our database schemas, tables, and column metadata. Add descriptions to improve LLM accuracy.',
               },
               {
                 icon: Shield,
                 title: 'Enterprise Governance',
-                desc: 'Row-level security, query parsing, and malicious intent detection to ensure your data stays safe and secure.',
+                desc: 'Row-level security, query parsing, and malicious intent detection to ensure our data stays safe and secure.',
               },
               {
                 icon: Cpu,
                 title: 'Model Agnostic',
-                desc: 'Plug in OpenAI, Anthropic, Gemini, or host your own fine-tuned open-source models for ultimate flexibility and privacy.',
+                desc: 'Plug in OpenAI, Anthropic, Gemini, or host our own fine-tuned open-source models for ultimate flexibility and privacy.',
               },
               {
                 icon: Code2,
                 title: 'Developer SDKs',
-                desc: 'Integrate Text2SQL capabilities into your own products with our React, Python, and Node.js SDKs in minutes.',
+                desc: 'Integrate Text2SQL capabilities into internal dashboards with our React, Python, and Node.js SDKs in minutes.',
               },
             ].map((feat, i) => (
               <motion.div
@@ -331,14 +330,14 @@ export function LandingPage() {
         >
           <div className="cta-content">
             <h2>Ready to give your data a voice?</h2>
-            <p>Join thousands of teams building the next generation of data-driven applications.</p>
+            <p>Give your teams instant access to data insights without writing SQL.</p>
             <motion.button
               className="btn-primary large"
               onClick={() => navigate('/control-center')}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              Start Building Now
+              Open Console
             </motion.button>
           </div>
         </motion.section>
@@ -356,27 +355,36 @@ export function LandingPage() {
               <span style={{ fontWeight: 700, letterSpacing: '0.5px' }}>Jarvis Studio</span>
             </div>
             <p className="footer-desc">
-              The enterprise API gateway for deploying Text-to-SQL models in production.
+              The internal API gateway for deploying Text-to-SQL models in production.
             </p>
           </div>
           <div className="footer-links">
             <div className="footer-col">
-              <h4>Product</h4>
-              <a href="#">Features</a>
-              <a href="#">Pricing</a>
-              <a href="#">Integrations</a>
+              <h4>Platform</h4>
+              <a href="https://example.com/features" target="_blank" rel="noreferrer">
+                Features
+              </a>
+              <a href="https://example.com/integrations" target="_blank" rel="noreferrer">
+                Integrations
+              </a>
             </div>
             <div className="footer-col">
               <h4>Resources</h4>
-              <a href="#">Documentation</a>
-              <a href="#">API Reference</a>
-              <a href="#">Blog</a>
+              <a href="https://example.com/docs" target="_blank" rel="noreferrer">
+                Documentation
+              </a>
+              <a href="https://example.com/api" target="_blank" rel="noreferrer">
+                API Reference
+              </a>
             </div>
             <div className="footer-col">
-              <h4>Company</h4>
-              <a href="#">About Us</a>
-              <a href="#">Careers</a>
-              <a href="#">Contact</a>
+              <h4>Support</h4>
+              <a href="https://example.com/help" target="_blank" rel="noreferrer">
+                Help Center
+              </a>
+              <a href="https://example.com/support" target="_blank" rel="noreferrer">
+                IT Service Desk
+              </a>
             </div>
           </div>
         </div>

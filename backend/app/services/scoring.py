@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 

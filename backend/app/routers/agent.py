@@ -8,12 +8,18 @@ Endpoints:
   POST /agent/chat        — Start a new query or resume after human approval/rejection
 """
 
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
+import httpx
+import redis.asyncio as redis
 from core.db.engine import get_session
 from core.models.models import Table, TableRead, TableStatus
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
@@ -38,11 +44,18 @@ class QueryApproval(BaseModel):
 class ChatRequest(BaseModel):
     query: str | None = None
     thread_id: str | None = None
-    resume_value: QueryApproval | str | None = None
+    resume_value: QueryApproval | str | dict | None = None
     allowed_tables: list[str] | None = None
     allowed_statuses: list[str] | None = None
     extractors: list[str] | None = None
+    active_skills: list[str] | None = None
+    execution_mode: str | None = None
     hitl_enabled: bool = True
+
+
+class SuggestFixesRequest(BaseModel):
+    thread_id: str
+    category: str
 
 
 class ChatResponse(BaseModel):
@@ -54,11 +67,22 @@ class ChatResponse(BaseModel):
     sql_query: str | None = None
     sql_explanation: str | None = None
     schema_plan: str | None = None
+    trace_id: str | None = None
+    execution_path: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def _get_mcp_client():
+    url = f"{settings.AGENT_URL}/mcp"
+    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            yield session
 
 
 async def _call_agent_mcp(tool_arguments: dict) -> dict:
@@ -76,7 +100,9 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
 
                 # Call the tool using the MCP client session
                 result = await session.call_tool(
-                    "chat_with_agent", arguments=tool_arguments
+                    "chat_with_agent",
+                    arguments=tool_arguments,
+                    read_timeout_seconds=timedelta(seconds=300.0),
                 )
 
                 if not result.content:
@@ -183,3 +209,133 @@ def get_agent_tables(
     if status:
         q = q.where(Table.status == status)
     return session.exec(q).all()
+
+
+@router.get("/stream/{thread_id}")
+async def stream_agent_execution(thread_id: str):
+    """Subscribe to Redis PubSub for agent graph execution events and yield them as SSE."""
+
+    async def event_generator():
+        r = None
+        pubsub = None
+        try:
+            r = redis.from_url(
+                settings.REDIS_URL, health_check_interval=30, retry_on_timeout=True
+            )
+            pubsub = r.pubsub()
+            await pubsub.subscribe(f"agent_stream:{thread_id}")
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
+                    if message and message["type"] == "message":
+                        data = message["data"].decode("utf-8")
+                        yield f"data: {data}\n\n"
+                    else:
+                        yield ": keep-alive\n\n"
+                except (redis.exceptions.TimeoutError, TimeoutError) as e:
+                    logger.debug("Redis read timeout, retrying... %s", e)
+                    yield ": keep-alive\n\n"
+                    continue
+                except redis.exceptions.ConnectionError as e:
+                    logger.warning(
+                        "Redis connection error, attempting to reconnect... %s", e
+                    )
+                    await asyncio.sleep(1)
+                    try:
+                        if pubsub:
+                            await pubsub.close()
+                        pubsub = r.pubsub()
+                        await pubsub.subscribe(f"agent_stream:{thread_id}")
+                    except Exception as reconnect_err:
+                        logger.error("Failed to reconnect to Redis: %s", reconnect_err)
+                        await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Unhandled error in event generator: %s", e, exc_info=True)
+        finally:
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe()
+                    await pubsub.close()
+                except Exception:
+                    pass
+            if r:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/traces/{trace_id}")
+async def get_trace_timeline(trace_id: str):
+    """Fetch trace from Langfuse and normalize observations for frontend timeline."""
+    auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
+    url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, auth=auth)
+        if resp.status_code != 200:
+            if resp.status_code == 404:
+                return []
+            raise HTTPException(
+                status_code=resp.status_code, detail=f"Langfuse error: {resp.text}"
+            )
+
+        data = resp.json()
+        observations = data.get("observations", [])
+
+        # Normalize
+        timeline = []
+        for obs in observations:
+            start_time_str = obs.get("startTime")
+            end_time_str = obs.get("endTime")
+            duration_ms = 0
+            if start_time_str and end_time_str:
+                try:
+                    start_dt = datetime.fromisoformat(
+                        start_time_str.replace("Z", "+00:00")
+                    )
+                    end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
+                    duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
+                except Exception:
+                    pass
+
+            timeline.append(
+                {
+                    "span_name": obs.get("name") or obs.get("type"),
+                    "start_time": start_time_str,
+                    "duration_ms": duration_ms,
+                    "input_tokens": obs.get("promptTokens", 0),
+                    "output_tokens": obs.get("completionTokens", 0),
+                    "model": obs.get("model") or "N/A",
+                    "status": "success" if not obs.get("statusMessage") else "error",
+                    "input_preview": str(obs.get("input", "")),
+                    "output_preview": str(obs.get("output", "")),
+                }
+            )
+
+        # Sort by start time
+        timeline.sort(key=lambda x: x["start_time"] or "")
+        return timeline
+
+
+@router.post("/suggest_fixes")
+async def suggest_fixes(req: SuggestFixesRequest):
+    """Generate quick fixes during HITL interruption via MCP."""
+    try:
+        async with _get_mcp_client() as session:
+            result = await session.call_tool(
+                "suggest_fixes",
+                arguments={"thread_id": req.thread_id, "category": req.category},
+                read_timeout_seconds=timedelta(seconds=300.0),
+            )
+            content = result.content[0].text
+            return json.loads(content)
+    except Exception as e:
+        logger.error(f"Suggest fixes error: {e}")
+        return []

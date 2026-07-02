@@ -17,6 +17,7 @@ All steps are fully idempotent. Running this multiple times is safe.
 import base64
 import concurrent.futures
 import logging
+import os
 import re
 import threading
 import time
@@ -33,18 +34,17 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Connection params (resolved from environment / compose) ────────────────────
-_MINIO_HOST = "minio:9000"
-_MINIO_ACCESS_KEY = "admin"
-_MINIO_SECRET_KEY = "password123"
+_MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
+_MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+_MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password123")
 _WAREHOUSE_BUCKET = "warehouse"
 
-_TRINO_HOST = "trino"
-_TRINO_PORT = 8080
-_TRINO_USER = "trino"
-_TRINO_CATALOG = "minio"
+_TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
+_TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+_TRINO_USER = os.getenv("TRINO_USER", "trino")
 
-_OM_URL = "http://openmetadata-server:8585"
+
+_OM_URL = os.getenv("OPENMETADATA_URL", "http://localhost:8585")
 _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
@@ -575,7 +575,9 @@ def _ensure_iceberg_tables() -> None:
     logger.info("[InfraInit] Ensuring Iceberg JDBC catalog tables exist in Postgres …")
 
     # We use psycopg2 directly since it's already installed via pyproject.toml
-    conn_str = "postgresql://postgres:postgres@db:5432/text2sql"
+    conn_str = os.getenv(
+        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/text2sql"
+    )
     try:
         with psycopg2.connect(conn_str) as conn:
             with conn.cursor() as cur:
@@ -923,6 +925,9 @@ def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
 
         # Deploy it to Airflow
         status_deploy = _om_post(f"services/ingestionPipelines/deploy/{pid}", {}, token)
+        status_deploy, _ = _om_post(
+            f"services/ingestionPipelines/deploy/{pid}", {}, token
+        )
         logger.info("[InfraInit] Deployed pipeline: %s", status_deploy)
 
         # We can't trigger it immediately because Airflow takes a few seconds to load the new DAG.
@@ -1341,4 +1346,6 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
         init_infrastructure()
     else:
-        logger.info("Skipping infrastructure initialization (RUN_INFRA_INIT is False)")
+        logger.warning(
+            "Skipping infrastructure initialization (RUN_INFRA_INIT is False)"
+        )

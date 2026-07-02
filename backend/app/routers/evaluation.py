@@ -32,7 +32,7 @@ from core.models.models import (
     TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from langfuse.decorators import langfuse_context, observe
+from langfuse import observe
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
@@ -246,10 +246,12 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         session.commit()
         return 0.0
 
-    langfuse_context.update_current_trace(
-        metadata={"table_id": table_id, "run_id": run_id},
-        tags=["eval-run", f"table:{table_id}"],
-    )
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            metadata={"table_id": table_id, "run_id": run_id},
+            tags=["eval-run", f"table:{table_id}"],
+        )
 
     table = session.get(Table, table_id)
     dataset_name = f"text2sql_sandbox_{table_id}"
@@ -298,12 +300,14 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         f"exec_accuracy={eval_resp.accuracy.execution_accuracy} exact_match={eval_resp.accuracy.sql_exact_match} "
         f"({eval_resp.total_cases} questions, pass_rate={1.0 - eval_resp.failure_rate})"
     )
-    langfuse_context.update_current_trace(
-        output={
-            "score": eval_resp.accuracy.contains_accuracy,
-            "pass_rate": 1.0 - eval_resp.failure_rate,
-        }
-    )
+    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
+        langfuse_client.client.trace(
+            id=langfuse_client.client.get_current_trace_id(),
+            output={
+                "score": eval_resp.accuracy.contains_accuracy,
+                "pass_rate": 1.0 - eval_resp.failure_rate,
+            },
+        )
     return eval_resp.accuracy.contains_accuracy
 
 
