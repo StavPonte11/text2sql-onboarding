@@ -6,6 +6,7 @@ detects categorical vs continuous columns, and produces structured output
 ready for PostgreSQL persistence and LLM context injection.
 """
 
+from langfuse.api.unstable.commons.types import array_options_evaluation_rule_filter
 import concurrent.futures
 import logging
 from dataclasses import dataclass, field
@@ -161,29 +162,32 @@ def build_column_metadata_query(catalog: str, schema: str, table: str) -> str:
 
 
 def build_distinct_count_query(fqn: str, col: str) -> str:
-    return f'SELECT COUNT(DISTINCT "{col}") FROM {fqn}'
+    return f'SELECT COUNT(DISTINCT {col}) FROM {fqn}'
 
+# def build_distinct_count_query(fqn: str, col: str) -> str:
+#     # Swapped to APPROX_DISTINCT to prevent Trino worker OOMs and timeouts
+#     return f'SELECT APPROX_DISTINCT({col}) FROM {fqn}'
 
 def build_null_ratio_query(fqn: str, col: str) -> str:
-    return f'SELECT COUNT(*) AS total, COUNT("{col}") AS non_null FROM {fqn}'
+    return f'SELECT COUNT(*) AS total, COUNT({col}) AS non_null FROM {fqn}'
 
 
 def build_top_values_query(fqn: str, col: str, limit: int = TOP_VALUES_LIMIT) -> str:
     return (
-        f'SELECT "{col}", COUNT(*) AS cnt '
-        f'FROM {fqn} GROUP BY "{col}" ORDER BY cnt DESC LIMIT {limit}'
+        f'SELECT {col}, COUNT(*) AS cnt '
+        f'FROM {fqn} GROUP BY {col} ORDER BY cnt DESC LIMIT {limit}'
     )
 
 
 def build_numeric_stats_query(fqn: str, col: str) -> str:
     return (
         f"SELECT "
-        f'  MIN("{col}") AS min_val, '
-        f'  MAX("{col}") AS max_val, '
-        f'  AVG(CAST("{col}" AS DOUBLE)) AS avg_val, '
-        f'  APPROX_PERCENTILE(CAST("{col}" AS DOUBLE), ARRAY[0.25, 0.5, 0.75]) AS quants, '
-        f'  STDDEV_POP(CAST("{col}" AS DOUBLE)) AS std_val '
-        f'FROM {fqn} WHERE "{col}" IS NOT NULL'
+        f'  MIN({col}) AS min_val, '
+        f'  MAX({col}) AS max_val, '
+        f'  AVG(CAST({col} AS DOUBLE)) AS avg_val, '
+        f'  APPROX_PERCENTILE(CAST({col} AS DOUBLE), ARRAY[0.25, 0.5, 0.75]) AS quants, '
+        f'  STDDEV_POP(CAST({col} AS DOUBLE)) AS std_val '
+        f'FROM {fqn} WHERE {col} IS NOT NULL'
     )
 
 
@@ -221,22 +225,18 @@ def build_time_stats_query(fqn: str, col: str) -> str:
     # Safely extract unix epoch stats for temporal fields
     return (
         f"SELECT "
-        f'  MIN("{col}") AS min_val, '
-        f'  MAX("{col}") AS max_val, '
-        f'  APPROX_PERCENTILE(to_unixtime(CAST("{col}" AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]) AS quants, '
-        f'  STDDEV_POP(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS std_val, '
-        f'  MIN(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS min_unix, '
-        f'  MAX(to_unixtime(CAST("{col}" AS TIMESTAMP))) AS max_unix '
-        f'FROM {fqn} WHERE "{col}" IS NOT NULL'
+        f'  MIN({col}) AS min_val, '
+        f'  MAX({col}) AS max_val, '
+        f'  APPROX_PERCENTILE(to_unixtime(CAST({col} AS TIMESTAMP)), ARRAY[0.25, 0.5, 0.75]) AS quants, '
+        f'  STDDEV_POP(to_unixtime(CAST({col} AS TIMESTAMP))) AS std_val, '
+        f'  MIN(to_unixtime(CAST({col} AS TIMESTAMP))) AS min_unix, '
+        f'  MAX(to_unixtime(CAST({col} AS TIMESTAMP))) AS max_unix '
+        f'FROM {fqn} WHERE {col} IS NOT NULL'
     )
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def safe_identifier(name: str) -> str:
-    return f'"{name.replace(chr(34), chr(34)+chr(34))}"' # Escapes " as ""
-
 def _fqn(catalog: str, schema: str, table: str) -> str:
-    return f"{safe_identifier(catalog)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
+    return f'"{catalog}"."{schema}"."{table}"'
 
 def _make_json_safe(obj: Any) -> Any:
     """Recursively convert any non-JSON-serializable value to a safe primitive.
@@ -476,10 +476,18 @@ def _process_column_metrics(fqn: str, table_id: str, field_path: str, field_name
     stats: dict[str, Any] = {"type": field_type.lower()}
     
     null_row = _fetch_one(build_null_ratio_query(fqn, field_path), table_id, default=(1, 0))
-    total, nulls = int(null_row[0] or 1), int(null_row[1] or 0)
+    if null_row is None:
+        logger.warning(f"Null count query failed for {field_path}. Defaulting to 0.")
+        null_row = (1, 0)
+    total, non_nulls = int(null_row[0] or 1), int(null_row[1] or 0)
+    nulls = total - non_nulls
     
     dist_row = _fetch_one(build_distinct_count_query(fqn, field_path), table_id, default=(0,))
-    distinct_count = int(dist_row[0] or 0)
+    if dist_row is None:
+        logger.warning(f"Distinct count query failed for {field_path}. Defaulting to 0.")
+        distinct_count = 0
+    else:
+        distinct_count = int(dist_row[0] or 0)
 
     semantic_type = _classify_semantic_type(field_name, field_type, row_count, nulls, distinct_count)
     if semantic_type == "requires_t10_check":
@@ -649,15 +657,17 @@ def run_table_profiling(table_id: str, catalog: str, schema: str, table: str, ve
 
     col_stats: list[ColumnStats] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(30, len(columns_meta) or 1)) as worker_executor:
-        futures = {worker_executor.submit(_analyze_column, fqn, table_id, col[0], col[1], result.row_count): col for col in columns_meta}
+        futures = {worker_executor.submit(_analyze_column, fqn, table_id, col[0], col[1], result.row_count): col[:2] for col in columns_meta}
         for future in concurrent.futures.as_completed(futures):
-            col_name, data_type = futures[future]
+            try:
+                col_name, data_type = futures[future]
+            except Exception as e:
+                print(f"[ProfilingEngine] Error: {e}")
             try:
                 col_stats.append(future.result())
             except Exception as exc:
                 logger.error("[ProfilingEngine] Column %s failed: %s", col_name, exc)
                 col_stats.append(ColumnStats(column_name=col_name, data_type=data_type, errors=[str(exc)]))
-
     result.column_stats = col_stats
     if col_stats:
         result.null_rate_avg = round(sum(c.null_rate for c in col_stats) / len(col_stats), 4)
