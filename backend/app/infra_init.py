@@ -1090,7 +1090,7 @@ def _ensure_airlines_registered() -> None:
     )
     from sqlmodel import Session, select
 
-    from app.services.profiling_engine import run_table_profiling
+    from core.services.profiling_engine import run_table_profiling
 
     logger.info("[InfraInit] Registering airlines Snowflake tables...")
 
@@ -1192,6 +1192,7 @@ def _ensure_airlines_registered() -> None:
                     if result.success
                     else ProfilingStatus.failed
                 )
+                profile.is_partial = not result.success or bool(result.errors)
                 profile.version = result.version
                 profile.row_count = result.row_count
                 profile.sample_size = result.sample_size

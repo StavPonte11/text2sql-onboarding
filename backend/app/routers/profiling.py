@@ -9,6 +9,10 @@ import logging
 import traceback
 from datetime import datetime, timedelta
 from typing import Any
+import anyio
+import anyio.to_thread
+from temporalio.client import Client, WorkflowExecutionStatus
+from app.config import settings
 
 from core.db.engine import engine, get_session
 from core.models.models import (
@@ -26,7 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.services.join_detection import discover_joins_for_table
-from app.services.profiling_engine import (
+from core.services.profiling_engine import (
     build_context_for_llm,
     generate_table_summary,
     run_table_profiling,
@@ -74,10 +78,36 @@ def _upsert_ai_summary(session: Session, table_id: str, summary: str) -> None:
 
 
 # ── Background worker ──────────────────────────────────────────────────────────
-def _run_profile_job(table_id: str):
+# ── Background worker ──────────────────────────────────────────────────────────
+async def trigger_temporal_profiling_workflow(table_id: str, resume_from_partial: bool = False) -> bool:
+    """
+    Attempts to trigger the profiling workflow via Temporal.
+    Returns True if started successfully, False otherwise.
+    """
+    try:
+        logger.info("[Profiling] Connecting to Temporal client at %s", settings.TEMPORAL_HOST)
+        client = await Client.connect(settings.TEMPORAL_HOST)
+        await client.start_workflow(
+            "TableProfilingWorkflow",
+            id=f"profile-{table_id}",
+            task_queue="profiling-tasks",
+            args=[table_id, resume_from_partial],
+        )
+        logger.info("[Profiling] Successfully started Temporal workflow for table %s", table_id)
+        return True
+    except Exception as e:
+        if "WorkflowAlreadyStartedError" in str(type(e)) or "WorkflowExecutionAlreadyStartedError" in str(type(e)):
+            logger.info("[Profiling] Profiling workflow is already running for table %s", table_id)
+            return True
+        logger.error("[Profiling] Failed to start Temporal workflow for table %s: %s", table_id, e)
+        return False
+
+
+def _run_profile_job_local(table_id: str):
     """
     Background task: runs real Trino profiling via profiling_engine,
     then upserts results into table_profiles + column_profiles.
+    Fallback when Temporal is not available.
     """
     with Session(engine) as session:
         table = session.get(Table, table_id)
@@ -104,10 +134,6 @@ def _run_profile_job(table_id: str):
         logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
         return
 
-    if not result.success:
-        logger.error(f"[Profiling] Engine unsuccessful for {table_id}")
-        return
-
     # Persist results (Upsert by table_id)
     with Session(engine) as session:
         profile = session.exec(
@@ -118,6 +144,7 @@ def _run_profile_job(table_id: str):
             session.add(profile)
 
         profile.status = ProfilingStatus.completed
+        profile.is_partial = not result.success or bool(result.errors)
         profile.row_count = result.row_count
         profile.sample_size = result.sample_size
         profile.column_count = result.column_count
@@ -178,9 +205,16 @@ def _run_profile_job(table_id: str):
         logger.warning("[Profiling] AI summary step failed for %s: %s", table_id, exc)
 
 
+async def _trigger_profiling(table_id: str, resume_from_partial: bool = False):
+    success = await trigger_temporal_profiling_workflow(table_id, resume_from_partial)
+    if not success:
+        logger.info("Falling back to local FastAPI background task profiling for %s", table_id)
+        await anyio.to_thread.run_sync(_run_profile_job_local, table_id)
+
+
 # ── GET /tables/{id}/profile ───────────────────────────────────────────────────
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)
-def get_table_profile(table_id: str, session: Session = Depends(get_session)):
+async def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -193,6 +227,31 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
         raise HTTPException(
             status_code=404, detail="No profile found. Run POST /profile/run first."
         )
+
+    # Sync state from Temporal if stuck
+    if profile.status in (ProfilingStatus.running, ProfilingStatus.pending):
+        try:
+            client = await Client.connect(settings.TEMPORAL_HOST)
+            handle = client.get_workflow_handle(f"profile-{table_id}")
+            desc = await handle.describe()
+            if desc.status in (
+                WorkflowExecutionStatus.FAILED,
+                WorkflowExecutionStatus.TERMINATED,
+                WorkflowExecutionStatus.TIMED_OUT,
+                WorkflowExecutionStatus.CANCELED
+            ):
+                profile.status = ProfilingStatus.failed
+                session.add(profile)
+                session.commit()
+                session.refresh(profile)
+        except Exception as e:
+            if "NotFound" in str(type(e)):
+                profile.status = ProfilingStatus.failed
+                session.add(profile)
+                session.commit()
+                session.refresh(profile)
+            else:
+                logger.warning("[Profiling] Failed to sync temporal status for %s: %s", table_id, e)
 
     return profile
 
@@ -211,8 +270,7 @@ def run_all_profiles(
     tables = session.exec(select(Table)).all()
     count = 0
     for table in tables:
-        # If not force, check for running profile
-        background_tasks.add_task(_run_profile_job, str(table.id))
+        background_tasks.add_task(_trigger_profiling, table.id)
         count += 1
 
     logger.info(
@@ -233,6 +291,7 @@ def run_table_profile(
     table_id: str,
     background_tasks: BackgroundTasks,
     force: bool = False,
+    resume_from_partial: bool = False,
     session: Session = Depends(get_session),
 ):
     """
@@ -248,14 +307,52 @@ def run_table_profile(
         select(TableProfile).where(TableProfile.table_id == table_id)
     ).first()
 
-    background_tasks.add_task(_run_profile_job, table_id)
+    background_tasks.add_task(_trigger_profiling, table_id, resume_from_partial)
     logger.info(f"[Profiling] Queued profiling job: table={table_id}")
 
     if profile:
+        # Optimistically update to pending
+        profile.status = ProfilingStatus.pending
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
         return profile
 
     # Return a dummy pending profile just to satisfy response_model if not exists yet
     return TableProfile(table_id=table_id, status=ProfilingStatus.pending)
+
+
+# ── POST /tables/{id}/profile/terminate ───────────────────────────────────────
+@router.post("/tables/{table_id}/profile/terminate", status_code=200)
+async def terminate_table_profile(table_id: str, session: Session = Depends(get_session)):
+    """
+    Terminates a running Temporal profiling workflow for the given table.
+    """
+    table = session.get(Table, table_id)
+    profile = session.exec(
+        select(TableProfile).where(TableProfile.table_id == table_id)
+    ).first()
+
+    if not table or not profile or profile.status not in (ProfilingStatus.running, ProfilingStatus.pending):
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    try:
+        client = await Client.connect(settings.TEMPORAL_HOST)
+        handle = client.get_workflow_handle(f"profile-{table_id}")
+        await handle.cancel()
+    except Exception as e:
+        logger.warning(f"Failed to cancel temporal workflow for {table_id}: {e}")
+
+    profile = session.exec(
+        select(TableProfile).where(TableProfile.table_id == table_id)
+    ).first()
+
+    if profile:
+        profile.status = ProfilingStatus.failed
+        session.add(profile)
+        session.commit()
+
+    return {"message": "Profiling job terminated", "status": "failed"}
 
 
 # ── GET /tables/{id}/profile/columns ──────────────────────────────────────────

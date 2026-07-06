@@ -33,6 +33,7 @@ export type TableProfile = Omit<
   sample_data?: any[];
   profile_json?: any;
   auto_insights?: any[];
+  is_partial?: boolean;
 };
 
 export type ColumnProfile = Omit<Schemas['ColumnProfileRead'], 'stats_json' | 'top_values'> & {

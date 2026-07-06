@@ -445,6 +445,7 @@ class TableProfile(SQLModel, table=True):
         index=True,
     )
     status: ProfilingStatus = Field(default=ProfilingStatus.pending)
+    is_partial: bool = Field(default=False)
     row_count: int | None = None
     sample_size: int | None = None  # rows returned by TABLESAMPLE
     column_count: int | None = None
@@ -465,6 +466,7 @@ class TableProfileRead(SQLModel):
     id: str
     table_id: str
     status: ProfilingStatus
+    is_partial: bool | None = None
     row_count: int | None
     sample_size: int | None
     column_count: int | None

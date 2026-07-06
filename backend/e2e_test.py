@@ -11,7 +11,7 @@ from core.models.models import Table, TableCreate
 from sqlmodel import Session, select
 
 from app.routers.tables import create_table
-from app.services.profiling_engine import run_table_profiling
+from core.services.profiling_engine import run_table_profiling
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"

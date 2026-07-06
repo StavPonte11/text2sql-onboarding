@@ -12,6 +12,8 @@ dependencies = [
     "trino>=0.328.0",
     "pgvector>=0.2.0",
     "psycopg2-binary==2.9.9",
+    "langchain",
+    "langchain-openai",
     "python-core-utils[postgres,redis] @ git+ssh://git@github.com/matzpen-agency/python-core-utils.git@1.2.0",
 ]
 

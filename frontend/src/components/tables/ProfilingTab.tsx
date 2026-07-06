@@ -10,6 +10,7 @@ import {
   Link2,
   Maximize2,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import {
   Area,
@@ -1337,18 +1338,25 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
   });
 
   const runMutation = useMutation({
-    mutationFn: () => profilingApi.run(tableId),
+    mutationFn: (params?: { force?: boolean; resume_from_partial?: boolean }) => profilingApi.run(tableId, params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profile', tableId] });
+    },
+  });
+
+  const terminateMutation = useMutation({
+    mutationFn: () => profilingApi.terminate(tableId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile', tableId] });
     },
   });
 
   const profile = profileQ.data;
-  const isRunning = profile?.status === 'running' || runMutation.isPending;
+  const isRunning = profile?.status === 'running' || profile?.status === 'pending' || runMutation.isPending;
 
   useEffect(() => {
     let poll: ReturnType<typeof setInterval>;
-    if (profile?.status === 'running') {
+    if (profile?.status === 'running' || profile?.status === 'pending') {
       poll = setInterval(async () => {
         await qc.invalidateQueries({ queryKey: ['profile', tableId] });
         await qc.invalidateQueries({ queryKey: ['profile-columns', tableId] });
@@ -1390,25 +1398,60 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
             </div>
           )}
         </div>
-        <button
-          className={`btn btn--primary${isRunning ? ' btn--loading' : ''}`}
-          onClick={() => runMutation.mutate()}
-          disabled={isRunning}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 16px',
-            borderRadius: 8,
-          }}
-        >
+        <div style={{ display: 'flex', gap: 12 }}>
           {isRunning ? (
-            <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            <button
+              className={`btn btn--outline`}
+              onClick={() => terminateMutation.mutate()}
+              disabled={terminateMutation.isPending}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8, color: 'red', borderColor: 'red' }}
+            >
+              <X size={16} />
+              Terminate
+            </button>
+          ) : profile?.status === 'failed' || profile?.is_partial ? (
+            <>
+              <button
+                className={`btn btn--outline${isRunning ? ' btn--loading' : ''}`}
+                onClick={() => runMutation.mutate({ force: true })}
+                disabled={isRunning}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
+              >
+                <RefreshCw size={16} />
+                Restart from Start
+              </button>
+              <button
+                className={`btn btn--primary${isRunning ? ' btn--loading' : ''}`}
+                onClick={() => runMutation.mutate({ resume_from_partial: true })}
+                disabled={isRunning}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
+              >
+                {isRunning ? <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <RefreshCw size={16} />}
+                {isRunning ? 'Running…' : 'Retry from Last Saved Point'}
+              </button>
+            </>
           ) : (
-            <RefreshCw size={16} />
+            <button
+              className={`btn btn--primary${isRunning ? ' btn--loading' : ''}`}
+              onClick={() => runMutation.mutate({ force: true })}
+              disabled={isRunning}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 16px',
+                borderRadius: 8,
+              }}
+            >
+              {isRunning ? (
+                <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              {isRunning ? 'Running…' : profile ? 'Re-profile' : 'Run Profiling'}
+            </button>
           )}
-          {isRunning ? 'Running…' : profile ? 'Re-profile' : 'Run Profiling'}
-        </button>
+        </div>
       </div>
 
       {!profile && !isRunning && (

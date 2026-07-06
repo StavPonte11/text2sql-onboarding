@@ -1,0 +1,19 @@
+[project]
+name = "text2sql-worker"
+version = "0.1.0"
+description = "TextToSQL Studio Temporal Worker"
+requires-python = ">=3.12"
+dependencies = [
+    "temporalio>=1.6.0",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "python-dotenv==1.0.1",
+    "sqlmodel==0.0.22",
+    "trino==0.328.0",
+    "psycopg2-binary==2.9.9",
+    "pandas==2.2.3",
+    "core",
+]
+
+[tool.uv.sources]
+core = { path = "../core", editable = true }
