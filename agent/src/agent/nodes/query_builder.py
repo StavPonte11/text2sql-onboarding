@@ -31,7 +31,7 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
         {
             "schema_plan": state.get("schema_plan"),
             "user_query": state.get("user_query"),
-            "feedback_str": feedback_str,
+            # "feedback_str": feedback_str,
         }
     )
     content = response.content

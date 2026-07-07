@@ -164,21 +164,33 @@ export function TableList() {
               {data.map((table) => (
                 <tr key={table.id}>
                   <td>
-                    <span className="table-name-cell">{table.name}</span>
+                    <span className="table-name-cell" title={table.name}>
+                      {table.name}
+                    </span>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.service}</code>
+                    <code className="table-schema-code" title={table.service}>
+                      {table.service}
+                    </code>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.catalog}</code>
+                    <code className="table-schema-code" title={table.catalog}>
+                      {table.catalog}
+                    </code>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.schema_name}</code>
+                    <code className="table-schema-code" title={table.schema_name}>
+                      {table.schema_name}
+                    </code>
                   </td>
                   <td>
                     <StatusBadge status={table.status} />
                   </td>
-                  <td className="table-owner-cell">{table.owner_id}</td>
+                  <td>
+                    <span className="table-owner-cell" title={table.owner_id ?? ''}>
+                      {table.owner_id}
+                    </span>
+                  </td>
                   <td className="table-updated-cell">
                     {dayjs(table.updated_at).format('MMM D, YYYY HH:mm')}
                   </td>

@@ -102,7 +102,7 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
                 result = await session.call_tool(
                     "chat_with_agent",
                     arguments=tool_arguments,
-                    read_timeout_seconds=timedelta(seconds=300.0),
+                    read_timeout_seconds=timedelta(seconds=900.0),
                 )
 
                 if not result.content:

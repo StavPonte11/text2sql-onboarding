@@ -123,3 +123,43 @@
   color: #ef4444;
   opacity: 0.9;
 }
+
+/* ── Dataset running notice ── */
+
+.dataset-running-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+.dataset-running-notice strong {
+  color: #818cf8;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    border-color: rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    border-color: rgba(99, 102, 241, 0.7);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

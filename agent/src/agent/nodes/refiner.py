@@ -1,3 +1,4 @@
+from six.moves.urllib import response
 import json
 
 import asyncio
@@ -101,12 +102,15 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 tags=["schema_context_injected=True"],
             )
 
+        schema_context = build_refiner_schema_context(state)
+
         response = await chain.ainvoke(
             {
                 "sql": sql,
                 "error": trino_error,
                 "schema_context": schema_context,
                 "error_history": json.dumps(error_history),
+                "user_query": state.get("user_query", ""),
             }
         )
         new_sql = clean_sql(response.content)
@@ -160,3 +164,18 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             "error_history": error_history,
             "execution_path": execution_path + ["refiner"],
         }
+
+def build_refiner_schema_context(state: AgentState) -> str:
+    """Build schema context for the refiner, preferring enriched table
+    profiles over the raw schema plan when available."""
+    table_profiles = state.get("table_profiles")
+    if table_profiles:
+        # Rich, structured schema info (columns, notes, assumptions, constraints)
+        return json.dumps(table_profiles, ensure_ascii=False, indent=2)
+
+    schema_plan = state.get("schema_plan")
+    if schema_plan:
+        # Fallback: flat schema/plan string used by the composer
+        return schema_plan
+
+    return "No schema context available."

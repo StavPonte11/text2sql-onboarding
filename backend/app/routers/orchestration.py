@@ -278,6 +278,109 @@ def trigger_evaluation_run(
     return read_runs
 
 
+def _run_dataset_pipeline(dataset_name: str, run_id: str):
+    import requests
+
+    from app.config import settings
+    from app.routers.evaluation import RunDatasetResponse, _map_and_save_run_metrics
+
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return
+
+        try:
+            # Resolve all production table names from the DB to pass as additional_tables
+            from core.models.models import Table, TableStatus
+
+            prod_tables = session.exec(
+                select(Table).where(Table.status == TableStatus.production)
+            ).all()
+            table_names = [t.name for t in prod_tables]
+
+            req = {
+                "dataset_name": dataset_name,
+                "additional_tables": table_names,
+            }
+            resp = requests.post(
+                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+                json=req,
+                timeout=600,
+            )
+            resp.raise_for_status()
+            eval_resp = RunDatasetResponse(**resp.json())
+
+            _map_and_save_run_metrics(run, eval_resp, session, run_id)
+            session.commit()
+        except Exception as e:
+            logger.error(
+                f"[Eval] Dataset {dataset_name} evaluation failed: {e}",
+                exc_info=True,
+            )
+            try:
+                session.refresh(run)
+                run.status = EvalStatus.failed
+                run.score = 0.0
+                session.add(run)
+                session.commit()
+            except Exception as db_err:
+                logger.error(f"[Eval] Failed to mark run {run_id} as failed: {db_err}")
+
+
+@router.post("/run-dataset", response_model=EvalRunRead, status_code=202)
+def trigger_dataset_run(
+    dataset_name: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Trigger evaluation for a specific dataset (e.g. 'spider2' or 'text2sql_production')."""
+    from core.models.models import Table, TableStatus
+
+    # 1. Sync production dataset if requested
+    if dataset_name == "text2sql_production":
+        prod_tables = session.exec(
+            select(Table).where(Table.status == TableStatus.production)
+        ).all()
+        all_production_questions: list[GoldenQuestion] = []
+        for table in prod_tables:
+            qs = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+            ).all()
+            all_production_questions.extend(qs)
+
+        all_questions_payload = []
+        from app.routers.evaluation import _build_questions_payload
+
+        for table in prod_tables:
+            qs_for_table = [
+                q for q in all_production_questions if q.table_id == table.id
+            ]
+            all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
+
+        if all_questions_payload:
+            from app.services.langfuse_client import langfuse_client
+
+            if langfuse_client.enabled:
+                try:
+                    langfuse_client.sync_dataset(
+                        "text2sql_production", all_questions_payload
+                    )
+                except Exception as e:
+                    logger.warning(f"[Eval] Production dataset sync failed: {e}")
+
+    # 2. Create the run record
+    run = EvalRun(table_id=None, triggered_by=dataset_name)
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # 3. Queue the task
+    background_tasks.add_task(_run_dataset_pipeline, dataset_name, run.id)
+    return EvalRunRead.model_validate(
+        run, update={"table_name": f"Dataset: {dataset_name}"}
+    )
+
+
 @router.get("/runs", response_model=list[EvalRunRead])
 def list_runs(
     limit: int = Query(default=50, le=200),
@@ -301,7 +404,15 @@ def list_runs(
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
-        t_name = table_name if table_name else "All prod tables"
+        t_name = (
+            table_name
+            if table_name
+            else (
+                f"Dataset: {run.triggered_by}"
+                if run.table_id is None
+                else "All prod tables"
+            )
+        )
         read = EvalRunRead.model_validate(run, update={"table_name": t_name})
         runs.append(read)
     return runs
@@ -311,7 +422,7 @@ def list_runs(
 def get_run(run_id: str, session: Session = Depends(get_session)):
     result = session.exec(
         select(EvalRun, Table.name)
-        .join(Table, EvalRun.table_id == Table.id)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(EvalRun.id == run_id)
     ).first()
 
@@ -319,7 +430,15 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     run, table_name = result
-    t_name = table_name if table_name else "All prod tables"
+    t_name = (
+        table_name
+        if table_name
+        else (
+            f"Dataset: {run.triggered_by}"
+            if run.table_id is None
+            else "All prod tables"
+        )
+    )
     return EvalRunRead.model_validate(run, update={"table_name": t_name})
 
 

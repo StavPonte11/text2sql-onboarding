@@ -327,7 +327,11 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
   } = useQuery({
     queryKey: ['eval-runs', tableId, limit],
     queryFn: () => orchestrationApi.listRuns({ limit, table_id: tableId }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) => {
+      const data = query.state.data as typeof runs;
+      const hasRunning = data?.some((r) => r.status === 'running');
+      return hasRunning ? 5_000 : 15_000;
+    },
   });
 
   const paged = runs.slice(page * pageSize, (page + 1) * pageSize);
@@ -381,7 +385,9 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
               <tr key={run.id} onClick={() => setSelectedRunId(run.id)} className="run-history-row">
                 {!compact && (
                   <td>
-                    <code className="run-id-text">{run.id.slice(0, 8)}…</code>
+                    <code className="run-id-text" title={run.id}>
+                      {run.id.slice(0, 8)}…
+                    </code>
                   </td>
                 )}
                 {!tableId && (
@@ -390,12 +396,15 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                       <Link
                         to={`/tables/${run.table_id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="table-link hover:underline"
+                        className="table-link hover:underline run-table-name"
+                        title={run.table_name || run.table_id}
                       >
                         {run.table_name || run.table_id.slice(0, 8)}
                       </Link>
                     ) : (
-                      <span className="table-link">{run.table_name}</span>
+                      <span className="table-link run-table-name" title={run.table_name}>
+                        {run.table_name}
+                      </span>
                     )}
                   </td>
                 )}
@@ -423,7 +432,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                 </td>
                 <td>
                   <span
-                    className={`triggered-by-text${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    className={`triggered-by-text run-triggered-by ${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    title={run.triggered_by}
                   >
                     {run.triggered_by}
                   </span>
