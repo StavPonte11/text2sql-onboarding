@@ -32,6 +32,8 @@ from app.services.profiling_engine import (
     run_table_profiling,
 )
 
+from app.services.category_ingestion import ingest_large_category_values
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["profiling"])
 
@@ -177,6 +179,15 @@ def _run_profile_job(table_id: str):
     except Exception as exc:
         logger.warning("[Profiling] AI summary step failed for %s: %s", table_id, exc)
 
+    # Compute embedding vectors for large category values
+    if result.success:
+        try:
+            logger.info("[Profiling] Triggering large category vector ingestion for %s", table_id)
+            # Open a fresh, dedicated session just for ingestion
+            with Session(engine) as session:
+                ingest_large_category_values(db_session=session, profile_result=result)
+        except Exception as exc:
+            logger.error("[Profiling] Vector ingestion failed for %s: %s", table_id, exc)
 
 # ── GET /tables/{id}/profile ───────────────────────────────────────────────────
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)

@@ -1091,6 +1091,7 @@ def _ensure_airlines_registered() -> None:
     from sqlmodel import Session, select
 
     from app.services.profiling_engine import run_table_profiling
+    from app.services.category_ingestion import ingest_large_category_values
 
     logger.info("[InfraInit] Registering airlines Snowflake tables...")
 
@@ -1227,6 +1228,16 @@ def _ensure_airlines_registered() -> None:
                     session.add(cp)
 
                 session.commit()
+
+            # Compute embedding vectors for large category values
+            if result.success:
+                try:
+                    logger.info("[InfraInit] Triggering large category vector ingestion for %s", table_id)
+                    # Open a fresh session specifically for the ingestion task
+                    with Session(engine) as session:
+                        ingest_large_category_values(db_session=session, profile_result=result)
+                except Exception as exc:
+                    logger.error("[InfraInit] Vector ingestion failed for %s: %s", table_id, exc)
 
             logger.info(
                 "[InfraInit] Profiling complete for '%s.%s.%s': %d cols, %s rows",
