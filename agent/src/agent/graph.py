@@ -2,13 +2,21 @@
 LangGraph agent graph — Group 2 hardened topology.
 
 Node order:
-  START → validate_config → extractor → schema_explorer → ...
-          (G2-01 fail-fast)
+  START → init_flags → validate_config
+                     → init_skills → extractor → schema_explorer
+                                                    → sql_static_validations
+                                                    → detect_ambiguity
+                                                         ├─ [clear]        → query_builder → ...
+                                                         ├─ [ambiguous]    → ambiguity_resolution  ← interrupt
+                                                         │                      └─ schema_explorer (retry)
+                                                         └─ [unanswerable] → END
 
-HITL escalation compiles with interrupt_before=["hitl_escalation"] so
-LangGraph pauses before executing that node.  After a human injects
-corrected state the graph resumes from hitl_escalation which immediately
-routes to extractor (full state reset path).
+HITL escalation compiles with interrupt_before=["hitl_escalation", "ambiguity_resolution"] so
+LangGraph pauses before executing either node. After a human injects corrected
+state (feedback / clarification) the graph resumes:
+  • hitl_escalation   → extractor (full reset path for hard errors)
+  • ambiguity_resolution → schema_explorer (targeted retry with user’s clarification
+                            appended as feedback)
 
 Satisfaction check sits between refiner success path and finalizer (G2-04).
 """
@@ -23,12 +31,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
-from agent.utils.redis_publisher import publish_node_event_sync
+from agent.utils.redis_publisher import publish_node_event_sync, publish_node_event
 from agent.nodes.extractor import extractor_node
 from agent.nodes.init_flags import init_flags_node
 from agent.nodes.init_skills import init_skills_node
 from agent.nodes.schema_explorer import schema_explorer_node, MAX_SCHEMA_RETRIES, sql_static_validations_node
 from agent.nodes.query_builder import query_builder_node
+from agent.nodes.detect_ambiguity import detect_ambiguity_node, ambiguity_resolution_node
 from agent.nodes.refiner_graph import refiner_subgraph
 from agent.nodes.finalizer import finalizer_node
 from agent.config import settings
@@ -184,6 +193,27 @@ def route_refiner_subagent(state: AgentState) -> str:
     return "finalizer"
 
 
+def route_detect_ambiguity(state: AgentState) -> str:
+    """
+    Route out of detect_ambiguity based on the resolved ambiguity_type.
+
+      - "clear"        → query_builder          (proceed normally)
+      - "ambiguous"    → ambiguity_resolution   (HITL: user clarifies, then retry)
+                         → END if MAX_AMBIGUITY_RETRIES exhausted
+      - "unanswerable" → END                    (data doesn’t exist; clarification won’t help)
+    """
+    t = state.get("ambiguity_type") or "clear"
+
+    if t == "clear":
+        return "query_builder"
+
+    if t == "unanswerable":
+        return END
+
+    # ambiguous — offer HITL (max retries logic is now handled inside detect_ambiguity_node)
+    return "ambiguity_resolution"
+
+
 def route_query_builder(state: AgentState) -> str:
     if state.get("feedback"):
         return "rejection_router"
@@ -207,6 +237,8 @@ workflow.add_node("init_skills", init_skills_node)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("schema_explorer", schema_explorer_node)
 workflow.add_node("sql_static_validations", sql_static_validations_node)
+workflow.add_node("detect_ambiguity", detect_ambiguity_node)
+workflow.add_node("ambiguity_resolution", ambiguity_resolution_node)
 workflow.add_node("query_builder", query_builder_node)
 workflow.add_node("rejection_router", rejection_router_node)
 workflow.add_node("refiner_subagent", refiner_subgraph)
@@ -226,10 +258,26 @@ workflow.add_conditional_edges(
     route_schema_explorer,
     {
         "schema_explorer": "schema_explorer",
-        "query_builder": "query_builder",
+        # route_schema_explorer returns "query_builder" on success;
+        # we intercept it here and send to detect_ambiguity first.
+        "query_builder": "detect_ambiguity",
         "hitl_escalation": "hitl_escalation",  # G2-02
     },
 )
+
+workflow.add_conditional_edges(
+    "detect_ambiguity",
+    route_detect_ambiguity,
+    {
+        "query_builder": "query_builder",
+        "ambiguity_resolution": "ambiguity_resolution",
+        END: END,
+    },
+)
+
+# ambiguity_resolution → schema_explorer: targeted retry (not a full extractor reset).
+# The user’s clarification is in state["feedback"] which schema_explorer already reads.
+workflow.add_edge("ambiguity_resolution", "schema_explorer")
 
 workflow.add_conditional_edges(
     "query_builder",
@@ -263,5 +311,8 @@ workflow.add_edge("finalizer", END)
 memory = MemorySaver()
 agent_graph = workflow.compile(
     checkpointer=memory,
-    interrupt_before=["hitl_escalation"],  # G2-02: pause before HITL node
+    interrupt_before=[
+        "hitl_escalation",      # G2-02: hard error escalation (full reset)
+        "ambiguity_resolution", # Ambiguity HITL: user clarifies, then schema_explorer retry
+    ],
 )

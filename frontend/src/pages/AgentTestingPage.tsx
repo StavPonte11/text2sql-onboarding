@@ -787,15 +787,36 @@ const AgentResultDisplay = ({
       transition={{ duration: 0.4 }}
     >
       <div className={styles.completedHeader}>
-        <div className={styles.successIconWrapper}>
-          <CheckCircle size={32} className={styles.successIcon} />
+        <div
+          className={styles.successIconWrapper}
+          style={
+            chatResponse.is_unanswerable
+              ? { background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.2)' }
+              : undefined
+          }
+        >
+          {chatResponse.is_unanswerable ? (
+            <XCircle size={32} color="#ef4444" className={styles.successIcon} />
+          ) : (
+            <CheckCircle size={32} className={styles.successIcon} />
+          )}
         </div>
         <div className={styles.completedHeaderTitles}>
-          <span className={styles.completedStatus}>TASK COMPLETED</span>
-          <h2 className={styles.completedTitle}>Agent Execution Successful</h2>
+          <span
+            className={styles.completedStatus}
+            style={chatResponse.is_unanswerable ? { color: '#ef4444' } : undefined}
+          >
+            {chatResponse.is_unanswerable ? 'UNANSWERABLE' : 'TASK COMPLETED'}
+          </span>
+          <h2 className={styles.completedTitle}>
+            {chatResponse.is_unanswerable ? 'Agent Could Not Answer' : 'Agent Execution Successful'}
+          </h2>
         </div>
-        <Tag color="success" className={styles.completedTag}>
-          Done
+        <Tag
+          color={chatResponse.is_unanswerable ? 'error' : 'success'}
+          className={styles.completedTag}
+        >
+          {chatResponse.is_unanswerable ? 'Failed' : 'Done'}
         </Tag>
       </div>
 
@@ -1006,7 +1027,7 @@ export function AgentTestingPage() {
   const handleSubmit = () => {
     if (!query) return;
     setChatResponse(null);
-    const newThreadId = threadId || uuidv4();
+    const newThreadId = uuidv4();
     setThreadId(newThreadId);
     setExecutionPath([]);
     setTraceId(null);

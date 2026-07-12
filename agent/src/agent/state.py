@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict, Any, Literal
+from typing import Annotated, TypedDict, Any, Literal, Optional
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 import operator
@@ -45,3 +45,14 @@ class AgentState(TypedDict):
     runtime_flags: dict[str, Any] | None  # resolved by init_flags_node
     # Enriched table profiles — populated by schema_explorer for reuse by refiner
     table_profiles: list[dict[str, Any]] | None
+    # ── Ambiguity Detection (detect_ambiguity node) ───────────────────────────
+    # Raw parsed JSON output from the detect_ambiguity LLM call.
+    ambiguity_result: Optional[dict] | None
+    # Drives the conditional edge: "clear" | "ambiguous" | "unanswerable"
+    ambiguity_type: Optional[Literal["clear", "ambiguous", "unanswerable"]] | None
+    # Populated on "ambiguous" terminal — the clarifying question shown to the user.
+    clarifying_questions: str | None
+    # Populated on "unanswerable" terminal.
+    failure_reason: str | None
+    # Counts how many times ambiguity_resolution has been attempted (loop guard).
+    ambiguity_retry_count: int | None

@@ -105,7 +105,8 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
         prompt = (
             f"User question: {state.get('user_query', '')}\n"
             f"SQL column headers returned: {', '.join(columns)}\n\n"
-            "Do these column headers conceptually satisfy what the user asked for?"
+            "Do these column headers conceptually satisfy what the user asked for?\n"
+            "CRITICAL INSTRUCTION: Do NOT be overly pedantic. If the user explicitly asks for a single attribute (e.g. 'What is the key...'), returning ONLY that attribute's column is 100% correct. You do NOT need to return filter columns (like the comment or ID used in the WHERE clause) just to 'prove' the answer."
         )
         try:
             structured = llm.with_structured_output(ColumnCoverageOutput, method="json_schema")
@@ -125,7 +126,8 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
             f"User question: {state.get('user_query', '')}\n"
             f"SQL generated: {state.get('sql_query', '')}\n"
             f"Result column headers: {', '.join(columns)}\n\n"
-            "Score alignment between the question intent and the query output schema (0.0–1.0)."
+            "Score alignment between the question intent and the query output schema (0.0–1.0).\n"
+            "CRITICAL INSTRUCTION: Do NOT penalize the score if the query returns exactly what was asked for without additional context columns. If the user asks for 'the key', returning just the 'key' column is a perfect 1.0 score. Do not demand verification columns."
         )
         try:
             structured = llm.with_structured_output(SemanticAlignmentOutput, method="json_schema")
@@ -166,11 +168,12 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig | No
     }
 
     if failures:
-        partial["last_error"] = "; ".join(failures)
+        partial["last_error"] = "\n".join([f"• {f}" for f in failures])
         if fail_count >= settings.SATISFACTION_MAX_FAILURES:
+            failures_str = "\n".join([f"  - {f}" for f in failures])
             partial["escalation_reason"] = (
-                f"Satisfaction checks failed {fail_count} times. "
-                f"Last failures: {'; '.join(failures)}"
+                f"Satisfaction checks failed {fail_count} times.\n"
+                f"Last failures:\n{failures_str}"
             )
 
     return partial

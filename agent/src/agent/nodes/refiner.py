@@ -44,8 +44,8 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
 
     if satisfaction_failures:
         success = False
-        trino_error = "; ".join(satisfaction_failures)
-        error_history.append(f"Satisfaction Check Failed: {trino_error}")
+        trino_error = "\n".join([f"• {f}" for f in satisfaction_failures])
+        error_history.append(f"Satisfaction Check Failed:\n{trino_error}")
         result = None
         # Clear satisfaction failures so next pass can execute cleanly
         # Note: LangGraph state updates require explicitly passing None or handling it if merging
