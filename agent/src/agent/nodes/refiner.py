@@ -12,8 +12,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
 from agent.utils.sql import clean_sql
 from agent.utils.esca import get_esca_client
-
+from agent.services.enrichment_orchestrator import EnrichmentOrchestrator
+from agent.services.enrichment_models import AgentSQLTable
+                
 llm = get_llm("refiner")
+logger = logging.getLogger(__name__)
 
 def build_refiner_schema_context(state: AgentState) -> str:
     profiles = state.get("table_profiles")
@@ -79,6 +82,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                     f"Last Trino error: {trino_error}"
                 ),
                 "execution_path": execution_path + ["refiner"],
+                "sql_query": sql,
             }
 
         langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
@@ -109,6 +113,43 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             }
         )
         new_sql = clean_sql(response.content)
+        
+        # Run Category Enrichment if table_profiles metadata exists
+        table_profiles = state.get("table_profiles")
+        if table_profiles and new_sql:
+            try:
+                schema = {}
+                tables = []
+                for p in table_profiles:
+                    t_name = p.get("table_name", "")
+                    if not t_name:
+                        continue
+                    columns_schema = {}
+                    columns_meta = {}
+                    for col in p.get("columns", []):
+                        c_name = col.get("name", "")
+                        sem_type = col.get("semantic_type", "unknown")
+                        columns_schema[c_name] = sem_type
+                        columns_meta[c_name] = {"column_type": sem_type}
+                    schema[t_name] = columns_schema
+                    tables.append(AgentSQLTable(
+                        name=t_name,
+                        description=p.get("description", ""),
+                        columns=columns_meta
+                    ))
+                
+                refined_sql, _, enriched = await EnrichmentOrchestrator.enrich_query(
+                    user_request=state.get("user_query"),
+                    initial_sql=new_sql,
+                    schema=schema,
+                    tables=tables
+                )
+                if enriched and refined_sql:
+                    logger.info("Category Enrichment successfully refined query filters in refiner.")
+                    new_sql = refined_sql
+            except Exception as e:
+                logger.error(f"Category Enrichment failed in refiner_node: {e}", exc_info=True)
+
         return {
             "sql_query": new_sql,
             "trino_error": trino_error,
@@ -153,4 +194,5 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             "inline_result_columns": inline_result_columns,
             "error_history": error_history,
             "execution_path": execution_path + ["refiner"],
+            "sql_query": sql,
         }
