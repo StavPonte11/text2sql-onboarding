@@ -1,6 +1,4 @@
-from six.moves.urllib import response
 import json
-
 import asyncio
 import logging
 from langchain_core.runnables.config import RunnableConfig
@@ -16,18 +14,6 @@ from agent.utils.esca import get_esca_client
 import datetime
 
 llm = get_llm("refiner")
-
-def build_refiner_schema_context(state: AgentState) -> str:
-    profiles = state.get("table_profiles")
-    if not profiles:
-        return "No schema context available."
-
-    runtime_flags = state.get("runtime_flags") or {}
-    limit = int(runtime_flags.get("REFINER_SCHEMA_CONTEXT_TABLES", settings.REFINER_SCHEMA_CONTEXT_TABLES))
-
-    # Cap the context to REFINER_SCHEMA_CONTEXT_TABLES
-    capped_profiles = profiles[:limit]
-    return json.dumps(capped_profiles, indent=2)
 
 
 async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
@@ -102,9 +88,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 tags=["schema_context_injected=True"],
             )
 
-        schema_context = build_refiner_schema_context(state)
-
-        response = await chain.ainvoke(
+        llm_response = await chain.ainvoke(
             {
                 "sql": sql,
                 "error": trino_error,
@@ -113,7 +97,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 "user_query": state.get("user_query", ""),
             }
         )
-        new_sql = clean_sql(response.content)
+        new_sql = clean_sql(llm_response.content)
         return {
             "sql_query": new_sql,
             "trino_error": trino_error,
@@ -146,13 +130,14 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                     raw_ref = res.get("esca_id")
             except Exception as e:
                 esca_write_failed = True
+                error_msg = f"ESCA write failed: {e}"
                 if langfuse_client and langfuse_client.get_current_trace_id():
                     langfuse_client.update_current_span(
-                        level="ERROR", status_message=f"ESCA write failed: {e}"
+                        level="WARNING", status_message=error_msg
                     )
-                else:
-                    logging.error(f"ESCA write failed: {e}")
-                raise RuntimeError(f"Failed to write query result to ESCA: {e}")
+                logging.warning(error_msg)
+                # ESCA is an optional output store — do not crash the agent.
+                # The query result is still available as inline_result_rows/columns.
 
         return {
             "trino_error": None,
