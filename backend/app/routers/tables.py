@@ -195,6 +195,20 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
     text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
     embedding = get_embedding(text_to_embed)
 
+    # Check for duplicate table
+    existing = session.exec(
+        select(Table).where(
+            Table.catalog == catalog_name,
+            Table.schema_name == schema_name,
+            Table.name == name
+        )
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Table '{catalog_name}.{schema_name}.{name}' already exists."
+        )
+
     # Create the table
     table = Table(
         name=name,

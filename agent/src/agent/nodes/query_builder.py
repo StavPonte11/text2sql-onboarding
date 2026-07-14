@@ -7,6 +7,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
+
+
 async def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
     """Build SQL from plan and pause for user approval."""
     runtime_flags = state.get("runtime_flags") or {}

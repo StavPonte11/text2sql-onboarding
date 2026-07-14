@@ -1,9 +1,12 @@
 import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Divider, Input, Modal, Select, Space, Spin, Switch, Tag } from 'antd';
+import { useMutation, useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { Alert, Button, Divider, Input, Modal, Select, Space, Spin, Switch, Tag, Collapse } from 'antd';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useForm, Controller, type Control } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
 import {
   Activity,
   AlertTriangle,
@@ -33,9 +36,31 @@ import { AgentGraph } from '../components/AgentGraph';
 import { SchemaPlanDisplay } from '../components/SchemaPlanDisplay';
 import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
 
+import { tablesApi } from '../api/client';
 import type { ChatRequest, ChatResponse } from '../api/agent';
+import type { Table } from '../types';
+
+import type { components } from '../api/schema';
+export type TraceSpan = components['schemas']['TraceSpan'];
+
+export type ResumeValue = 
+  | string 
+  | Record<string, never> 
+  | { approved: boolean; feedback?: string; };
+
 
 import styles from './AgentTestingPage.module.css';
+
+const agentConfigSchema = z.object({
+  allowedStatuses: z.array(z.string()),
+  allowedTables: z.array(z.string()),
+  tableMode: z.enum(['inclusive', 'exclusive']),
+  hitlEnabled: z.boolean(),
+  extractors: z.array(z.string()),
+  activeSkills: z.array(z.string()),
+  executionMode: z.string().optional(),
+});
+type AgentConfigValues = z.infer<typeof agentConfigSchema>;
 
 const formatLabel = (str: string) => {
   return str
@@ -353,17 +378,13 @@ const CollapsibleTraceBlock = ({
 // ----------------------------------------------------------------------
 const AgentTestingHeader = memo(
   ({
-    hitlEnabled,
-    setHitlEnabled,
-    allowedStatuses,
-    setAllowedStatuses,
+    control,
+    tablesQuery,
   }: {
-    hitlEnabled: boolean;
-    setHitlEnabled: (v: boolean) => void;
-    allowedStatuses: string[];
-    setAllowedStatuses: (v: string[]) => void;
+    control: Control<AgentConfigValues>;
+    tablesQuery: UseQueryResult<Table[], Error>;
   }) => (
-    <div className={styles.header}>
+    <div className={styles.header} style={{ flexDirection: 'column', gap: 24 }}>
       <div>
         <h1 className={styles.title}>
           <Bot size={28} color="var(--accent)" />
@@ -373,28 +394,149 @@ const AgentTestingHeader = memo(
           Test the agent directly. Toggle human-in-the-loop to approve or reject the agent's work.
         </p>
       </div>
-      <div className={styles.controls}>
-        <div className={styles.controlItem}>
-          <span>Human in the Loop</span>
-          <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
+
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* Section 2: Params/Table Selection */}
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <span>Table Status</span>
+            <Controller
+              name="allowedStatuses"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  {...field}
+                  mode="multiple"
+                  style={{ minWidth: 200 }}
+                  placeholder="Select statuses"
+                  options={[
+                    { value: 'production', label: 'Production' },
+                    { value: 'verified', label: 'Verified' },
+                    { value: 'sandbox', label: 'Sandbox' },
+                    { value: 'draft', label: 'Draft' },
+                    { value: 'degraded', label: 'Degraded' },
+                  ]}
+                />
+              )}
+            />
+          </div>
+
+          <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, flex: 1 }}>
+            <span>Specific Tables</span>
+            <Controller
+              name="allowedTables"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  {...field}
+                  mode="multiple"
+                  style={{ width: '100%' }}
+                  placeholder="Select tables..."
+                  loading={tablesQuery.isLoading}
+                  options={(tablesQuery.data || []).map((t: Table) => ({
+                    value: t.id,
+                    label: `${t.schema_name}.${t.name}`,
+                  }))}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                />
+              )}
+            />
+          </div>
+
+          <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <span>Table Mode</span>
+            <Controller
+              name="tableMode"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  {...field}
+                  style={{ width: 120 }}
+                  options={[
+                    { value: 'inclusive', label: 'Inclusive' },
+                    { value: 'exclusive', label: 'Exclusive' },
+                  ]}
+                />
+              )}
+            />
+          </div>
+
+          <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <span>HITL</span>
+            <Controller
+              name="hitlEnabled"
+              control={control}
+              render={({ field }) => (
+                <Switch checked={field.value} onChange={field.onChange} />
+              )}
+            />
+          </div>
         </div>
-        <div className={styles.controlItem}>
-          <span>Table Status</span>
-          <Select
-            mode="multiple"
-            value={allowedStatuses}
-            onChange={setAllowedStatuses}
-            style={{ minWidth: 200 }}
-            placeholder="Select allowed statuses"
-            options={[
-              { value: 'production', label: 'Production' },
-              { value: 'verified', label: 'Verified' },
-              { value: 'sandbox', label: 'Sandbox' },
-              { value: 'draft', label: 'Draft' },
-              { value: 'degraded', label: 'Degraded' },
-            ]}
-          />
-        </div>
+
+        {/* Section 3: Advanced Configuration */}
+        <Collapse
+          ghost
+          items={[
+            {
+              key: '1',
+              label: <span style={{ color: 'var(--text-h)', fontWeight: 600 }}>Advanced Configuration</span>,
+              children: (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, flex: 1 }}>
+                    <span>Extractors (UUID or Name)</span>
+                    <Controller
+                      name="extractors"
+                      control={control}
+                      render={({ field }) => (
+                        <Select
+                          {...field}
+                          mode="tags"
+                          style={{ width: '100%' }}
+                          placeholder="e.g. My Extractor"
+                          open={false}
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, flex: 1 }}>
+                    <span>Active Skills (UUID)</span>
+                    <Controller
+                      name="activeSkills"
+                      control={control}
+                      render={({ field }) => (
+                        <Select
+                          {...field}
+                          mode="tags"
+                          style={{ width: '100%' }}
+                          placeholder="e.g. e6b2..."
+                          open={false}
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, width: 200 }}>
+                    <span>Execution Mode</span>
+                    <Controller
+                      name="executionMode"
+                      control={control}
+                      render={({ field }) => (
+                        <Input
+                          {...field}
+                          placeholder="e.g. benchmark"
+                          style={{ background: 'rgba(15, 23, 42, 0.6)', color: 'white', borderColor: 'rgba(255,255,255,0.1)' }}
+                        />
+                      )}
+                    />
+                  </div>
+                </div>
+              ),
+            },
+          ]}
+        />
       </div>
     </div>
   ),
@@ -445,20 +587,15 @@ const AgentChatInput = ({
 // ----------------------------------------------------------------------
 const AgentApprovalForm = ({
   chatResponse,
-  threadId,
   isResuming,
   onApprove,
   onReject,
 }: {
   chatResponse: ChatResponse;
-  threadId: string;
   isResuming: boolean;
-  onApprove: (resumeValue?: any) => void;
-  onReject: (feedback: string, category?: string) => void;
+  onApprove: (resumeValue?: ResumeValue) => void;
+  onReject: (feedback: string) => void;
 }) => {
-  const [rejectionCategory, setRejectionCategory] = useState<string | undefined>(undefined);
-  const [suggestedFixes, setSuggestedFixes] = useState<string[]>([]);
-  const [loadingFixes, setLoadingFixes] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -475,19 +612,6 @@ const AgentApprovalForm = ({
       navigator.clipboard.writeText(sqlQuery);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const handleCategoryChange = (val: string) => {
-    setRejectionCategory(val);
-    if (val && threadId) {
-      setLoadingFixes(true);
-      agentApi
-        .suggestFixes(threadId, val)
-        .then(setSuggestedFixes)
-        .finally(() => setLoadingFixes(false));
-    } else {
-      setSuggestedFixes([]);
     }
   };
 
@@ -574,7 +698,7 @@ const AgentApprovalForm = ({
           <div className={styles.actionRow} style={{ justifyContent: 'flex-end' }}>
             <Button
               className={styles.escalationSubmitBtn}
-              onClick={() => onReject(feedback, 'Manual Override')}
+              onClick={() => onReject(feedback)}
               disabled={!feedback || isResuming}
               loading={isResuming}
             >
@@ -665,57 +789,6 @@ const AgentApprovalForm = ({
       <Divider style={{ borderColor: 'rgba(250, 173, 20, 0.15)', margin: '24px 0' }} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div>
-            <div
-              style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}
-            >
-              Rejection Category (If rejecting)
-            </div>
-            <Select
-              style={{ width: '100%' }}
-              placeholder="Select rejection reason..."
-              allowClear
-              value={rejectionCategory}
-              onChange={handleCategoryChange}
-              options={[
-                { label: 'Wrong Tables', value: 'Wrong Tables' },
-                { label: 'Wrong Logic', value: 'Wrong Logic' },
-                { label: 'Other', value: 'Other' },
-              ]}
-            />
-          </div>
-
-          <div>
-            <div
-              style={{ marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--text-muted)' }}
-            >
-              Quick Feedback Suggestions
-            </div>
-            {loadingFixes ? (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>
-                <Spin size="small" /> Generating...
-              </div>
-            ) : suggestedFixes.length > 0 ? (
-              <Space wrap size={[4, 4]}>
-                {suggestedFixes.map((fix) => (
-                  <Button
-                    key={fix}
-                    size="small"
-                    onClick={() => setFeedback(fix)}
-                    style={{ fontSize: 11 }}
-                  >
-                    {fix}
-                  </Button>
-                ))}
-              </Space>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>
-                Select category to generate quick fixes
-              </div>
-            )}
-          </div>
-        </div>
 
         <div>
           <div
@@ -736,8 +809,8 @@ const AgentApprovalForm = ({
           <Button
             className={styles.rejectButton}
             icon={<XCircle size={16} />}
-            onClick={() => onReject(feedback, rejectionCategory)}
-            disabled={(!feedback && !rejectionCategory) || isResuming}
+            onClick={() => onReject(feedback)}
+            disabled={!feedback.trim() || isResuming}
             loading={isResuming}
           >
             Reject
@@ -891,18 +964,34 @@ const AgentResultDisplay = ({
 // ----------------------------------------------------------------------
 export function AgentTestingPage() {
   const [query, setQuery] = useState('');
-  const [hitlEnabled, setHitlEnabled] = useState(true);
-  const [allowedStatuses, setAllowedStatuses] = useState<string[]>(['production']);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [traceModalVisible, setTraceModalVisible] = useState(false);
 
-  const [traceSpans, setTraceSpans] = useState<any[]>([]);
+  const [traceSpans, setTraceSpans] = useState<TraceSpan[]>([]);
   const [loadingTrace, setLoadingTrace] = useState(false);
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   const [executionPath, setExecutionPath] = useState<string[]>([]);
+
+  const tablesQuery = useQuery({
+    queryKey: ['tables'],
+    queryFn: () => tablesApi.list(),
+  });
+
+  const { control, watch } = useForm<AgentConfigValues>({
+    resolver: zodResolver(agentConfigSchema),
+    defaultValues: {
+      allowedStatuses: ['production'],
+      allowedTables: [],
+      tableMode: 'inclusive',
+      hitlEnabled: true,
+      extractors: [],
+      activeSkills: [],
+      executionMode: '',
+    },
+  });
 
   useEffect(() => {
     if (!traceId) {
@@ -1013,34 +1102,44 @@ export function AgentTestingPage() {
     setSelectedStep(null);
     setSelectedStepIndex(null);
 
+    const config = watch();
+    const allowed_statuses = config.tableMode === 'inclusive' ? config.allowedStatuses : [];
+
     // Delay mutation slightly to allow SSE EventSource to connect
     setTimeout(() => {
       chatMutation.mutate({
         query,
         thread_id: newThreadId,
-        hitl_enabled: hitlEnabled,
-        allowed_statuses: allowedStatuses.length > 0 ? allowedStatuses : undefined,
+        hitl_enabled: config.hitlEnabled,
+        allowed_statuses: allowed_statuses.length > 0 ? allowed_statuses : [],
+        allowed_tables: config.allowedTables.length > 0 ? config.allowedTables : undefined,
+        extractors: config.extractors.length > 0 ? config.extractors : undefined,
+        active_skills: config.activeSkills.length > 0 ? config.activeSkills : undefined,
+        execution_mode: config.executionMode || undefined,
       });
     }, 300);
   };
 
-  const handleApprove = (resumeValue?: any) => {
+  const handleApprove = (resumeValue?: ResumeValue) => {
     if (!threadId) return;
+    const config = watch();
     setTimeout(() => {
       chatMutation.mutate({
         thread_id: threadId,
         resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
+        hitl_enabled: config.hitlEnabled,
       });
     }, 300);
   };
 
-  const handleReject = (feedback: string, category?: string) => {
+  const handleReject = (feedback: string) => {
     if (!threadId) return;
+    const config = watch();
     setTimeout(() => {
       chatMutation.mutate({
         thread_id: threadId,
-        resume_value: { approved: false, feedback, rejection_category: category },
-        hitl_enabled: hitlEnabled,
+        resume_value: { approved: false, feedback },
+        hitl_enabled: config.hitlEnabled,
       });
     }, 300);
   };
@@ -1094,10 +1193,8 @@ export function AgentTestingPage() {
   return (
     <div className={styles.agentTestingPage}>
       <AgentTestingHeader
-        hitlEnabled={hitlEnabled}
-        setHitlEnabled={setHitlEnabled}
-        allowedStatuses={allowedStatuses}
-        setAllowedStatuses={setAllowedStatuses}
+        control={control}
+        tablesQuery={tablesQuery}
       />
 
       <AgentChatInput
@@ -1278,8 +1375,7 @@ export function AgentTestingPage() {
             {chatResponse.status === 'interrupted' ? (
               <AgentApprovalForm
                 chatResponse={chatResponse}
-                threadId={threadId!}
-                isResuming={isResuming}
+                isResuming={chatMutation.isPending}
                 onApprove={handleApprove}
                 onReject={handleReject}
               />

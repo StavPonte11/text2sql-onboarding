@@ -135,9 +135,22 @@ def _build_column_context(cp: "ColumnProfile") -> dict:
     return col
 
 
+class TableJoin(BaseModel):
+    source_table: str = Field(description="Fully qualified name of the source table (catalog.schema.name)")
+    target_table: str = Field(description="Fully qualified name of the target table (catalog.schema.name)")
+    join_condition: str = Field(description="SQL condition for the join (e.g., A.id = B.a_id)")
+
+class SchemaPlan(BaseModel):
+    tables: List[str] = Field(description="List of fully qualified table names (catalog.schema.name) required for the query")
+    columns: List[str] = Field(description="Columns to select")
+    joins: List[TableJoin] = Field(default_factory=list, description="How to join the tables")
+    filters: List[str] = Field(default_factory=list, description="Any WHERE clause filters")
+
 # Define standardized Schema Explorer Output Type
 class SchemaExplorerOutput(BaseModel):
-    schema_plan: Optional[Any] = Field(
+    reasoning: str = Field(default_factory=str, description="Reasoning for the schema plan - explain your logic.")
+
+    schema_plan: Optional[SchemaPlan] = Field(
         default=None,
         description="Detailed query plan describing tables, columns, and joins.",
     )
@@ -155,6 +168,10 @@ class SchemaExplorerOutput(BaseModel):
     tables_used: List[str] = Field(
         default_factory=list,
         description="List of fully qualified table names (catalog.schema.name) used in the plan.",
+    )
+    error: Optional[str] = Field(
+        default_factory=str, 
+        description="Error message if any"
     )
 
 
@@ -189,7 +206,7 @@ def hybrid_search_tables(
     all_tables = session.exec(stmt_all).all()
 
     allowed = allowed_tables or []
-    statuses = allowed_statuses or ["production"]
+    statuses = allowed_statuses if allowed_statuses is not None else ["production"]
     allowed_tables_set = []
     allowed_ids = set()
 
@@ -430,7 +447,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     sem = asyncio.Semaphore(profile_fetch_concurrency)
 
-    async def fetch_profile(t_id, t_name):
+    async def fetch_profile(t_id, t_name, t_fqn):
         nonlocal cache_hit_count, cache_miss_count
         async with sem:
             try:
@@ -453,22 +470,25 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
                             cache_miss_count += 1
 
                 profile_res = await get_table_profile.ainvoke({"table_id": t_id})
-                return json.loads(profile_res)
+                data = json.loads(profile_res)
+                data["fully_qualified_name"] = t_fqn
+                return data
             except Exception as e:
                 print(f"Error fetching profile for {t_name}: {e}")
                 return None
 
     fetch_tasks = []
     for i, t in enumerate(candidate_tables):
+        fqn = f"{t.catalog}.{t.schema_name}.{t.name}"
         tables_info.append(
             {
                 "id": t.id,
-                "name": f"{t.catalog}.{t.schema_name}.{t.name}",
+                "name": fqn,
                 "description": "",
             }
         )
         if i < max_profiles_to_fetch:
-            fetch_tasks.append(fetch_profile(t.id, t.name))
+            fetch_tasks.append(fetch_profile(t.id, t.name, fqn))
 
     if fetch_tasks:
         results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -532,7 +552,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
     if schema_summarization and profile_details:
         try:
             summaries = [
-                f"[{p.get('table_name', 'unknown')}] {p.get('description', '') or '(no description available)'}"
+                f"[{p.get('fully_qualified_name', p.get('table_name', 'unknown'))}] {p.get('description', '') or '(no description available)'}"
                 for p in profile_details
             ]
             profiles_json_str = "\n".join(summaries)
@@ -599,7 +619,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     plan = data.schema_plan
     if plan is not None and not isinstance(plan, str):
-        plan = json.dumps(plan)
+        plan = plan.model_dump_json() if hasattr(plan, "model_dump_json") else json.dumps(plan)
     elif plan is None:
         plan = ""
 

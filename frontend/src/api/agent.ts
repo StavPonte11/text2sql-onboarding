@@ -17,35 +17,11 @@ api.interceptors.response.use(
   },
 );
 
-export interface QueryApproval {
-  approved: boolean;
-  rejection_category?: string;
-  feedback?: string;
-  suggested_fix?: string;
-}
+import type { components } from './schema';
 
-export interface ChatRequest {
-  query?: string;
-  thread_id?: string;
-  resume_value?: QueryApproval | string;
-  allowed_tables?: string[];
-  allowed_statuses?: string[];
-  extractors?: string[];
-  hitl_enabled?: boolean;
-}
-
-export interface ChatResponse {
-  thread_id: string;
-  status: 'completed' | 'interrupted';
-  interrupt_details?: Record<string, unknown>;
-  summary?: string;
-  raw_data_ref?: string;
-  sql_query?: string;
-  sql_explanation?: string;
-  schema_plan?: string;
-  trace_id?: string;
-  execution_path?: string[];
-}
+export type QueryApproval = components['schemas']['QueryApproval'];
+export type ChatRequest = components['schemas']['ChatRequest'];
+export type ChatResponse = components['schemas']['ChatResponse'];
 
 export const agentApi = {
   chat: (payload: ChatRequest): Promise<ChatResponse> =>

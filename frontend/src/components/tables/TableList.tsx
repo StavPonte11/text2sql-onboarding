@@ -48,6 +48,7 @@ export function TableList() {
     handleSubmit,
     reset,
     watch,
+    setError,
     formState: { errors },
   } = useForm<CreateSchemaType>({
     resolver: zodResolver(createSchema),
@@ -82,6 +83,21 @@ export function TableList() {
   }, [watchOasisSourceId, resetMutation]);
 
   const onSubmit = (formData: CreateSchemaType) => {
+    const isDuplicate = data?.some(
+      (t) =>
+        t.oasis_source_id === formData.oasis_source_id ||
+        `${t.service}.${t.catalog}.${t.schema_name}.${t.name}` === formData.oasis_source_id ||
+        `${t.catalog}.${t.schema_name}.${t.name}` === formData.oasis_source_id
+    );
+
+    if (isDuplicate) {
+      setError('oasis_source_id', {
+        type: 'manual',
+        message: 'This table already exists in the system.',
+      });
+      return;
+    }
+
     createMutation.mutate(formData);
   };
 
