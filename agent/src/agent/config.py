@@ -69,6 +69,7 @@ class AgentSettings(BaseSettings):
     SATISFACTION_MAX_FAILURES: int = 2  # escalate to HITL after this many check failures
 
     # ── Ambiguity Resolution ──────────────────────────────────────────────────
+    ENABLE_AMBIGUITY_DETECT: bool = True
     MAX_AMBIGUITY_RETRIES: int = 2  # max times user can clarify before hard stop
 
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────

@@ -176,6 +176,14 @@ def route_schema_explorer(state: AgentState) -> str:
         if (state.get("schema_explorer_retry_count") or 0) >= MAX_SCHEMA_RETRIES:
             return "hitl_escalation"
         return "schema_explorer"
+        
+    runtime_flags = state.get("runtime_flags") or {}
+    enable_ambiguity = runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
+    if isinstance(enable_ambiguity, str):
+        enable_ambiguity = enable_ambiguity.lower() == "true"
+        
+    if enable_ambiguity:
+        return "detect_ambiguity"
     return "query_builder"
 
 
@@ -258,9 +266,8 @@ workflow.add_conditional_edges(
     route_schema_explorer,
     {
         "schema_explorer": "schema_explorer",
-        # route_schema_explorer returns "query_builder" on success;
-        # we intercept it here and send to detect_ambiguity first.
-        "query_builder": "detect_ambiguity",
+        "detect_ambiguity": "detect_ambiguity",
+        "query_builder": "query_builder",
         "hitl_escalation": "hitl_escalation",  # G2-02
     },
 )
