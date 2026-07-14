@@ -50,30 +50,29 @@ from agent.utils.redis_publisher import publish_node_event
 
 logger = logging.getLogger(__name__)
 
+from typing import Literal
 
 def _resolve_ambiguity_type(parsed: dict) -> str:
+    ambiguity_type = parsed.get("ambiguity_type")
     clarifying: str | None = parsed.get("clarifying_questions")
-    reason: str = parsed.get("reason") or ""
-    is_ambiguous = parsed.get("is_ambiguous", False)
 
     # If the LLM generated a clarifying question (and it's not null/empty), it MUST be ambiguous
-    # regardless of whether it correctly flipped the boolean flag.
+    # regardless of whether it accidentally classified it as unanswerable.
     if clarifying is not None and clarifying.strip():
         return "ambiguous"
 
-    # If flagged as ambiguous but no question provided
-    if is_ambiguous:
-        if "unanswer" in reason.lower():
-            return "unanswerable"
-        return "ambiguous"
+    if ambiguity_type in ["clear", "ambiguous", "unanswerable"]:
+        return ambiguity_type
 
     return "clear"
 
 
 class AmbiguityResult(BaseModel):
-    is_ambiguous: bool = Field(description="True if the request is ambiguous or unanswerable, False if clear")
+    ambiguity_type: Literal["clear", "ambiguous", "unanswerable"] = Field(
+        description="The determined state of the query: 'clear' (proceed), 'ambiguous' (needs clarification), or 'unanswerable' (impossible)."
+    )
     reason: str = Field(default="", description="Explanation of the ambiguity detection decision")
-    clarifying_questions: str | None = Field(default=None, description="Questions to ask the user if ambiguous. Null if clear.")
+    clarifying_questions: str | None = Field(default=None, description="Questions to ask the user if ambiguous. Null if clear or unanswerable.")
 
 
 async def detect_ambiguity_node(
@@ -153,14 +152,17 @@ async def detect_ambiguity_node(
         parsed = response.model_dump()
         ambiguity_type = _resolve_ambiguity_type(parsed)
     except Exception as exc:
-        logger.error("detect_ambiguity: unexpected error parsing structured output: %s", exc)
+        logger.error(f"Ambiguity detection structured output failed: {exc}")
+        # Fallback to ambiguous on parsing failure to be safe
         parsed = {
-            "is_ambiguous": True,
+            "ambiguity_type": "ambiguous",
             "intent_deconstruction": "",
+            "active_schema_search": "",
+            "ambiguity_check": "",
             "logical_sql_plan": "",
             "schema_alignment_check": "",
             "reason": f"Ambiguity detection failed to parse LLM structured output: {exc}",
-            "clarifying_questions": "",
+            "clarifying_questions": "Could you rephrase or add more detail to your request so we can interpret it precisely?",
         }
         ambiguity_type = "ambiguous"
 

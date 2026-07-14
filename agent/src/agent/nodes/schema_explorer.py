@@ -524,7 +524,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
         )
     except Exception as e:
         print(f"Structured output parsing failed in schema explorer: {e}")
-        data = SchemaExplorerOutput(schema_plan=None)
+        data = SchemaExplorerOutput(schema_plan="")
 
     plan = data.schema_plan or ""
 
