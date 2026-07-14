@@ -156,11 +156,6 @@ async def detect_ambiguity_node(
         # Fallback to ambiguous on parsing failure to be safe
         parsed = {
             "ambiguity_type": "ambiguous",
-            "intent_deconstruction": "",
-            "active_schema_search": "",
-            "ambiguity_check": "",
-            "logical_sql_plan": "",
-            "schema_alignment_check": "",
             "reason": f"Ambiguity detection failed to parse LLM structured output: {exc}",
             "clarifying_questions": "Could you rephrase or add more detail to your request so we can interpret it precisely?",
         }
