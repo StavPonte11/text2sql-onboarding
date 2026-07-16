@@ -358,7 +358,7 @@ async def get_table_profile(table_id: str) -> str:
         return json.dumps(lightweight, indent=2)
 
 
-async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
+async def schema_explorer_node(state: AgentState, config: RunnableConfig = None):
     """RAG Schema Explorer sub-agent node — with G2-01 scoping, G2-03 enrichment, G2-05 caching."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
 
@@ -614,7 +614,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     return result_state
 
-async def sql_static_validations_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
+async def sql_static_validations_node(state: AgentState, config: RunnableConfig = None) -> dict:
     """
     Check if tables_used actually exist.
     """

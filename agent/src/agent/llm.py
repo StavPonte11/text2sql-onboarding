@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 # Flag name → LLM_MODEL env-var fallback for each node
 _NODE_MODEL_FLAGS: dict[str, str] = {
     "extractor":          "EXTRACTOR_MODEL",
+    "location_extractor": "LOCATION_EXTRACTOR_MODEL",
     "schema_explorer":    "SCHEMA_EXPLORER_MODEL",
     "query_builder":      "QUERY_BUILDER_MODEL",
     "refiner":            "REFINER_MODEL",
@@ -19,8 +20,9 @@ _NODE_MODEL_FLAGS: dict[str, str] = {
 }
 
 _NODE_TEMP_FLAGS: dict[str, str] = {
-    "extractor":     "EXTRACTOR_TEMPERATURE",
-    "query_builder": "QUERY_BUILDER_TEMPERATURE",
+    "extractor":          "EXTRACTOR_TEMPERATURE",
+    "location_extractor": "LOCATION_EXTRACTOR_TEMPERATURE",
+    "query_builder":      "QUERY_BUILDER_TEMPERATURE",
 }
 
 

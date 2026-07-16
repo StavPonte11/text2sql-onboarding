@@ -43,6 +43,7 @@ class AgentSettings(BaseSettings):
         "text2sql/finalizer_sql_explanation"
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
+    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
 
     MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)
     REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=4, gt=0)
