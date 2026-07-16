@@ -28,6 +28,10 @@ from core.services.profiling_engine import (
 
 logger = logging.getLogger(__name__)
 
+HIGH_NULL_RATE_THRESHOLD = 0.20
+PK_CANDIDATE_DISTINCT_RATIO = 0.95
+PROFILE_CACHE_HOURS = 24
+
 
 @dataclasses.dataclass
 class ChunkMetricsParams:
@@ -129,6 +133,10 @@ def fetch_table_metadata_activity(table_id: str, resume_from_partial: bool = Fal
                     "median_value": col.median_value,
                     "top_values": col.top_values,
                     "is_categorical": col.is_categorical,
+                    "is_large_categorical": col.semantic_type == "large_categorical",
+                    "is_free_text": col.semantic_type == "free_text",
+                    "is_boolean": col.semantic_type == "boolean",
+                    "is_continuous": col.semantic_type == "continuous",
                     "is_geo": col.is_geo,
                     "is_time": col.is_time,
                     "semantic_type": col.semantic_type,
@@ -254,12 +262,12 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         if cols:
             insights.append(f"{name} columns: {', '.join(cols[:5])}.")
 
-    high_null = [c.column_name for c in col_stats if c.null_rate > 0.20]
+    high_null = [c.column_name for c in col_stats if c.null_rate > HIGH_NULL_RATE_THRESHOLD]
     if high_null:
-        insights.append(f"High null rate (>20%): {', '.join(high_null[:5])}.")
+        insights.append(f"High null rate (>{int(HIGH_NULL_RATE_THRESHOLD * 100)}%): {', '.join(high_null[:5])}.")
 
     if row_count > 0:
-        pk_candidates = [c.column_name for c in col_stats if c.distinct_count >= row_count * 0.95]
+        pk_candidates = [c.column_name for c in col_stats if c.distinct_count >= row_count * PK_CANDIDATE_DISTINCT_RATIO]
         if pk_candidates:
             insights.append(f"PK candidates: {', '.join(pk_candidates[:3])}.")
 
@@ -300,10 +308,9 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         profile.auto_insights = insights
         profile.sample_data = sample_data
         profile.profile_json = profile_json
-        profile.cached_until = datetime.now(timezone.utc) + timedelta(hours=24)
+        profile.cached_until = datetime.now(timezone.utc) + timedelta(hours=PROFILE_CACHE_HOURS)
         profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
-        session.commit()
 
         # Clear old column profiles
         old_cols = session.exec(
@@ -311,7 +318,6 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         ).all()
         for old_c in old_cols:
             session.delete(old_c)
-        session.commit()
 
         # Persist new column profiles
         for cs in col_stats:
