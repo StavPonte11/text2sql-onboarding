@@ -340,9 +340,8 @@ def parse_combined_result(columns_meta: list[tuple], row_dict: dict[str, Any], r
         if _is_row_type(data_type) or _is_complex_type(data_type):
             continue
 
-        col_key = col_name.lower()
-        non_null_key = f"{col_key}__non_null"
-        distinct_key = f"{col_key}__distinct"
+        non_null_key = f"{col_name}__non_null"
+        distinct_key = f"{col_name}__distinct"
         if non_null_key not in row_dict:
             continue
 
@@ -358,18 +357,18 @@ def parse_combined_result(columns_meta: list[tuple], row_dict: dict[str, Any], r
 
         dtype_lower = data_type.lower()
         if any(t in dtype_lower for t in NUMERIC_TYPES):
-            metrics["min"] = row_dict.get(f"{col_key}__min")
-            metrics["max"] = row_dict.get(f"{col_key}__max")
-            metrics["avg"] = row_dict.get(f"{col_key}__avg")
-            metrics["quants"] = row_dict.get(f"{col_key}__quants") # type: ignore
-            metrics["stddev"] = row_dict.get(f"{col_key}__std")
+            metrics["min"] = row_dict.get(f"{col_name}__min")
+            metrics["max"] = row_dict.get(f"{col_name}__max")
+            metrics["avg"] = row_dict.get(f"{col_name}__avg")
+            metrics["quants"] = row_dict.get(f"{col_name}__quants") # type: ignore
+            metrics["stddev"] = row_dict.get(f"{col_name}__std")
         elif any(t in dtype_lower for t in TIME_TYPES):
-            metrics["min"] = row_dict.get(f"{col_key}__min")
-            metrics["max"] = row_dict.get(f"{col_key}__max")
-            metrics["quants"] = row_dict.get(f"{col_key}__quants") # type: ignore
-            metrics["stddev"] = row_dict.get(f"{col_key}__std")
-            metrics["min_unix"] = row_dict.get(f"{col_key}__min_unix")
-            metrics["max_unix"] = row_dict.get(f"{col_key}__max_unix")
+            metrics["min"] = row_dict.get(f"{col_name}__min")
+            metrics["max"] = row_dict.get(f"{col_name}__max")
+            metrics["quants"] = row_dict.get(f"{col_name}__quants") # type: ignore
+            metrics["stddev"] = row_dict.get(f"{col_name}__std")
+            metrics["min_unix"] = row_dict.get(f"{col_name}__min_unix")
+            metrics["max_unix"] = row_dict.get(f"{col_name}__max_unix")
 
         col_metrics[col_name] = metrics
     return col_metrics
@@ -473,7 +472,7 @@ def _classify_semantic_type(
 
     # 1. Base Type Flags
     is_geo = col_lower in GEO_HINTS or "geo" in col_lower or "coord" in col_lower
-    is_time = dtype_lower in TIME_TYPES or any(h in col_lower for h in TIME_HINTS)
+    is_time = any(t in dtype_lower for t in TIME_TYPES) or any(h in col_lower for h in TIME_HINTS)
     is_string = any(t in dtype_lower for t in STRING_TYPES)
     is_numeric = any(t in dtype_lower for t in NUMERIC_TYPES)
 
@@ -1021,13 +1020,16 @@ def generate_table_summary(result: "TableProfilingResult") -> str:
             "for querying. Be specific about what the table contains."
         )
 
-        llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY,
-            temperature=0.0,
-            timeout=60.0
-        )
+        kwargs = {
+            "model": settings.LLM_MODEL,
+            "base_url": settings.LLM_BASE_URL,
+            "temperature": 0.0,
+            "timeout": 60.0
+        }
+        if settings.LLM_API_KEY:
+            kwargs["api_key"] = settings.LLM_API_KEY
+            
+        llm = ChatOpenAI(**kwargs)
 
         response = llm.invoke(prompt)
         return response.content

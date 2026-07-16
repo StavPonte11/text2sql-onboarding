@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from datetime import timedelta
 
 from temporalio import workflow
@@ -9,6 +8,10 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.config import settings
     from app.workflows.profiling_activities import (
+        AiSummaryParams,
+        ChunkMetricsParams,
+        PersistResultsParams,
+        ProfileColumnParams,
         compute_chunk_metrics_activity,
         fetch_table_metadata_activity,
         generate_ai_summary_activity,
@@ -16,19 +19,16 @@ with workflow.unsafe.imports_passed_through():
         profile_column_activity,
     )
 
-logger = logging.getLogger(__name__)
-
-
 @workflow.defn
 class TableProfilingWorkflow:
     @workflow.run
     async def run(self, table_id: str, resume_from_partial: bool = False) -> None:
-        logger.info("Running TableProfilingWorkflow for table_id: %s (resume=%s)", table_id, resume_from_partial)
+        workflow.logger.info("Running TableProfilingWorkflow for table_id: %s (resume=%s)", table_id, resume_from_partial)
 
         # 1. Fetch metadata activity
         metadata = await workflow.execute_activity(
             fetch_table_metadata_activity,
-            {"table_id": table_id, "resume_from_partial": resume_from_partial},
+            args=[table_id, resume_from_partial],
             start_to_close_timeout=timedelta(seconds=settings.ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
@@ -68,12 +68,12 @@ class TableProfilingWorkflow:
                     async def run_chunk(chunk):
                         return await workflow.execute_activity(
                             compute_chunk_metrics_activity,
-                            {
-                                "fqn": fqn,
-                                "table_id": table_id,
-                                "row_count": row_count,
-                                "columns_chunk": chunk
-                            },
+                            ChunkMetricsParams(
+                                fqn=fqn,
+                                table_id=table_id,
+                                row_count=row_count,
+                                columns_chunk=chunk
+                            ),
                             start_to_close_timeout=timedelta(seconds=settings.ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS),
                             retry_policy=RetryPolicy(maximum_attempts=3),
                         )
@@ -83,14 +83,14 @@ class TableProfilingWorkflow:
 
                     for i, res in enumerate(chunk_results):
                         if isinstance(res, BaseException):
-                            logger.error("Failed to run profiling chunk %d: %s", i, res)
+                            workflow.logger.error("Failed to run profiling chunk %d: %s", i, res)
                             is_partial = True
                             errors.append(f"Chunk profiling failed: {res}")
                             failed_subtasks.append(f"Profiling Chunk {i}")
                         else:
                             precomputed_metrics.update(res)
                 except Exception as exc:
-                    logger.error("Failed to run chunked profiling queries: %s", exc)
+                    workflow.logger.error("Failed to run chunked profiling queries: %s", exc)
                     is_partial = True
                     errors.append(f"Chunked profiling setup failed: {exc}")
                     failed_subtasks.append("Chunked Profiling Setup")
@@ -98,21 +98,21 @@ class TableProfilingWorkflow:
                 # Helper to run column profiling activity with error handling and retry policy
                 async def run_col_profile(col):
                     col_name, data_type = col[0], col[1]
-                    payload = {
-                        "col_name": col_name,
-                        "data_type": data_type,
-                        "row_count": row_count,
-                        "precomputed": precomputed_metrics.get(col_name),
-                        "sample_data": sample_data,
-                        "catalog": catalog,
-                        "schema_name": schema_name,
-                        "table_name": table_name,
-                        "table_id": table_id,
-                    }
+                    params = ProfileColumnParams(
+                        col_name=col_name,
+                        data_type=data_type,
+                        row_count=row_count,
+                        precomputed=precomputed_metrics.get(col_name),
+                        sample_data=sample_data,
+                        catalog=catalog,
+                        schema_name=schema_name,
+                        table_name=table_name,
+                        table_id=table_id,
+                    )
                     try:
                         res = await workflow.execute_activity(
                             profile_column_activity,
-                            payload,
+                            params,
                             start_to_close_timeout=timedelta(seconds=settings.ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS),
                             retry_policy=RetryPolicy(
                                 initial_interval=timedelta(seconds=2),
@@ -160,53 +160,54 @@ class TableProfilingWorkflow:
             # 4. Generate AI summary activity (skip if no columns completed or it's a completely failed run)
             ai_summary = ""
             if column_stats and not (is_partial and len(column_stats) == 0):
-                summary_payload = {
-                    "table_id": table_id,
-                    "table_fqn": fqn,
-                    "row_count": row_count,
-                    "column_count": len(columns_meta),
-                    "column_stats": column_stats,
-                }
+                summary_params = AiSummaryParams(
+                    table_id=table_id,
+                    table_fqn=fqn,
+                    row_count=row_count,
+                    column_count=len(columns_meta),
+                    column_stats=column_stats,
+                )
                 try:
                     ai_summary = await workflow.execute_activity(
                         generate_ai_summary_activity,
-                        summary_payload,
+                        summary_params,
                         start_to_close_timeout=timedelta(seconds=settings.ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS),
                         retry_policy=RetryPolicy(maximum_attempts=3),
                     )
                 except Exception as exc:
-                    logger.warning("generate_ai_summary_activity failed: %s", exc)
+                    workflow.logger.warning("generate_ai_summary_activity failed: %s", exc)
                     is_partial = True
                     failed_subtasks.append("Generate AI Summary")
                     errors.append(f"AI Summary generation failed: {exc}")
         except Exception as exc:
-            logger.error("Workflow failed with error: %s", exc)
+            workflow.logger.error("Workflow failed with error: %s", exc)
             is_partial = True
             failed_subtasks.append("Workflow Execution Failed")
             errors.append(f"Workflow crashed: {exc!s}")
             raise
         finally:
             # 5. Persist results activity
-            persist_payload = {
-                "table_id": table_id,
-                "profile_id": profile_id,
-                "table_fqn": fqn,
-                "row_count": row_count,
-                "sample_size": sample_size,
-                "column_count": len(columns_meta),
-                "sample_data": sample_data,
-                "column_stats": column_stats,
-                "ai_summary": ai_summary,
-                "is_partial": is_partial,
-                "failed_subtasks": failed_subtasks,
-                "errors": errors,
-            }
+            persist_params = PersistResultsParams(
+                table_id=table_id,
+                profile_id=profile_id,
+                table_fqn=fqn,
+                row_count=row_count,
+                sample_size=sample_size,
+                column_count=len(columns_meta),
+                sample_data=sample_data,
+                column_stats=column_stats,
+                ai_summary=ai_summary,
+                is_partial=is_partial,
+                failed_subtasks=failed_subtasks,
+                errors=errors,
+            )
             try:
                 await workflow.execute_activity(
                     persist_profiling_results_activity,
-                    persist_payload,
+                    persist_params,
                     start_to_close_timeout=timedelta(seconds=settings.ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
             except Exception as p_exc:
-                logger.error("Failed to persist results in finally block: %s", p_exc)
+                workflow.logger.error("Failed to persist results in finally block: %s", p_exc)
+                raise

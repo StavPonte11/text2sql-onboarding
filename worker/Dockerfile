@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 # Install uv, git and openssh-client
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.4.15 /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
 
 # Configure git to use ssh for github.com
@@ -23,5 +23,11 @@ RUN --mount=type=secret,id=deploy_key,target=/root/.ssh/id_rsa,mode=0600 \
 
 # Add virtualenv bin to PATH
 ENV PATH="/app/worker/.venv/bin:$PATH"
+
+# Create a non-root user and change ownership of the app directory
+RUN useradd -m workeruser && chown -R workeruser:workeruser /app
+
+# Switch to the non-root user
+USER workeruser
 
 CMD ["python", "-m", "app.main"]

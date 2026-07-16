@@ -1,7 +1,8 @@
 import dataclasses
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+from typing import Any, Dict, List, Optional
 from core.db.engine import engine
 from core.models.models import ColumnProfile, ProfilingStatus, Table, TableProfile
 from sqlmodel import Session, select
@@ -28,10 +29,51 @@ from core.services.profiling_engine import (
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass
+class ChunkMetricsParams:
+    fqn: str
+    table_id: str
+    row_count: int
+    columns_chunk: List[Any]
+
+@dataclasses.dataclass
+class ProfileColumnParams:
+    col_name: str
+    data_type: str
+    row_count: int
+    catalog: str
+    schema_name: str
+    table_name: str
+    table_id: str
+    precomputed: Optional[Dict[str, Any]] = None
+    sample_data: Optional[List[Dict[str, Any]]] = None
+
+@dataclasses.dataclass
+class AiSummaryParams:
+    table_id: str
+    table_fqn: str
+    row_count: int
+    column_count: int
+    column_stats: List[Dict[str, Any]]
+
+@dataclasses.dataclass
+class PersistResultsParams:
+    table_id: str
+    profile_id: str
+    table_fqn: str
+    row_count: int
+    sample_size: int
+    column_count: int
+    sample_data: List[Dict[str, Any]]
+    column_stats: List[Dict[str, Any]]
+    ai_summary: str = ""
+    is_partial: bool = False
+    failed_subtasks: List[str] = dataclasses.field(default_factory=list)
+    errors: List[str] = dataclasses.field(default_factory=list)
+
+
 @activity.defn
-def fetch_table_metadata_activity(payload: dict) -> dict:
-    table_id = payload["table_id"]
-    resume_from_partial = payload.get("resume_from_partial", False)
+def fetch_table_metadata_activity(table_id: str, resume_from_partial: bool = False) -> dict:
     logger.info("Starting fetch_table_metadata_activity for table_id: %s (resume=%s)", table_id, resume_from_partial)
     with Session(engine) as session:
         table = session.get(Table, table_id)
@@ -50,7 +92,7 @@ def fetch_table_metadata_activity(payload: dict) -> dict:
             profile = TableProfile(table_id=table_id)
 
         profile.status = ProfilingStatus.running
-        profile.updated_at = datetime.now()
+        profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -110,11 +152,11 @@ def fetch_table_metadata_activity(payload: dict) -> dict:
 
 
 @activity.defn
-def compute_chunk_metrics_activity(payload: dict) -> dict:
-    fqn = payload["fqn"]
-    table_id = payload["table_id"]
-    row_count = payload["row_count"]
-    columns_chunk = payload["columns_chunk"]
+def compute_chunk_metrics_activity(params: ChunkMetricsParams) -> dict:
+    fqn = params.fqn
+    table_id = params.table_id
+    row_count = params.row_count
+    columns_chunk = params.columns_chunk
 
     if row_count <= 0 or not columns_chunk:
         return {}
@@ -134,16 +176,16 @@ def compute_chunk_metrics_activity(payload: dict) -> dict:
 
 
 @activity.defn
-def profile_column_activity(payload: dict) -> dict:
-    col_name = payload["col_name"]
-    data_type = payload["data_type"]
-    row_count = payload["row_count"]
-    precomputed = payload.get("precomputed")
-    sample_data = payload.get("sample_data")
-    catalog = payload["catalog"]
-    schema = payload["schema_name"]
-    table = payload["table_name"]
-    table_id = payload["table_id"]
+def profile_column_activity(params: ProfileColumnParams) -> dict:
+    col_name = params.col_name
+    data_type = params.data_type
+    row_count = params.row_count
+    precomputed = params.precomputed
+    sample_data = params.sample_data
+    catalog = params.catalog
+    schema = params.schema_name
+    table = params.table_name
+    table_id = params.table_id
 
     fqn = _fqn(catalog, schema, table)
     logger.info("Profiling column %s (%s)", col_name, data_type)
@@ -154,11 +196,11 @@ def profile_column_activity(payload: dict) -> dict:
 
 
 @activity.defn
-def generate_ai_summary_activity(payload: dict) -> str:
-    table_fqn = payload["table_fqn"]
-    row_count = payload["row_count"]
-    column_count = payload["column_count"]
-    column_stats_dicts = payload["column_stats"]
+def generate_ai_summary_activity(params: AiSummaryParams) -> str:
+    table_fqn = params.table_fqn
+    row_count = params.row_count
+    column_count = params.column_count
+    column_stats_dicts = params.column_stats
 
     # Re-construct ColumnStats objects for generate_table_summary
     col_stats = []
@@ -169,10 +211,10 @@ def generate_ai_summary_activity(payload: dict) -> str:
 
     # Re-construct TableProfilingResult
     result = TableProfilingResult(
-        table_id=payload["table_id"],
+        table_id=params.table_id,
         table_fqn=table_fqn,
         version=1,
-        computed_at=datetime.now(),
+        computed_at=datetime.now(timezone.utc),
         row_count=row_count,
         column_count=column_count,
         column_stats=col_stats,
@@ -183,17 +225,17 @@ def generate_ai_summary_activity(payload: dict) -> str:
 
 
 @activity.defn
-def persist_profiling_results_activity(payload: dict) -> None:
-    table_id = payload["table_id"]
-    profile_id = payload["profile_id"]
-    row_count = payload["row_count"]
-    sample_size = payload["sample_size"]
-    column_count = payload["column_count"]
-    sample_data = payload["sample_data"]
-    column_stats_dicts = payload["column_stats"]
-    ai_summary = payload.get("ai_summary")
-    is_partial = payload.get("is_partial", False)
-    errors = payload.get("errors", [])
+def persist_profiling_results_activity(params: PersistResultsParams) -> None:
+    table_id = params.table_id
+    profile_id = params.profile_id
+    row_count = params.row_count
+    sample_size = params.sample_size
+    column_count = params.column_count
+    sample_data = params.sample_data
+    column_stats_dicts = params.column_stats
+    ai_summary = params.ai_summary
+    is_partial = params.is_partial
+    errors = params.errors
 
     logger.info("Persisting profiling results for table_id: %s (is_partial=%s)", table_id, is_partial)
 
@@ -224,9 +266,9 @@ def persist_profiling_results_activity(payload: dict) -> None:
     null_rate_avg = round(sum(c.null_rate for c in col_stats) / len(col_stats), 4) if col_stats else 0.0
 
     profile_json = _make_json_safe({
-        "table": payload["table_fqn"],
+        "table": params.table_fqn,
         "version": 1,
-        "computed_at": datetime.now().isoformat(),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
         "row_count": row_count,
         "sample_size": sample_size,
         "column_count": column_count,
@@ -240,7 +282,7 @@ def persist_profiling_results_activity(payload: dict) -> None:
         } for c in col_stats],
         "insights": insights,
         "errors": errors,
-        "failed_subtasks": payload.get("failed_subtasks", []),
+        "failed_subtasks": params.failed_subtasks,
     })
 
     with Session(engine) as session:
@@ -258,8 +300,8 @@ def persist_profiling_results_activity(payload: dict) -> None:
         profile.auto_insights = insights
         profile.sample_data = sample_data
         profile.profile_json = profile_json
-        profile.cached_until = datetime.now() + timedelta(hours=24)
-        profile.updated_at = datetime.now()
+        profile.cached_until = datetime.now(timezone.utc) + timedelta(hours=24)
+        profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
         session.commit()
 

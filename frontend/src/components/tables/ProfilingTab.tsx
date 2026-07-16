@@ -1342,12 +1342,18 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile', tableId] });
     },
+    onError: (err: any) => {
+      window.alert(err.message || 'Operation failed');
+    },
   });
 
   const terminateMutation = useMutation({
     mutationFn: () => profilingApi.terminate(tableId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile', tableId] });
+    },
+    onError: (err: any) => {
+      window.alert(err.message || 'Operation failed');
     },
   });
 
@@ -1412,22 +1418,20 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
           ) : profile?.status === 'failed' || profile?.is_partial ? (
             <>
               <button
-                className={`btn btn--outline${isRunning ? ' btn--loading' : ''}`}
+                className="btn btn--outline"
                 onClick={() => runMutation.mutate({ force: true })}
-                disabled={isRunning}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
               >
                 <RefreshCw size={16} />
                 Restart from Start
               </button>
               <button
-                className={`btn btn--primary${isRunning ? ' btn--loading' : ''}`}
+                className="btn btn--primary"
                 onClick={() => runMutation.mutate({ resume_from_partial: true })}
-                disabled={isRunning}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
               >
-                {isRunning ? <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <RefreshCw size={16} />}
-                {isRunning ? 'Running…' : 'Retry from Last Saved Point'}
+                <RefreshCw size={16} />
+                Retry from Last Saved Point
               </button>
             </>
           ) : (
