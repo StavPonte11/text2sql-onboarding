@@ -2,53 +2,122 @@
 geo_utils.py - Geocoding and geometry utility functions for standalone node.
 """
 
-import requests
 import json
 import logging
+import threading
 import time
 from functools import lru_cache
 from typing import Optional
+import shapely.wkt
+
+import requests
 from shapely.geometry import shape
- 
+
+from agent.config import settings
+
 logger = logging.getLogger(__name__)
 
+# ── Geometry type allow-list ──────────────────────────────────────────────────
+
+_AREA_TYPES = {"Polygon", "MultiPolygon"}
+
+# ── Thread-safe Nominatim rate limiter ────────────────────────────────────────
+# Enforces ≥1 s between outbound requests across all threads (Nominatim ToS).
+
+_rate_lock = threading.Lock()
+_last_request_time: float = 0.0
+
+
+def _nominatim_wait() -> None:
+    """Block the calling thread until at least 1 s has elapsed since the last
+    Nominatim request.  The lock guarantees only one thread enters the critical
+    section at a time, so concurrent callers queue rather than fire together."""
+    global _last_request_time
+    with _rate_lock:
+        now = time.monotonic()
+        gap = settings.NOMINATIM_RATE_LIMIT_SECONDS - (now - _last_request_time)
+        if gap > 0:
+            time.sleep(gap)
+        _last_request_time = time.monotonic()
+
+
+# ── Geocoding ─────────────────────────────────────────────────────────────────
+
+
 @lru_cache(maxsize=128)
-def get_geojson_polygon(location_name: str) -> Optional[dict]:
+def _fetch_geojson_polygon(location_name: str) -> Optional[dict]:
+    """Inner cached fetch.
+
+    Returns:
+        geometry dict  — for a valid Polygon / MultiPolygon result.
+        None           — when Nominatim legitimately has no area for the name
+                         (stable result, worth caching).
+
+    Raises:
+        requests.exceptions.RequestException | json.JSONDecodeError
+                       — on transient network / parse failures.
+                         lru_cache does NOT cache exceptions, so a later call
+                         may retry successfully.
     """
-    Fetches GeoJSON polygon for a Hebrew location name.
-    Returns the 'geometry' dict if found, else None.
-    """
-    # Enforce Nominatim policy: max 1 request per second
-    time.sleep(1)
-    try:
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": location_name,
-            "accept-language": "he",
-            "polygon_geojson": "1",
-            "limit": "1",
-            "format": "geojson"
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+    _nominatim_wait()
 
-        res = requests.get(url, params=params, headers=headers, timeout=10)
-        res.raise_for_status()
-        data = res.json()
+    url = settings.NOMINATIM_URL
+    params = {
+        "q": location_name,
+        "accept-language": "he",
+        "polygon_geojson": "1",
+        "limit": "1",
+        "format": "geojson",
+    }
+    headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
 
-        features = data.get("features", [])
-        if not features:
-            return None
+    res = requests.get(url, params=params, headers=headers, timeout=settings.NOMINATIM_TIMEOUT)
+    res.raise_for_status()          # raises RequestException on 4xx/5xx
+    data = res.json()               # raises JSONDecodeError on bad body
 
-        geom = features[0].get("geometry")
-        if not geom:
-            return None
-
-        return geom
-    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        logger.error(f"Geocoding API request failed for '{location_name}': {e}")
+    features = data.get("features", [])
+    if not features:
         return None
+
+    geom = features[0].get("geometry")
+    if not geom:
+        return None
+
+    # Finding 4 – reject non-area geometry types before returning
+    geom_type = geom.get("type")
+    if geom_type not in _AREA_TYPES:
+        logger.warning(
+            "Nominatim returned non-area geometry type '%s' for '%s'; skipping.",
+            geom_type,
+            location_name,
+        )
+        return None
+
+    return geom
+
+
+def get_geojson_polygon(location_name: str) -> Optional[dict]:
+    """Public wrapper around _fetch_geojson_polygon.
+
+    Transient request / JSON failures return None here without being stored by
+    the cache, so a subsequent call can retry. Stable 'not found' None results
+    from the inner function are cached normally.
+
+    Exposes cache_clear() and cache_info() from the inner lru_cache so callers
+    (including test fixtures) can manage the cache via the public API.
+    """
+    try:
+        return _fetch_geojson_polygon(location_name)
+    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+        logger.error("Geocoding API request failed for '%s': %s", location_name, e)
+        return None
+
+
+# Expose lru_cache management methods on the public function so callers that
+# relied on the old @lru_cache surface (e.g. test fixtures calling
+# get_geojson_polygon.cache_clear()) continue to work unchanged.
+get_geojson_polygon.cache_clear = _fetch_geojson_polygon.cache_clear  # type: ignore[attr-defined]
+get_geojson_polygon.cache_info  = _fetch_geojson_polygon.cache_info   # type: ignore[attr-defined]
 
 
 def geojson_to_simplified_wkt(geojson_geom: dict, max_length: int = 2100) -> Optional[str]:
@@ -81,7 +150,7 @@ def geojson_to_simplified_wkt(geojson_geom: dict, max_length: int = 2100) -> Opt
     best_wkt = None
 
     # Binary search optimal tolerance
-    for _ in range(25):
+    for _ in range(settings.NOMINATIM_SIMPLIFY_ITERATIONS):
         mid = (low + high) / 2
         try:
             simpl_mid = geom_shape.simplify(mid, preserve_topology=True)
@@ -99,7 +168,6 @@ def geojson_to_simplified_wkt(geojson_geom: dict, max_length: int = 2100) -> Opt
 
     # Step 3: Bounding box fallback if even tolerance=1.0 exceeded limit
     try:
-        import shapely.wkt
         envelope_geom = geom_shape.envelope
         envelope_wkt = f"'{shapely.wkt.dumps(envelope_geom, rounding_precision=4)}'"
         if len(envelope_wkt) <= max_length:

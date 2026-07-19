@@ -12,6 +12,7 @@ from agent.services import geo_utils
 from agent.langfuse_client import langfuse_client
 from agent.config import settings
 
+import asyncio
 import json
 import re
 from json_repair import repair_json
@@ -34,11 +35,30 @@ class LocationExtractionResult(BaseModel):
     locations_coords_dict: Dict[str, str] = Field(default_factory=dict)
 
 
+def _make_var_name(english_name: str) -> str:
+    """Convert an LLM-produced English name into a safe Python/SQL identifier.
+
+    Steps:
+    1. Lowercase.
+    2. Replace every non-alphanumeric/underscore character with '_'.
+    3. Collapse consecutive underscores and strip leading/trailing ones.
+    4. Prefix with 'loc_' when the result starts with a digit or is empty.
+    5. Append '_wkt' suffix.
+    """
+    name = english_name.lower()
+    name = re.sub(r'[^a-z0-9_]', '_', name)  # replace punctuation / spaces
+    name = re.sub(r'_+', '_', name)            # collapse runs
+    name = name.strip('_')                     # strip edges
+    if not name or name[0].isdigit():
+        name = f"loc_{name}" if name else "unknown"
+    return f"{name}_wkt"
+
+
 class LocationExtractorAgent(BaseExtractor):
-    def __init__(self, llm_client, max_wkt_length: int = 2100, api_token: Optional[str] = None, runtime_flags: dict | None = None):
+    def __init__(self, llm_client, max_wkt_length: int | None = None, api_token: Optional[str] = None, runtime_flags: dict | None = None):
         super().__init__(runtime_flags)
         self.llm = llm_client
-        self.max_wkt_length = max_wkt_length
+        self.max_wkt_length = max_wkt_length if max_wkt_length is not None else settings.LOCATION_MAX_WKT_LENGTH
         self.prompt_template = self._build_prompt()
         self._last_result: LocationExtractionResult | None = None
 
@@ -73,11 +93,19 @@ class LocationExtractorAgent(BaseExtractor):
         instruction_parts = []
         coords_dict = {}
         names_dict = {}
+        seen_ids: set = set()
         for loc in successful:
-            var_name = f"{loc.english_name.lower().replace(' ', '_')}_wkt"
+            names_dict[loc.hebrew_name] = loc.english_name  # always populated
+            var_name = _make_var_name(loc.english_name)
+            if var_name in seen_ids:
+                logger.warning(
+                    "Duplicate identifier '%s' for location '%s'; skipping coords/instruction entry.",
+                    var_name, loc.hebrew_name,
+                )
+                continue
+            seen_ids.add(var_name)
             instruction_parts.append(f"{var_name} = {loc.wkt_polygon}")
             coords_dict[var_name] = loc.wkt_polygon
-            names_dict[loc.hebrew_name] = loc.english_name
 
         instruction_text = "\n".join(instruction_parts) if instruction_parts else ""
 
@@ -148,5 +176,6 @@ class LocationExtractorAgent(BaseExtractor):
         # Step 2: Robust JSON Parsing
         locations_map = self._parse_llm_json(content)
 
-        # Step 3 & 4: Process locations
-        return self._process_locations(locations_map)
+        # Step 3 & 4: Process locations in a worker thread to avoid blocking
+        # the event loop with network I/O and rate-limiter sleeps.
+        return await asyncio.to_thread(self._process_locations, locations_map)

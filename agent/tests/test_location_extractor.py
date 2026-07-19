@@ -107,22 +107,28 @@ def test_wkt_simplification_fallback_to_envelope():
     wkt_result = geojson_to_simplified_wkt(geojson_dense, max_length=120)
     assert wkt_result is not None
     assert len(wkt_result) <= 120
-    # Bounding box of unit circle region fits within limits
-    assert "POLYGON" in wkt_result
-    
+    # Verify the exact envelope fallback branch was taken, not just any polygon
+    import shapely.wkt as shwkt
+    expected_envelope_wkt = f"'{shwkt.dumps(shape(geojson_dense).envelope, rounding_precision=4)}'"
+    assert wkt_result == expected_envelope_wkt
+
     # Impossibly small limit that even the envelope cannot fit
     assert geojson_to_simplified_wkt(geojson_dense, max_length=10) is None
 
 
 # 3. Test API Failure handling (Internal requests.get mock)
 def test_geocoding_api_failure(mocker):
-    # Mock requests.get to throw HTTPError
-    mock_get = mocker.patch("requests.get", side_effect=requests.exceptions.HTTPError("Nominatim down"))
-    
+    # Mock requests.get to return a response whose raise_for_status() raises HTTPError,
+    # mirroring the real code path: requests.get(...) -> res.raise_for_status().
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("Nominatim down")
+    mock_get = mocker.patch("agent.services.geo_utils.requests.get", return_value=mock_response)
+
     # Verify get_geojson_polygon catches it and returns None
     result = get_geojson_polygon("failure_test_location")
     assert result is None
     mock_get.assert_called_once()
+    mock_response.raise_for_status.assert_called_once()
 
 
 # 4. End-to-End Agent execution mock

@@ -88,7 +88,7 @@ class LocationExtractor(BaseExtractor):
     def __init__(self, runtime_flags: dict | None = None):
         super().__init__(runtime_flags)
         llm_client = get_llm("location_extractor", runtime_flags=runtime_flags)
-        self._agent = LocationExtractorAgent(llm_client=llm_client, max_wkt_length=2100)
+        self._agent = LocationExtractorAgent(llm_client=llm_client, max_wkt_length=settings.LOCATION_MAX_WKT_LENGTH)
 
     def extract(self, query: str) -> List[ContextEntry]:
         return self._agent.extract(query)
@@ -146,15 +146,25 @@ def extractor_node(state: AgentState, config: RunnableConfig | None = None) -> d
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     publish_node_event_sync(thread_id, "extractor")
 
-    extractors: List[BaseExtractor] = [
-        TimeExtractor(runtime_flags=runtime_flags),
-        LLMExtractor(runtime_flags=runtime_flags),
-        LocationExtractor(runtime_flags=runtime_flags),
+    # Build each extractor independently so a single construction failure
+    # (e.g. Langfuse unavailable for LocationExtractor) does not abort the
+    # whole list and lose TimeExtractor / LLMExtractor results.
+    _extractor_specs: list = [
+        (TimeExtractor,    {"runtime_flags": runtime_flags}),
+        (LLMExtractor,     {"runtime_flags": runtime_flags}),
+        (LocationExtractor, {"runtime_flags": runtime_flags}),
         *[
-            HTTPExtractor(ext["url"], ext["name"], runtime_flags=runtime_flags)
-            for ext in active_extractors
+            (HTTPExtractor, {"url": e["url"], "name": e["name"], "runtime_flags": runtime_flags})
+            for e in active_extractors
         ],
     ]
+
+    extractors: List[BaseExtractor] = []
+    for factory, kwargs in _extractor_specs:
+        try:
+            extractors.append(factory(**kwargs))
+        except Exception as exc:
+            print(f"Extractor {factory.__name__} failed to initialise, skipping: {exc}")
 
     all_enrichments: List[dict] = []
 
