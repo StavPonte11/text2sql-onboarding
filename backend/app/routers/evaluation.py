@@ -318,7 +318,9 @@ def _run_production_dataset_eval(
     session: Session, run_name_prefix: str, promotion_run_id: str
 ) -> float:
     prod_tables = session.exec(
-        select(Table).where(Table.status == TableStatus.production)
+        select(Table)
+        .where(Table.status == TableStatus.production)
+        .where(Table.owner_id != "spider2")
     ).all()
 
     if not prod_tables:
@@ -459,7 +461,9 @@ def _run_regression_eval(
     run_name_prefix: str, session: Session, promotion_run_id: str
 ) -> float:
     prod_tables = session.exec(
-        select(Table).where(Table.status == TableStatus.production)
+        select(Table)
+        .where(Table.status == TableStatus.production)
+        .where(Table.owner_id != "spider2")
     ).all()
     all_production_questions: list[GoldenQuestion] = []
     table_names = []
@@ -913,12 +917,21 @@ def get_batch_runs(promotion_run_id: str, session: Session = Depends(get_session
 def get_run(run_id: str, session: Session = Depends(get_session)):
     result = session.exec(
         select(EvalRun, Table.name)
-        .join(Table, EvalRun.table_id == Table.id)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(EvalRun.id == run_id)
     ).first()
     if not result:
         raise HTTPException(status_code=404, detail="Eval run not found")
     run, table_name = result
+    if not table_name:
+        if run.triggered_by == "promotion-baseline":
+            table_name = "Production Baseline"
+        elif run.triggered_by == "promotion-regression":
+            table_name = "Production Regression"
+        elif run.triggered_by:
+            table_name = f"Dataset: {run.triggered_by}"
+        else:
+            table_name = "Unknown"
     return EvalRunRead.model_validate(run, update={"table_name": table_name})
 
 

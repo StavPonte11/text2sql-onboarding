@@ -293,9 +293,16 @@ def _run_dataset_pipeline(dataset_name: str, run_id: str):
             # Resolve all production table names from the DB to pass as additional_tables
             from core.models.models import Table, TableStatus
 
-            prod_tables = session.exec(
-                select(Table).where(Table.status == TableStatus.production)
-            ).all()
+            if dataset_name == "spider2":
+                prod_tables = session.exec(
+                    select(Table).where(Table.owner_id == "spider2")
+                ).all()
+            else:
+                prod_tables = session.exec(
+                    select(Table)
+                    .where(Table.status == TableStatus.production)
+                    .where(Table.owner_id != "spider2")
+                ).all()
             table_names = [t.name for t in prod_tables]
 
             req = {
@@ -339,7 +346,9 @@ def trigger_dataset_run(
     # 1. Sync production dataset if requested
     if dataset_name == "text2sql_production":
         prod_tables = session.exec(
-            select(Table).where(Table.status == TableStatus.production)
+            select(Table)
+            .where(Table.status == TableStatus.production)
+            .where(Table.owner_id != "spider2")
         ).all()
         all_production_questions: list[GoldenQuestion] = []
         for table in prod_tables:

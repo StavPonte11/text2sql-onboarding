@@ -69,14 +69,21 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 "execution_path": execution_path + ["refiner"],
             }
 
-        langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
-        if langfuse_prompt is None:
-            raise RuntimeError(
-                f"Langfuse prompt '{settings.LANGFUSE_PROMPT_REFINER}' could not be retrieved."
+        try:
+            langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
+        except Exception as prompt_err:
+            logging.getLogger(__name__).warning(f"Failed to get refiner prompt from Langfuse: {prompt_err}. Using fallback.")
+            langfuse_prompt = None
+
+        if langfuse_prompt is not None:
+            prompt = ChatPromptTemplate.from_messages(
+                langfuse_prompt.get_langchain_prompt()
             )
-        prompt = ChatPromptTemplate.from_messages(
-            langfuse_prompt.get_langchain_prompt()
-        )
+        else:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a Trino SQL expert database assistant. Your task is to fix a Trino SQL query that failed with a syntax or schema error."),
+                ("user", "Original User Query: {user_query}\n\nFailed SQL Query: {sql}\n\nTrino Error: {error}\n\nError History: {error_history}\n\nDatabase Schema Context:\n{schema_context}\n\nPlease rewrite the SQL query to fix the error. Return ONLY the valid SQL query inside a ```sql ``` block.")
+            ])
         _llm = get_llm("refiner", runtime_flags=runtime_flags)
         chain = prompt | _llm
 

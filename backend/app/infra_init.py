@@ -12,6 +12,12 @@ the entire data layer is self-healing after `docker compose down/up`:
                  trigger a profiling job for each (idempotent).
 
 All steps are fully idempotent. Running this multiple times is safe.
+
+NOTE on Trino catalogs: this module does NOT create Snowflake catalog
+.properties files -- that's scripts/generate_trino_catalogs.py. Trino only
+loads file-based catalogs at container startup, so if new catalog files
+were added after Trino was already running, restart Trino before this
+module's OpenMetadata/Snowflake-related steps will see them.
 """
 
 import base64
@@ -49,6 +55,14 @@ _OM_SERVICE_NAME = "local_trino"
 
 _TRINO_READY_RETRIES = 20
 _TRINO_READY_INTERVAL = 5  # seconds between retries
+
+# How long to wait after creating a brand-new Airflow ingestion pipeline
+# before attempting to trigger it, and how many times to retry. Airflow
+# needs a few seconds to pick up and register a newly-deployed DAG before
+# it will accept a trigger call -- without this, a freshly created pipeline
+# just sits untouched until its next scheduled run (which may be a day away).
+_OM_PIPELINE_TRIGGER_DELAY = 20  # seconds before first retry attempt
+_OM_PIPELINE_TRIGGER_RETRIES = 6
 
 # ── Airlines Snowflake catalog ─────────────────────────────────────────────────
 # System owner used for infrastructure-seeded tables
@@ -890,6 +904,53 @@ def _ensure_om_service(token: str) -> str | None:
     return None
 
 
+def _trigger_pipeline_with_retries(pid: str, token: str, pipeline_name: str) -> None:
+    """
+    Background worker: repeatedly attempt to trigger a just-created ingestion
+    pipeline. Airflow needs a short window after DAG deployment before it
+    will accept a trigger call for a brand-new DAG -- without this retry
+    loop, a freshly created pipeline just sits idle until its next scheduled
+    run (which may be a day away), leaving OpenMetadata (and everything
+    downstream of it, e.g. sync_om_metadata.py) looking stale/empty for
+    catalogs that were only just added.
+    """
+
+    def _worker() -> None:
+        for attempt in range(1, _OM_PIPELINE_TRIGGER_RETRIES + 1):
+            time.sleep(_OM_PIPELINE_TRIGGER_DELAY)
+            status, data = _om_post(
+                f"services/ingestionPipelines/trigger/{pid}", {}, token
+            )
+            if status in ("200", "201"):
+                logger.info(
+                    "[InfraInit] Triggered ingestion pipeline '%s' (attempt %d/%d) ✓",
+                    pipeline_name,
+                    attempt,
+                    _OM_PIPELINE_TRIGGER_RETRIES,
+                )
+                return
+            logger.debug(
+                "[InfraInit] Trigger attempt %d/%d for pipeline '%s' failed (HTTP %s): %s",
+                attempt,
+                _OM_PIPELINE_TRIGGER_RETRIES,
+                pipeline_name,
+                status,
+                data,
+            )
+        logger.warning(
+            "[InfraInit] Could not trigger ingestion pipeline '%s' after %d attempts "
+            "over ~%ds; it will run on its next Airflow schedule instead. You can also "
+            "trigger it manually from the OpenMetadata UI.",
+            pipeline_name,
+            _OM_PIPELINE_TRIGGER_RETRIES,
+            _OM_PIPELINE_TRIGGER_DELAY * _OM_PIPELINE_TRIGGER_RETRIES,
+        )
+
+    threading.Thread(
+        target=_worker, daemon=True, name=f"om-pipeline-trigger-{pipeline_name}"
+    ).start()
+
+
 def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
     pipeline_name = "local_trino_metadata"
     pipeline_fqn = f"{_OM_SERVICE_NAME}.{pipeline_name}"
@@ -900,7 +961,8 @@ def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
             "[InfraInit] OM ingestion pipeline '%s' already exists — OK", pipeline_name
         )
         pid = data["id"]
-        # Trigger it on startup to ensure latest data
+        # Trigger it on startup to ensure latest data (this DAG already exists
+        # in Airflow, so no delay/retry needed here).
         _om_post(f"services/ingestionPipelines/trigger/{pid}", {}, token)
         return
 
@@ -924,15 +986,15 @@ def _ensure_om_ingestion_pipeline(token: str, svc_id: str) -> None:
         pid = data["id"]
 
         # Deploy it to Airflow
-        status_deploy = _om_post(f"services/ingestionPipelines/deploy/{pid}", {}, token)
         status_deploy, _ = _om_post(
             f"services/ingestionPipelines/deploy/{pid}", {}, token
         )
         logger.info("[InfraInit] Deployed pipeline: %s", status_deploy)
 
-        # We can't trigger it immediately because Airflow takes a few seconds to load the new DAG.
-        # But Airflow will pick it up and run it on schedule.
-        # Alternatively, the user can manually trigger it from the UI.
+        # Airflow needs a few seconds to register the newly-deployed DAG
+        # before it will accept a trigger call. Retry in the background
+        # instead of leaving it to wait for the next schedule.
+        _trigger_pipeline_with_retries(pid, token, pipeline_name)
         return
 
     logger.error(
@@ -1034,6 +1096,12 @@ def _verify_custom_catalogs() -> None:
     """
     Detect all non-default catalogs loaded in Trino (excluding system, minio, tpch)
     and verify their connectivity by running SHOW SCHEMAS in parallel.
+
+    This is also the earliest place a "generated catalog files but forgot to
+    restart Trino" gap would show up as a LOW count -- if you just ran
+    scripts/generate_trino_catalogs.py and expected e.g. ~129 Snowflake
+    catalogs but this logs far fewer, Trino is very likely still running
+    with its pre-restart catalog set. Restart Trino and re-run.
     """
     logger.info("[InfraInit] Scanning Trino for custom Snowflake/external catalogs...")
     try:
@@ -1049,22 +1117,46 @@ def _verify_custom_catalogs() -> None:
             return
 
         logger.info(
-            "[InfraInit] Found %d custom catalog(s). Verifying connections in parallel...",
+            "[InfraInit] Found %d custom catalog(s) loaded in Trino. Verifying connections in parallel...",
             len(custom_catalogs),
         )
 
+        failed_catalogs: list[str] = []
+        lock = threading.Lock()
+
         def verify_one(catalog: str) -> None:
             logger.info("[InfraInit] Verifying connection to catalog '%s'...", catalog)
-            schemas = _trino_exec(f"SHOW SCHEMAS FROM {catalog}")
-            logger.info(
-                "[InfraInit] Catalog '%s' connection verified successfully ✓ (%d schema(s) found: %s)",
-                catalog,
-                len(schemas),
-                [s[0] for s in schemas],
-            )
+            try:
+                schemas = _trino_exec(f"SHOW SCHEMAS FROM {catalog}")
+                logger.info(
+                    "[InfraInit] Catalog '%s' connection verified successfully ✓ (%d schema(s) found: %s)",
+                    catalog,
+                    len(schemas),
+                    [s[0] for s in schemas],
+                )
+            except Exception as exc:
+                with lock:
+                    failed_catalogs.append(catalog)
+                logger.warning(
+                    "[InfraInit] Catalog '%s' failed connectivity check: %s",
+                    catalog,
+                    exc,
+                )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             list(executor.map(verify_one, custom_catalogs))
+
+        logger.info(
+            "[InfraInit] Custom catalog scan complete: %d/%d catalog(s) verified OK.",
+            len(custom_catalogs) - len(failed_catalogs),
+            len(custom_catalogs),
+        )
+        if failed_catalogs:
+            logger.warning(
+                "[InfraInit] %d catalog(s) failed connectivity: %s",
+                len(failed_catalogs),
+                sorted(failed_catalogs),
+            )
 
     except Exception as exc:
         logger.error("[InfraInit] Verification of custom catalogs failed: %s", exc)

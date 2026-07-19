@@ -26,6 +26,7 @@ dependencies = [
     "core",
     "mcp>=1.2.0",
     "python-core-utils[keycloak] @ git+ssh://git@github.com/matzpen-agency/python-core-utils.git@1.2.0#egg=python-core-utils",
+    "sqlglot>=30.12.0",
 ]
 
 [dependency-groups]

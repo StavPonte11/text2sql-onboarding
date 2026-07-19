@@ -471,6 +471,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 300s
+    networks:
+      - default
+      - shared-net
 
   agent:
     build:
@@ -543,3 +546,7 @@ volumes:
 secrets:
   deploy_key:
     file: ./deploy_key
+
+networks:
+  shared-net:
+    external: true

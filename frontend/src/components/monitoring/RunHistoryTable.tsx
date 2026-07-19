@@ -312,9 +312,15 @@ interface RunHistoryTableProps {
   tableId?: string;
   limit?: number;
   compact?: boolean;
+  excludeTableIds?: Set<string>;
 }
 
-export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHistoryTableProps) {
+export function RunHistoryTable({
+  tableId,
+  limit = 50,
+  compact = false,
+  excludeTableIds,
+}: RunHistoryTableProps) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = compact ? 5 : 10;
@@ -334,8 +340,12 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
     },
   });
 
-  const paged = runs.slice(page * pageSize, (page + 1) * pageSize);
-  const totalPages = Math.ceil(runs.length / pageSize);
+  const visibleRuns = excludeTableIds?.size
+    ? runs.filter((r) => !r.table_id || !excludeTableIds.has(r.table_id))
+    : runs;
+
+  const paged = visibleRuns.slice(page * pageSize, (page + 1) * pageSize);
+  const totalPages = Math.ceil(visibleRuns.length / pageSize);
 
   if (isLoading)
     return (
@@ -451,8 +461,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
       {totalPages > 1 && (
         <div className="run-history-pagination">
           <span className="pagination-info">
-            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, runs.length)} of{' '}
-            {runs.length} runs
+            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, visibleRuns.length)} of{' '}
+            {visibleRuns.length} runs
           </span>
           <div className="pagination-btns">
             <button

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     OPENMETADATA_ADMIN_PASSWORD: str = "admin"
     OPENMETADATA_VERIFY_SSL: bool = False
     OPENMETADATA_SERVICE_NAME: str = "local_trino"
-    RUN_SEED: bool = False
+    RUN_SEED: bool = True
     RUN_INFRA_INIT: bool = True
     # Trino connection
     TRINO_HOST: str = "localhost"
