@@ -18,6 +18,7 @@ from core.models.models import (
     UserScope,
 )
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.config import settings
@@ -221,7 +222,14 @@ def create_table(payload: TableCreate, session: Session = Depends(get_session)):
         embedding=embedding,
     )
     session.add(table)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Table '{catalog_name}.{schema_name}.{name}' already exists."
+        )
 
     # Extract columns in the format expected by the frontend
     def parse_columns(cols):

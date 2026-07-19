@@ -303,7 +303,7 @@ async def get_trace_timeline(trace_id: str):
 
             timeline.append(
                 {
-                    "span_name": obs.get("name") or obs.get("type"),
+                    "span_name": obs.get("name") or obs.get("type") or "Unknown Span",
                     "start_time": start_time_str,
                     "duration_ms": duration_ms,
                     "input_tokens": obs.get("promptTokens", 0),

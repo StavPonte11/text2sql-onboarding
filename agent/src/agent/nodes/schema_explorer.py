@@ -170,7 +170,7 @@ class SchemaExplorerOutput(BaseModel):
         description="List of fully qualified table names (catalog.schema.name) used in the plan.",
     )
     error: Optional[str] = Field(
-        default_factory=str, 
+        default=None, 
         description="Error message if any"
     )
 
@@ -613,6 +613,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
             ambiguity_detected=False,
             ambiguity_message="",
             candidate_options=[],
+            error=str(e),
         )
 
     data = await _resolve_ambiguity(data, chain, tables_info, profiles_json_str, human_message, state)

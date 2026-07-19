@@ -1329,6 +1329,8 @@ export interface components {
             active_skills?: string[] | null;
             /** Execution Mode */
             execution_mode?: string | null;
+            /** Scoping Mode */
+            scoping_mode?: string | null;
             /**
              * Hitl Enabled
              * @default true
@@ -1728,10 +1730,6 @@ export interface components {
             approved: boolean;
             /** Feedback */
             feedback?: string | null;
-            /** Rejection Category */
-            rejection_category?: string | null;
-            /** Suggested Fix */
-            suggested_fix?: string | null;
         };
         /** QueryFeedbackCreate */
         QueryFeedbackCreate: {

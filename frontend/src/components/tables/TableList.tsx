@@ -14,7 +14,7 @@ import { ErrorState } from '../common/ErrorState';
 import { SkeletonTable } from '../common/Skeleton';
 import { StatusBadge } from '../common/StatusBadge';
 
-import type { TableStatus } from '../../types';
+import type { Table, TableStatus } from '../../types';
 
 import './TableList.css';
 
@@ -83,7 +83,8 @@ export function TableList() {
   }, [watchOasisSourceId, resetMutation]);
 
   const onSubmit = (formData: CreateSchemaType) => {
-    const isDuplicate = data?.some(
+    const allTables = qc.getQueryData<Table[]>(['tables', '', '']) || data || [];
+    const isDuplicate = allTables.some(
       (t) =>
         t.oasis_source_id === formData.oasis_source_id ||
         `${t.service}.${t.catalog}.${t.schema_name}.${t.name}` === formData.oasis_source_id ||

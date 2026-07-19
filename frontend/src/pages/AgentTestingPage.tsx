@@ -37,16 +37,16 @@ import { SchemaPlanDisplay } from '../components/SchemaPlanDisplay';
 import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
 
 import { tablesApi } from '../api/client';
-import type { ChatRequest, ChatResponse } from '../api/agent';
+import type { ChatRequest, ChatResponse, QueryApproval } from '../api/agent';
 import type { Table } from '../types';
 
 import type { components } from '../api/schema';
 export type TraceSpan = components['schemas']['TraceSpan'];
 
-export type ResumeValue = 
-  | string 
-  | Record<string, never> 
-  | { approved: boolean; feedback?: string; };
+export type ResumeValue =
+  | string
+  | Record<string, never>
+  | QueryApproval;
 
 
 import styles from './AgentTestingPage.module.css';
@@ -446,7 +446,7 @@ const AgentTestingHeader = memo(
           </div>
 
           <div className={styles.controlItem} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-            <span>Table Mode</span>
+            <span>Status Mode</span>
             <Controller
               name="tableMode"
               control={control}
@@ -968,6 +968,7 @@ export function AgentTestingPage() {
   const [traceId, setTraceId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [traceModalVisible, setTraceModalVisible] = useState(false);
+  const [isSubmittingResume, setIsSubmittingResume] = useState(false);
 
   const [traceSpans, setTraceSpans] = useState<TraceSpan[]>([]);
   const [loadingTrace, setLoadingTrace] = useState(false);
@@ -1103,7 +1104,6 @@ export function AgentTestingPage() {
     setSelectedStepIndex(null);
 
     const config = watch();
-    const allowed_statuses = config.tableMode === 'inclusive' ? config.allowedStatuses : [];
 
     // Delay mutation slightly to allow SSE EventSource to connect
     setTimeout(() => {
@@ -1111,7 +1111,7 @@ export function AgentTestingPage() {
         query,
         thread_id: newThreadId,
         hitl_enabled: config.hitlEnabled,
-        allowed_statuses: allowed_statuses.length > 0 ? allowed_statuses : [],
+        allowed_statuses: config.tableMode === 'inclusive' ? config.allowedStatuses : [],
         allowed_tables: config.allowedTables.length > 0 ? config.allowedTables : undefined,
         extractors: config.extractors.length > 0 ? config.extractors : undefined,
         active_skills: config.activeSkills.length > 0 ? config.activeSkills : undefined,
@@ -1122,24 +1122,30 @@ export function AgentTestingPage() {
 
   const handleApprove = (resumeValue?: ResumeValue) => {
     if (!threadId) return;
+    setIsSubmittingResume(true);
     const config = watch();
     setTimeout(() => {
       chatMutation.mutate({
         thread_id: threadId,
         resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
         hitl_enabled: config.hitlEnabled,
+      }, {
+        onSettled: () => setIsSubmittingResume(false)
       });
     }, 300);
   };
 
   const handleReject = (feedback: string) => {
     if (!threadId) return;
+    setIsSubmittingResume(true);
     const config = watch();
     setTimeout(() => {
       chatMutation.mutate({
         thread_id: threadId,
         resume_value: { approved: false, feedback },
         hitl_enabled: config.hitlEnabled,
+      }, {
+        onSettled: () => setIsSubmittingResume(false)
       });
     }, 300);
   };
@@ -1370,12 +1376,12 @@ export function AgentTestingPage() {
       </Modal>
 
       <AnimatePresence mode="wait">
-        {chatResponse && !chatMutation.isPending && (
+        {chatResponse && (!chatMutation.isPending || isSubmittingResume) && (
           <motion.div key="result" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             {chatResponse.status === 'interrupted' ? (
               <AgentApprovalForm
                 chatResponse={chatResponse}
-                isResuming={chatMutation.isPending}
+                isResuming={isSubmittingResume || chatMutation.isPending}
                 onApprove={handleApprove}
                 onReject={handleReject}
               />
