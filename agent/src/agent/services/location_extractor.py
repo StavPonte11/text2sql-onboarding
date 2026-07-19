@@ -109,12 +109,14 @@ class LocationExtractorAgent(BaseExtractor):
 
         instruction_text = "\n".join(instruction_parts) if instruction_parts else ""
 
-        return LocationExtractionResult(
+        result = LocationExtractionResult(
             valid_locations=valid_locations,
             location_wkt_instruction=instruction_text,
             raw_locations_dict=names_dict,
             locations_coords_dict=coords_dict
         )
+        self._last_result = result
+        return result
 
     def extract(self, query: str) -> List[ContextEntry]:
         """
@@ -126,7 +128,7 @@ class LocationExtractorAgent(BaseExtractor):
         response = self.llm.invoke(messages)
         locations_map = self._parse_llm_json(response.content)
         result = self._process_locations(locations_map)
-        self._last_result = result
+
 
         entries = []
         for loc in result.valid_locations:
