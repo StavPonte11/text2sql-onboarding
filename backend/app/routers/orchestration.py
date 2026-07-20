@@ -297,13 +297,16 @@ def _run_dataset_pipeline(dataset_name: str, run_id: str):
                 prod_tables = session.exec(
                     select(Table).where(Table.owner_id == "spider2")
                 ).all()
+                table_names = [
+                    f"{t.catalog}.{t.schema_name}.{t.name}" for t in prod_tables
+                ]
             else:
                 prod_tables = session.exec(
                     select(Table)
                     .where(Table.status == TableStatus.production)
                     .where(Table.owner_id != "spider2")
                 ).all()
-            table_names = [t.name for t in prod_tables]
+                table_names = [t.name for t in prod_tables]
 
             req = {
                 "dataset_name": dataset_name,

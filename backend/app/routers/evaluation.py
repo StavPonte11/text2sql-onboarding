@@ -157,6 +157,7 @@ def _build_questions_payload(questions: list, table: Table) -> list:
             "expected_sql": q.expected_sql or "",
             "table_id": q.table_id,
             "schema_name": table.schema_name,
+            "catalog_name": table.catalog,
             "question_type": q.question_type.value
             if hasattr(q.question_type, "value")
             else str(q.question_type),
@@ -270,7 +271,9 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         try:
             req = {
                 "dataset_name": dataset_name,
-                "additional_tables": [table.name],
+                "additional_tables": [
+                    f"{table.catalog}.{table.schema_name}.{table.name}"
+                ],
             }
             resp = requests.post(
                 f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
@@ -426,7 +429,7 @@ def _run_candidate_eval(
     try:
         req = {
             "dataset_name": dataset_name,
-            "additional_tables": [table.name],
+            "additional_tables": [f"{table.catalog}.{table.schema_name}.{table.name}"],
         }
         resp = requests.post(
             f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
