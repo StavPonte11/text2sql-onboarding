@@ -37,7 +37,7 @@ def _f(runtime_flags: dict, name: str, default):
     return runtime_flags.get(name, default)
 
 
-async def satisfaction_check_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
+async def satisfaction_check_node(state: AgentState, config: RunnableConfig = None) -> dict:
     """
     Multi-stage satisfaction judge.
 

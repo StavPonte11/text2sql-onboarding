@@ -45,3 +45,5 @@ class AgentState(TypedDict):
     runtime_flags: dict[str, Any] | None  # resolved by init_flags_node
     # Enriched table profiles — populated by schema_explorer for reuse by refiner
     table_profiles: list[dict[str, Any]] | None
+    locations_dict: dict[str, dict[str, str]] | None
+    location_wkt_instruction: str | None
