@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from typing import Any, Dict, List, Optional
 from core.db.engine import engine
-from core.models.models import ColumnProfile, ProfilingStatus, Table, TableProfile
+from core.models.models import ColumnProfile, ProfilingStatus, Table, TableProfile, ProfilingRun
 from sqlmodel import Session, select
 from temporalio import activity
 
@@ -89,18 +89,20 @@ def fetch_table_metadata_activity(table_id: str, resume_from_partial: bool = Fal
         table_name = table.name
         fqn = _fqn(catalog, schema_name, table_name)
 
-        profile = session.exec(
-            select(TableProfile).where(TableProfile.table_id == table_id)
+        latest_run = session.exec(
+            select(ProfilingRun).where(ProfilingRun.table_id == table_id).order_by(ProfilingRun.started_at.desc())
         ).first()
-        if not profile:
-            profile = TableProfile(table_id=table_id)
-
-        profile.status = ProfilingStatus.running
-        profile.updated_at = datetime.now(timezone.utc)
-        session.add(profile)
+        if latest_run:
+            latest_run.status = ProfilingStatus.running
+            session.add(latest_run)
+            
         session.commit()
-        session.refresh(profile)
-        profile_id = profile.id
+        profile = session.exec(select(TableProfile).where(TableProfile.table_id == table_id)).first()
+        if not profile:
+            import uuid
+            profile_id = str(uuid.uuid4())
+        else:
+            profile_id = profile.id
 
     row_count_res = _fetch_one(build_row_count_query(fqn), table_id, default=(0,))
     row_count = int(row_count_res[0] or 0)
@@ -247,6 +249,22 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
 
     logger.info("Persisting profiling results for table_id: %s (is_partial=%s)", table_id, is_partial)
 
+    is_fatal_failure = any(e.startswith("Workflow crashed") for e in errors)
+    if is_fatal_failure:
+        logger.error("Workflow had fatal errors. Skipping TableProfile updates. Errors: %s", errors)
+        with Session(engine) as session:
+            latest_run = session.exec(
+                select(ProfilingRun).where(ProfilingRun.table_id == table_id).order_by(ProfilingRun.started_at.desc())
+            ).first()
+            if latest_run:
+                if latest_run.status != ProfilingStatus.canceled:
+                    latest_run.status = ProfilingStatus.failed
+                latest_run.error_message = "\n".join(errors)
+                latest_run.completed_at = datetime.now(timezone.utc)
+                session.add(latest_run)
+                session.commit()
+        return
+
     col_stats = []
     for cs in column_stats_dicts:
         fields = {f.name: cs[f.name] for f in dataclasses.fields(ColumnStats) if f.name in cs}
@@ -296,11 +314,10 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
     with Session(engine) as session:
         profile = session.get(TableProfile, profile_id)
         if not profile:
-            profile = TableProfile(id=profile_id, table_id=table_id)
+            profile = session.exec(select(TableProfile).where(TableProfile.table_id == table_id)).first()
+            if not profile:
+                profile = TableProfile(id=profile_id, table_id=table_id)
             session.add(profile)
-
-        profile.status = ProfilingStatus.completed
-        profile.is_partial = is_partial
         profile.row_count = row_count
         profile.sample_size = sample_size
         profile.column_count = column_count
@@ -311,6 +328,14 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         profile.cached_until = datetime.now(timezone.utc) + timedelta(hours=PROFILE_CACHE_HOURS)
         profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
+
+        latest_run = session.exec(
+            select(ProfilingRun).where(ProfilingRun.table_id == table_id).order_by(ProfilingRun.started_at.desc())
+        ).first()
+        if latest_run:
+            latest_run.status = ProfilingStatus.completed
+            latest_run.completed_at = datetime.now(timezone.utc)
+            session.add(latest_run)
 
         # Clear old column profiles
         old_cols = session.exec(

@@ -179,6 +179,12 @@ class TableProfilingWorkflow:
                     is_partial = True
                     failed_subtasks.append("Generate AI Summary")
                     errors.append(f"AI Summary generation failed: {exc}")
+        except asyncio.CancelledError as exc:
+            workflow.logger.info("Workflow was canceled")
+            is_partial = True
+            failed_subtasks.append("Workflow Execution Canceled")
+            errors.append(f"Workflow crashed: Canceled by user")
+            raise
         except Exception as exc:
             workflow.logger.error("Workflow failed with error: %s", exc)
             is_partial = True

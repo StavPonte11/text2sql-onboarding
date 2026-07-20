@@ -431,6 +431,23 @@ class ProfilingStatus(StrEnum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    canceled = "canceled"
+
+
+class ProfilingRun(SQLModel, table=True):
+    __tablename__ = "profiling_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    table_id: str = Field(
+        sa_column_args=[
+            ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")
+        ],
+        index=True,
+    )
+    status: ProfilingStatus = Field(default=ProfilingStatus.pending)
+    error_message: str | None = None
+    started_at: datetime = Field(default_factory=datetime.now)
+    completed_at: datetime | None = None
 
 
 class TableProfile(SQLModel, table=True):
@@ -444,8 +461,6 @@ class TableProfile(SQLModel, table=True):
         unique=True,
         index=True,
     )
-    status: ProfilingStatus = Field(default=ProfilingStatus.pending)
-    is_partial: bool = Field(default=False)
     row_count: int | None = None
     sample_size: int | None = None  # rows returned by TABLESAMPLE
     column_count: int | None = None
