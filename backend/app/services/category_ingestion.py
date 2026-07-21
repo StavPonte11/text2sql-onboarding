@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from core.models.models import LargeCategoryValue 
 from app.config import settings
 from core.trino import execute_query_sync
-from app.services.profiling_engine import TableProfilingResult
+from core.services.profiling_engine import TableProfilingResult
 from core.embeddings import get_embedding
 
 logger = logging.getLogger(__name__)
