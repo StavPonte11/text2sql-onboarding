@@ -1317,7 +1317,7 @@ function CrossTableCard({ profile }: { profile: CrossTableProfile }) {
 export function ProfilingTab({ tableId }: { tableId: string }) {
   const qc = useQueryClient();
   const [activeView, setActiveView] = useState<
-    'detail' | 'column' | 'overview' | 'cross' | 'insights'
+    'detail' | 'column' | 'overview' | 'cross'
   >('detail');
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(new Set());
 

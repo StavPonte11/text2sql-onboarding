@@ -468,7 +468,6 @@ class TableProfile(SQLModel, table=True):
     null_rate_avg: float | None = None
     duplicate_rate: float | None = None
     sample_data: Any | None = Field(default=None, sa_column=Column(JSON))
-    auto_insights: list[str] | None = Field(default=None, sa_column=Column(JSON))
     profile_json: Any | None = Field(
         default=None, sa_column=Column(JSON)
     )  # full structured profile
@@ -489,7 +488,6 @@ class TableProfileRead(SQLModel):
     null_rate_avg: float | None
     duplicate_rate: float | None
     sample_data: Any | None
-    auto_insights: list[str] | None
     profile_json: Any | None
     cached_until: datetime | None
     created_at: datetime

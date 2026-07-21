@@ -1198,7 +1198,6 @@ def _ensure_airlines_registered() -> None:
                 profile.sample_size = result.sample_size
                 profile.column_count = result.column_count
                 profile.null_rate_avg = result.null_rate_avg
-                profile.auto_insights = result.auto_insights
                 profile.sample_data = result.sample_data
                 profile.profile_json = result.profile_json
                 profile.cached_until = datetime.utcnow() + timedelta(hours=24)

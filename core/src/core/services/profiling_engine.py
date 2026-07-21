@@ -188,7 +188,6 @@ class TableProfilingResult:
     sample_size: int = 0
     column_count: int = 0
     null_rate_avg: float = 0.0
-    auto_insights: list[str] = field(default_factory=list)
     sample_data: list[dict] = field(default_factory=list)
     column_stats: list[ColumnStats] = field(default_factory=list)
     profile_json: dict = field(default_factory=dict)
@@ -920,22 +919,7 @@ def run_table_profiling(table_id: str, catalog: str, schema: str, table: str, ve
     if col_stats:
         result.null_rate_avg = round(sum(c.null_rate for c in col_stats) / len(col_stats), 4)
 
-    # Auto Insights...
-    insights = [f"~{result.row_count:,} rows (COUNT(*))."] if result.row_count else []
-    if result.sample_size: insights.append(f"{result.sample_size:,} rows sampled.")
-
-    for flag, name in [("is_categorical", "categorical"), ("is_time", "Time"), ("is_geo", "Geographic")]:
-        cols = [c.column_name for c in col_stats if getattr(c, flag)]
-        if cols: insights.append(f"{name} columns: {', '.join(cols[:5])}.")
-
-    high_null = [c.column_name for c in col_stats if c.null_rate > 0.20]
-    if high_null: insights.append(f"High null rate (>20%): {', '.join(high_null[:5])}.")
-
-    if result.row_count > 0:
-        pk_candidates = [c.column_name for c in col_stats if c.distinct_count >= result.row_count * 0.95]
-        if pk_candidates: insights.append(f"PK candidates: {', '.join(pk_candidates[:3])}.")
-
-    result.auto_insights = insights
+    # Removed auto_insights logic
 
     # Profile JSON construction
     result.profile_json = _make_json_safe({
@@ -949,7 +933,7 @@ def run_table_profiling(table_id: str, catalog: str, schema: str, table: str, ve
             "is_geo": c.is_geo, "is_continuous": c.is_continuous, "distinct_count": c.distinct_count,
             "null_rate": c.null_rate, "stats": c.stats_json
         } for c in col_stats],
-        "insights": insights, "errors": result.errors,
+        "errors": result.errors,
     })
 
     result.sample_data = _make_json_safe(result.sample_data)
@@ -988,7 +972,6 @@ def build_context_for_llm(
         "table": table_name,
         "row_count": (profile_json or {}).get("row_count"),
         "columns": context_columns,
-        "insights": (profile_json or {}).get("insights", []),
     }
 
 

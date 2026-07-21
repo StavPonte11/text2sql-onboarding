@@ -28,11 +28,10 @@ export type AuditQuery = Schemas['AuditQueryRead'];
 
 export type TableProfile = Omit<
   Schemas['TableProfileRead'],
-  'sample_data' | 'profile_json' | 'auto_insights'
+  'sample_data' | 'profile_json'
 > & {
   sample_data?: any[];
   profile_json?: any;
-  auto_insights?: any[];
   is_partial?: boolean;
 };
 

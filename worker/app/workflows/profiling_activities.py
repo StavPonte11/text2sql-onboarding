@@ -270,24 +270,7 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         fields = {f.name: cs[f.name] for f in dataclasses.fields(ColumnStats) if f.name in cs}
         col_stats.append(ColumnStats(**fields))
 
-    # Reconstruct profile_json
-    insights = [f"~{row_count:,} rows (COUNT(*))."] if row_count else []
-    if sample_size:
-        insights.append(f"{sample_size:,} rows sampled.")
-
-    for flag, name in [("is_categorical", "categorical"), ("is_time", "Time"), ("is_geo", "Geographic")]:
-        cols = [c.column_name for c in col_stats if getattr(c, flag)]
-        if cols:
-            insights.append(f"{name} columns: {', '.join(cols[:5])}.")
-
-    high_null = [c.column_name for c in col_stats if c.null_rate > HIGH_NULL_RATE_THRESHOLD]
-    if high_null:
-        insights.append(f"High null rate (>{int(HIGH_NULL_RATE_THRESHOLD * 100)}%): {', '.join(high_null[:5])}.")
-
-    if row_count > 0:
-        pk_candidates = [c.column_name for c in col_stats if c.distinct_count >= row_count * PK_CANDIDATE_DISTINCT_RATIO]
-        if pk_candidates:
-            insights.append(f"PK candidates: {', '.join(pk_candidates[:3])}.")
+    # Removed auto_insights logic
 
     null_rate_avg = round(sum(c.null_rate for c in col_stats) / len(col_stats), 4) if col_stats else 0.0
 
@@ -306,7 +289,6 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
             "is_geo": c.is_geo, "is_continuous": c.is_continuous, "distinct_count": c.distinct_count,
             "null_rate": c.null_rate, "stats": c.stats_json
         } for c in col_stats],
-        "insights": insights,
         "errors": errors,
         "failed_subtasks": params.failed_subtasks,
     })
@@ -322,7 +304,6 @@ def persist_profiling_results_activity(params: PersistResultsParams) -> None:
         profile.sample_size = sample_size
         profile.column_count = column_count
         profile.null_rate_avg = null_rate_avg
-        profile.auto_insights = insights
         profile.sample_data = sample_data
         profile.profile_json = profile_json
         profile.cached_until = datetime.now(timezone.utc) + timedelta(hours=PROFILE_CACHE_HOURS)
