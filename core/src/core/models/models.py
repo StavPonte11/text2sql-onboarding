@@ -431,6 +431,23 @@ class ProfilingStatus(StrEnum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    canceled = "canceled"
+
+
+class ProfilingRun(SQLModel, table=True):
+    __tablename__ = "profiling_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    table_id: str = Field(
+        sa_column_args=[
+            ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")
+        ],
+        index=True,
+    )
+    status: ProfilingStatus = Field(default=ProfilingStatus.pending)
+    error_message: str | None = None
+    started_at: datetime = Field(default_factory=datetime.now)
+    completed_at: datetime | None = None
 
 
 class TableProfile(SQLModel, table=True):
@@ -444,7 +461,6 @@ class TableProfile(SQLModel, table=True):
         unique=True,
         index=True,
     )
-    status: ProfilingStatus = Field(default=ProfilingStatus.pending)
     row_count: int | None = None
     sample_size: int | None = None  # rows returned by TABLESAMPLE
     column_count: int | None = None
@@ -452,7 +468,6 @@ class TableProfile(SQLModel, table=True):
     null_rate_avg: float | None = None
     duplicate_rate: float | None = None
     sample_data: Any | None = Field(default=None, sa_column=Column(JSON))
-    auto_insights: list[str] | None = Field(default=None, sa_column=Column(JSON))
     profile_json: Any | None = Field(
         default=None, sa_column=Column(JSON)
     )  # full structured profile
@@ -465,6 +480,7 @@ class TableProfileRead(SQLModel):
     id: str
     table_id: str
     status: ProfilingStatus
+    is_partial: bool | None = None
     row_count: int | None
     sample_size: int | None
     column_count: int | None
@@ -472,7 +488,6 @@ class TableProfileRead(SQLModel):
     null_rate_avg: float | None
     duplicate_rate: float | None
     sample_data: Any | None
-    auto_insights: list[str] | None
     profile_json: Any | None
     cached_until: datetime | None
     created_at: datetime
