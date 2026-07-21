@@ -67,6 +67,17 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     execution_path: list[str] | None = None
 
+class TraceSpan(BaseModel):
+    span_name: str
+    start_time: str | None = None
+    duration_ms: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = "N/A"
+    status: str
+    input_preview: str = ""
+    output_preview: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -187,6 +198,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "allowed_tables": request.allowed_tables,
         "allowed_statuses": request.allowed_statuses,
         "extractors": request.extractors,
+        "active_skills": request.active_skills,
+        "execution_mode": request.execution_mode,
         "hitl_enabled": request.hitl_enabled,
     }
 
@@ -254,13 +267,13 @@ async def stream_agent_execution(thread_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.get("/traces/{trace_id}")
+@router.get("/traces/{trace_id}", response_model=list[TraceSpan])
 async def get_trace_timeline(trace_id: str):
     """Fetch trace from Langfuse and normalize observations for frontend timeline."""
     auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
     url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=settings.LANGFUSE_REQUEST_TIMEOUT) as client:
         resp = await client.get(url, auth=auth)
         if resp.status_code != 200:
             if resp.status_code == 404:
@@ -290,7 +303,7 @@ async def get_trace_timeline(trace_id: str):
 
             timeline.append(
                 {
-                    "span_name": obs.get("name") or obs.get("type"),
+                    "span_name": obs.get("name") or obs.get("type") or "Unknown Span",
                     "start_time": start_time_str,
                     "duration_ms": duration_ms,
                     "input_tokens": obs.get("promptTokens", 0),

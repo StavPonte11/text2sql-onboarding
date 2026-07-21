@@ -64,16 +64,21 @@ async def chat_with_agent(
                 }
             )
 
-        result = await agent_graph.ainvoke(Command(
-            update={
-                "last_error": None,
-                "trino_error": None,
-                "escalated": None,
-                "escalation_reason": None,
-                "refinement_count": 0,
-            },
-            resume=resume_value
-        ), config=config)
+        is_node_interrupt = False
+        if getattr(state_snapshot, "interrupts", None):
+            is_node_interrupt = True
+        elif getattr(state_snapshot, "tasks", None):
+            if any(getattr(task, "interrupts", None) for task in state_snapshot.tasks):
+                is_node_interrupt = True
+
+        # Resume the graph execution depending on how it was interrupted
+        if is_node_interrupt:
+            # Interrupted by the `interrupt()` function inside a node
+            result = await agent_graph.ainvoke(Command(resume=resume_value), config=config)
+        else:
+            # Interrupted by an `interrupt_before` breakpoint
+            await agent_graph.aupdate_state(config, resume_value)
+            result = await agent_graph.ainvoke(None, config=config)
     else:
         if not query:
             return json.dumps({"error": "Query is required for new chat session."})
@@ -142,8 +147,16 @@ async def chat_with_agent(
     final_state = await agent_graph.aget_state(config)
     
     # Check if interrupted by `interrupt()` function
-    if final_state.interrupts:
+    interrupt_val = None
+    if getattr(final_state, "interrupts", None):
         interrupt_val = final_state.interrupts[-1].value
+    elif getattr(final_state, "tasks", None):
+        for task in final_state.tasks:
+            if getattr(task, "interrupts", None):
+                interrupt_val = task.interrupts[-1].value
+                break
+                
+    if interrupt_val is not None:
         return json.dumps(
             {
                 "thread_id": thread_id,

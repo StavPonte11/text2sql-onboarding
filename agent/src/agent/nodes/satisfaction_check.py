@@ -62,7 +62,8 @@ async def satisfaction_check_node(state: AgentState, config: RunnableConfig = No
             failures.append(f"[CHECK_A] Execution failed: {state['trino_error']}")
 
     # ── Check B: Row Plausibility ─────────────────────────────────────────────
-    if _f(runtime_flags, "SATISFACTION_CHECK_PLAUSIBILITY", settings.SATISFACTION_CHECK_PLAUSIBILITY):
+    # Only run plausibility if there wasn't a hard execution failure
+    if not state.get("trino_error") and _f(runtime_flags, "SATISFACTION_CHECK_PLAUSIBILITY", settings.SATISFACTION_CHECK_PLAUSIBILITY):
         n = len(rows)
         min_rows = _f(runtime_flags, "SATISFACTION_MIN_ROWS", settings.SATISFACTION_MIN_ROWS)
         max_rows = _f(runtime_flags, "SATISFACTION_MAX_ROWS", settings.SATISFACTION_MAX_ROWS)

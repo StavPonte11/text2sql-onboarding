@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from sqlalchemy import JSON, Column, ForeignKey
+from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
 
@@ -26,6 +26,9 @@ class FeatureFlagType(StrEnum):
 
 class Table(SQLModel, table=True):
     __tablename__ = "tables"
+    __table_args__ = (
+        UniqueConstraint("catalog", "schema_name", "name", name="uq_table_fqn"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)

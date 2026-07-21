@@ -135,8 +135,25 @@ export function OnboardingWizard() {
 
     try {
       if (step === 'select') {
+        const queriesData = qc.getQueriesData<Table[]>({ queryKey: ['tables'] });
+        const existingTables = queriesData.flatMap(([_, data]) => data || []);
+        const sourceId = getValues('oasis_source_id');
+        
+        if (existingTables.length > 0) {
+          const isDuplicate = existingTables.some(
+            (t) =>
+              t.oasis_source_id === sourceId ||
+              `${t.service}.${t.catalog}.${t.schema_name}.${t.name}` === sourceId ||
+              `${t.catalog}.${t.schema_name}.${t.name}` === sourceId
+          );
+          if (isDuplicate) {
+            setSubmitError('This table already exists in the system.');
+            return;
+          }
+        }
+
         const t = await createTableMutation.mutateAsync({
-          oasis_source_id: getValues('oasis_source_id'),
+          oasis_source_id: sourceId,
         });
         setCreatedTableId(t.id);
         setCreatedTable(t);

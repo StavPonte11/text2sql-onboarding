@@ -106,6 +106,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 "error": trino_error,
                 "schema_context": schema_context,
                 "error_history": json.dumps(error_history),
+                "user_query": state.get("user_query", ""),
             }
         )
         new_sql = clean_sql(response.content)
@@ -140,8 +141,8 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                     langfuse_client.update_current_span(
                         level="ERROR", status_message=f"ESCA write failed: {e}"
                     )
-                else:
-                    logging.error(f"ESCA write failed: {e}")
+                
+                logging.error(f"ESCA write failed: {e}")
                 raise RuntimeError(f"Failed to write query result to ESCA: {e}")
 
         return {
