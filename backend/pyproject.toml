@@ -29,6 +29,7 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
     "langchain-core>=0.3.0",
+    "temporalio==1.30.0",
     "python-core-utils[keycloak] @ git+ssh://git@github.com/matzpen-agency/python-core-utils.git@1.2.0#egg=python-core-utils",
 ]
 

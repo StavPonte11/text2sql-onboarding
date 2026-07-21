@@ -1,3 +1,20 @@
+x-shared-db-env: &shared-db-env
+  DATABASE_URL: postgresql://postgres:postgres@db:5432/text2sql
+  POSTGRES_HOST: db
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: text2sql
+  TRINO_HOST: trino
+  TRINO_PORT: 8080
+  TRINO_USER: trino
+  TRINO_PASSWORD: ""
+  TRINO_CATALOG: minio
+  TRINO_SCHEMA: simple_retail
+  TRINO_HTTP_SCHEME: http
+  TRINO_REQUEST_TIMEOUT: 600.0
+  TRINO_ENABLED: "true"
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -411,6 +428,61 @@ services:
       - ingestion-volume-dags:/opt/airflow/dags
       - ingestion-volume-tmp:/tmp
 
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgres
+      - POSTGRES_SEEDS=db
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  temporal-ui:
+    image: temporalio/ui:2.52.1
+    ports:
+      - "8088:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_CSRF_COOKIE_INSECURE=true # dev only
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: ./worker/Dockerfile
+      secrets:
+        - deploy_key
+    command: python -m app.main
+    env_file:
+      - ./worker/.env
+    environment:
+      <<: *shared-db-env
+      TEMPORAL_HOST: temporal:7233
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_MODEL: gemma4:e4b
+      LLM_API_KEY: ollama
+      ACTIVITY_START_TO_CLOSE_TIMEOUT_SECONDS: 600
+    depends_on:
+      db:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
   backend:
     build:
       context: .
@@ -423,43 +495,30 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
-      - POSTGRES_HOST=db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=text2sql
-      - TRINO_HOST=trino
-      - TRINO_PORT=8080
-      - TRINO_USER=trino
-      - TRINO_PASSWORD=
-      - TRINO_CATALOG=minio
-      - TRINO_SCHEMA=simple_retail
-      - TRINO_HTTP_SCHEME=http
-      - TRINO_REQUEST_TIMEOUT=600.0
-      - TRINO_ENABLED=true
-      - OPENMETADATA_URL=http://openmetadata-server:8585
-      - OPENMETADATA_SERVICE_NAME=local_trino
-      - APP_ENV=production
-      - JWT_SECRET=dev-secret-change-in-production
-      - AGENT_URL=http://agent:8001
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=${LANGFUSE_HOST}
-      - ENABLE_GOOGLE=${ENABLE_GOOGLE}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - ENABLE_KEYCLOAK=${ENABLE_KEYCLOAK}
-      - KEYCLOAK_SERVER_URL=${KEYCLOAK_SERVER_URL}
-      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
-      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
-      - FRONTEND_DEFAULT_REDIRECT=${FRONTEND_DEFAULT_REDIRECT}
-      - SSO_REDIRECT_URI=${SSO_REDIRECT_URI}
-      - MINIO_HOST=minio:9000
-      - MINIO_ACCESS_KEY=admin
-      - MINIO_SECRET_KEY=password123
-      - REDIS_URL=redis://redis:6379
-      - REDIS_SSL=false
+      <<: *shared-db-env
+      OPENMETADATA_URL: http://openmetadata-server:8585
+      OPENMETADATA_SERVICE_NAME: local_trino
+      APP_ENV: production
+      JWT_SECRET: dev-secret-change-in-production
+      AGENT_URL: http://agent:8001
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_HOST}
+      ENABLE_GOOGLE: ${ENABLE_GOOGLE}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      ENABLE_KEYCLOAK: ${ENABLE_KEYCLOAK}
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      FRONTEND_DEFAULT_REDIRECT: ${FRONTEND_DEFAULT_REDIRECT}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI}
+      MINIO_HOST: minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: password123
+      REDIS_URL: redis://redis:6379
+      REDIS_SSL: "false"
+      TEMPORAL_HOST: temporal:7233
     depends_on:
       db:
         condition: service_healthy
