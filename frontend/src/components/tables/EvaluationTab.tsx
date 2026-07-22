@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
@@ -6,6 +7,7 @@ import { AlertTriangle, BarChart2, CheckCircle, Play } from 'lucide-react';
 
 import { enrichmentApi, evalApi, questionsApi } from '../../api/client';
 import { ErrorState } from '../common/ErrorState';
+import { Spinner } from '../common/EvalUI';
 import { SkeletonTable } from '../common/Skeleton';
 
 import './EvaluationTab.css';
@@ -14,7 +16,14 @@ interface Props {
   tableId: string;
 }
 
-function ScoreRing({ score }: { score: number }) {
+function ScoreRing({ score, status }: { score: number; status?: string }) {
+  if (status === 'running') {
+    return (
+      <div className="score-ring score-ring--running" title="Evaluation in progress…">
+        <Spinner size={14} color="#f59e0b" />
+      </div>
+    );
+  }
   const pct = Math.round(score * 100);
   const cls = pct >= 50 ? 'score-ring--high' : 'score-ring--low';
   return <div className={`score-ring ${cls}`}>{pct}%</div>;
@@ -73,6 +82,20 @@ export function EvaluationTab({ tableId }: Props) {
     },
   });
 
+  // Deduplicate runs so triggered run never appears twice
+  const allRuns = useMemo(() => {
+    const map = new Map<string, any>();
+    if (triggerMutation.data) {
+      map.set(triggerMutation.data.id, triggerMutation.data);
+    }
+    (runs ?? []).forEach((r: any) => {
+      map.set(r.id, r);
+    });
+    return Array.from(map.values())
+      .filter((run) => run.triggered_by !== 'promotion')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [triggerMutation.data, runs]);
+
   if (isLoading) return <SkeletonTable rows={3} cols={4} />;
   if (isError) return <ErrorState onRetry={refetch} />;
 
@@ -117,7 +140,7 @@ export function EvaluationTab({ tableId }: Props) {
 
       {triggerMutation.data && (
         <div className="card latest-run-card">
-          <ScoreRing score={triggerMutation.data.score} />
+          <ScoreRing score={triggerMutation.data.score} status={triggerMutation.data.status} />
           <div>
             <div className="latest-run-card__title">
               Latest Run: {triggerMutation.data.table_name || tableId.slice(0, 8)}
@@ -129,7 +152,7 @@ export function EvaluationTab({ tableId }: Props) {
         </div>
       )}
 
-      {(!runs || runs.length === 0) && !triggerMutation.data ? (
+      {allRuns.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <BarChart2 size={36} className="empty-state__icon" />
@@ -150,39 +173,35 @@ export function EvaluationTab({ tableId }: Props) {
               </tr>
             </thead>
             <tbody>
-              {[...(triggerMutation.data ? [triggerMutation.data] : []), ...(runs ?? [])]
-                .filter((run) => run.triggered_by !== 'promotion')
-                .map((run) => (
-                  <tr key={run.id}>
-                    <td>
-                      <code className="run-id-code">{run.id.slice(0, 8)}…</code>
-                    </td>
-                    <td>
-                      <ScoreRing score={run.score} />
-                    </td>
-                    <td>
-                      <span
-                        className="run-status-badge"
-                        style={{
-                          color:
-                            run.status === 'completed'
-                              ? 'var(--status-production)'
-                              : run.status === 'failed'
-                                ? 'var(--status-degraded)'
-                                : 'var(--status-sandbox)',
-                        }}
-                      >
-                        {run.status}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="run-type-label">{run.triggered_by}</span>
-                    </td>
-                    <td className="run-date-label">
-                      {dayjs(run.created_at).format('MMM D, HH:mm')}
-                    </td>
-                  </tr>
-                ))}
+              {allRuns.map((run) => (
+                <tr key={run.id}>
+                  <td>
+                    <code className="run-id-code">{run.id.slice(0, 8)}…</code>
+                  </td>
+                  <td>
+                    <ScoreRing score={run.score} status={run.status} />
+                  </td>
+                  <td>
+                    <span
+                      className="run-status-badge"
+                      style={{
+                        color:
+                          run.status === 'completed'
+                            ? 'var(--status-production)'
+                            : run.status === 'failed'
+                              ? 'var(--status-degraded)'
+                              : 'var(--status-sandbox)',
+                      }}
+                    >
+                      {run.status}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="run-type-label">{run.triggered_by}</span>
+                  </td>
+                  <td className="run-date-label">{dayjs(run.created_at).format('MMM D, HH:mm')}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

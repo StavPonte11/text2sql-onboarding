@@ -88,6 +88,13 @@
   background: rgba(239, 68, 68, 0.08);
 }
 
+.score-ring--running {
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 11px;
+}
+
 /* ── Readiness banner ──────────────────────────────── */
 
 .eval-readiness-banner {

@@ -255,7 +255,14 @@ def trigger_evaluation_run(
     runs = []
     for table_id in table_ids:
         table = session.get(Table, table_id)
-        run = EvalRun(table_id=table_id, triggered_by=triggered_by)
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+        ).all()
+        run = EvalRun(
+            table_id=table_id,
+            total_questions=len(questions),
+            triggered_by=triggered_by,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -380,8 +387,25 @@ def trigger_dataset_run(
                 except Exception as e:
                     logger.warning(f"[Eval] Production dataset sync failed: {e}")
 
+    total_q_count = 0
+    if dataset_name == "text2sql_production":
+        total_q_count = len(all_production_questions)
+    elif dataset_name == "spider2":
+        spider2_tables = session.exec(
+            select(Table).where(Table.owner_id == "spider2")
+        ).all()
+        s2_ids = [t.id for t in spider2_tables]
+        if s2_ids:
+            total_q_count = len(
+                session.exec(
+                    select(GoldenQuestion).where(GoldenQuestion.table_id.in_(s2_ids))
+                ).all()
+            )
+
     # 2. Create the run record
-    run = EvalRun(table_id=None, triggered_by=dataset_name)
+    run = EvalRun(
+        table_id=None, total_questions=total_q_count, triggered_by=dataset_name
+    )
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -480,7 +504,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "status": run.status,
         "triggered_by": run.triggered_by,
         "promotion_run_id": run.promotion_run_id,
-        "is_publishable": run.score > 0.00,
+        "is_publishable": run.score >= 0.50
+        if run.status == EvalStatus.completed
+        else False,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
         "failure_breakdown": run.failure_breakdown or {},

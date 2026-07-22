@@ -4,10 +4,18 @@ import dayjs from 'dayjs';
 import { FlaskConical } from 'lucide-react';
 
 import { ErrorState } from '../components/common/ErrorState';
+import { Spinner } from '../components/common/EvalUI';
 import { SkeletonTable } from '../components/common/Skeleton';
 import { useAllEvalRuns } from '../hooks/useEvaluations';
 
-function ScoreRing({ score }: { score: number }) {
+function ScoreRing({ score, status }: { score: number; status?: string }) {
+  if (status === 'running') {
+    return (
+      <div className="score-ring score-ring--running" title="Evaluation in progress…">
+        <Spinner size={14} color="#f59e0b" />
+      </div>
+    );
+  }
   const pct = Math.round(score * 100);
   const cls = pct >= 50 ? 'score-ring--high' : 'score-ring--low';
   return <div className={`score-ring ${cls}`}>{pct}%</div>;
@@ -79,7 +87,7 @@ export function SandboxPage() {
                     </Link>
                   </td>
                   <td>
-                    <ScoreRing score={run.score} />
+                    <ScoreRing score={run.score} status={run.status} />
                   </td>
                   <td>
                     <span

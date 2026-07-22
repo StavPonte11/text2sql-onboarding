@@ -176,9 +176,15 @@ def _map_and_save_run_metrics(
     run: EvalRun, eval_resp: RunDatasetResponse, session: Session, run_id: str
 ):
     run.score = eval_resp.accuracy.contains_accuracy
-    run.pass_rate = 1.0 - eval_resp.failure_rate
-    run.fail_rate = eval_resp.failure_rate
-    run.total_questions = eval_resp.total_cases
+    # Guard: if no questions were evaluated, pass_rate is meaningless — use 0.0
+    if eval_resp.total_cases == 0:
+        run.pass_rate = 0.0
+        run.fail_rate = 1.0
+    else:
+        run.pass_rate = 1.0 - eval_resp.failure_rate
+        run.fail_rate = eval_resp.failure_rate
+    if eval_resp.total_cases > 0 or not run.total_questions:
+        run.total_questions = eval_resp.total_cases
     run.duration_seconds = eval_resp.duration_seconds
     run.status = EvalStatus.completed
     run.completed_at = datetime.now()
@@ -251,9 +257,15 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
         if not questions:
             run.status = EvalStatus.failed
             run.score = 0.0
+            run.total_questions = 0
             session.add(run)
             session.commit()
             return 0.0
+
+        if run.total_questions == 0:
+            run.total_questions = len(questions)
+            session.add(run)
+            session.commit()
 
         table = session.get(Table, table_id)
         dataset_name = f"text2sql_sandbox_{table_id}"
@@ -286,6 +298,8 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
             logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
             run.status = EvalStatus.failed
             run.score = 0.0
+            if questions:
+                run.total_questions = len(questions)
             session.add(run)
             session.commit()
             return 0.0
@@ -355,6 +369,7 @@ def _run_production_dataset_eval(
 
     run = EvalRun(
         table_id=None,
+        total_questions=len(all_production_questions),
         status=EvalStatus.running,
         triggered_by="promotion-baseline",
         promotion_run_id=promotion_run_id,
@@ -363,7 +378,10 @@ def _run_production_dataset_eval(
     session.commit()
     session.refresh(run)
 
-    table_names = [t.name for t in prod_tables]
+    # Send schema.table format so the agent can validate tables without ambiguity
+    table_names = [
+        f"{t.schema_name}.{t.name}" if t.schema_name else t.name for t in prod_tables
+    ]
     try:
         req = {
             "dataset_name": PRODUCTION_DATASET_NAME,
@@ -380,6 +398,7 @@ def _run_production_dataset_eval(
         logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
         run.status = EvalStatus.failed
         run.score = 0.0
+        run.total_questions = len(all_production_questions)
         session.add(run)
         session.commit()
         return 0.0
@@ -408,6 +427,7 @@ def _run_candidate_eval(
 ) -> float:
     run = EvalRun(
         table_id=table.id,
+        total_questions=len(questions),
         status=EvalStatus.running,
         triggered_by="promotion-candidate",
         promotion_run_id=promotion_run_id,
@@ -442,6 +462,7 @@ def _run_candidate_eval(
         logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
         run.status = EvalStatus.failed
         run.score = 0.0
+        run.total_questions = len(questions)
         session.add(run)
         session.commit()
         return 0.0
@@ -479,6 +500,7 @@ def _run_regression_eval(
 
     run = EvalRun(
         table_id=None,
+        total_questions=len(all_production_questions),
         status=EvalStatus.running,
         triggered_by="promotion-regression",
         promotion_run_id=promotion_run_id,
@@ -487,6 +509,10 @@ def _run_regression_eval(
     session.commit()
     session.refresh(run)
 
+    # Send schema.table format so the agent can validate tables without ambiguity
+    table_names = [
+        f"{t.schema_name}.{t.name}" if t.schema_name else t.name for t in prod_tables
+    ]
     try:
         req = {
             "dataset_name": PRODUCTION_DATASET_NAME,
@@ -503,6 +529,7 @@ def _run_regression_eval(
         logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
         run.status = EvalStatus.failed
         run.score = 0.0
+        run.total_questions = len(all_production_questions)
         session.add(run)
         session.commit()
         return 0.0
@@ -840,7 +867,11 @@ def trigger_eval(
             detail=f"Cannot run evaluation. Missing: {'; '.join(missing)}.",
         )
 
-    run = EvalRun(table_id=table_id, status=EvalStatus.running)
+    run = EvalRun(
+        table_id=table_id,
+        total_questions=len(questions),
+        status=EvalStatus.running,
+    )
     session.add(run)
     session.commit()
     session.refresh(run)

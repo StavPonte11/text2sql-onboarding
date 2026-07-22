@@ -57,13 +57,29 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
               {[
                 {
                   label: 'Score',
-                  value: `${Math.round(report.overall_score * 100)}%`,
-                  color: report.overall_score >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? 'Evaluating…'
+                      : `${Math.round(report.overall_score * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.overall_score >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
                 {
                   label: 'Pass Rate',
-                  value: `${Math.round(report.pass_rate * 100)}%`,
-                  color: report.pass_rate >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? 'Calculating…'
+                      : `${Math.round(report.pass_rate * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.pass_rate >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
                 { label: 'Questions', value: report.total_questions, color: 'var(--text-primary)' },
                 {
@@ -83,12 +99,30 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
             {/* Publishable status */}
             <div
-              className={`publishable-status ${report.is_publishable ? 'publishable-status--ready' : 'publishable-status--not-ready'}`}
+              className={`publishable-status ${
+                report.status === 'running'
+                  ? 'publishable-status--running'
+                  : report.is_publishable
+                    ? 'publishable-status--ready'
+                    : 'publishable-status--not-ready'
+              }`}
             >
-              <span>{report.is_publishable ? <Check size={14} /> : <X size={14} />}</span>
-              {report.is_publishable
-                ? 'Ready to publish (score ≥ 50%)'
-                : 'Not publishable — score below 50%'}
+              <span>
+                {report.status === 'running' ? (
+                  <Spinner size={14} color="#f59e0b" />
+                ) : report.is_publishable ? (
+                  <Check size={14} />
+                ) : (
+                  <X size={14} />
+                )}
+              </span>
+              {report.status === 'running'
+                ? 'Evaluation running — publishability pending evaluation completion'
+                : report.status === 'failed'
+                  ? 'Not publishable — evaluation run failed'
+                  : report.is_publishable
+                    ? 'Ready to publish (score ≥ 50%)'
+                    : 'Not publishable — score below 50%'}
             </div>
 
             {/* Regression */}
@@ -420,12 +454,28 @@ export function RunHistoryTable({
                 )}
                 <td>
                   <div className="score-cell-content">
-                    <span
-                      className="score-text"
-                      style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
-                    >
-                      {Math.round(run.score * 100)}%
-                    </span>
+                    {run.status === 'running' ? (
+                      <span
+                        className="score-text score-text--running"
+                        style={{
+                          color: '#f59e0b',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontSize: 12,
+                        }}
+                      >
+                        <Spinner size={12} color="#f59e0b" />
+                        Evaluating…
+                      </span>
+                    ) : (
+                      <span
+                        className="score-text"
+                        style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                      >
+                        {Math.round(run.score * 100)}%
+                      </span>
+                    )}
                     {run.regression_detected && (
                       <span title="Regression detected">
                         <AlertTriangle size={12} style={{ color: '#ef4444' }} />
@@ -434,7 +484,11 @@ export function RunHistoryTable({
                   </div>
                 </td>
                 <td className="pass-rate-cell">
-                  <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  {run.status === 'running' ? (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
+                  ) : (
+                    <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  )}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>

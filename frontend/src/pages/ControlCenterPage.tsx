@@ -137,16 +137,25 @@ function RecentRunRow({
           height: 36,
           borderRadius: 8,
           flexShrink: 0,
-          background: run.score >= 0.5 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+          background:
+            run.status === 'running'
+              ? 'rgba(245,158,11,0.15)'
+              : run.score >= 0.5
+                ? 'rgba(16,185,129,0.15)'
+                : 'rgba(239,68,68,0.15)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 13,
+          fontSize: run.status === 'running' ? 10 : 13,
           fontWeight: 800,
-          color: run.score >= 0.5 ? '#10b981' : '#ef4444',
+          color: run.status === 'running' ? '#f59e0b' : run.score >= 0.5 ? '#10b981' : '#ef4444',
         }}
       >
-        {Math.round(run.score * 100)}%
+        {run.status === 'running' ? (
+          <Spinner size={14} color="#f59e0b" />
+        ) : (
+          `${Math.round(run.score * 100)}%`
+        )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -103,6 +103,12 @@
   color: #ef4444;
 }
 
+.publishable-status--running {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #f59e0b;
+}
+
 .regression-alert {
   padding: 10px 14px;
   border-radius: 8px;
