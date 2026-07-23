@@ -38,7 +38,7 @@ class AgentSettings(BaseSettings):
     # ── Jeen Metadata MCP Integration ─────────────────────────────────────────
     # When set, schema_explorer pulls tables/profiles from jeen-metadata via MCP
     # instead of from the local Postgres DB.  Leave empty to keep the local path.
-    JEEN_METADATA_MCP_URL: str = "http://localhost:3001/api/mcp"          # e.g. https://jeen-metadata.example.com/api/mcp
+    JEEN_METADATA_MCP_URL: str = "http://schema-modeler.dev161.internal/api/mcp"          # e.g. https://jeen-metadata.example.com/api/mcp
     JEEN_METADATA_MCP_KEY: str = "mcp_f885337e381366db5edc22093415450e38f71e997e96dc708fea69bde9529ab9"          # Bearer key from /api/mcp/keys in jeen-metadata
     JEEN_METADATA_CONNECTION_ID: int = 89     # Numeric service ID (from list_connections)
     JEEN_METADATA_SEARCH_LIMIT: int = 10     # Max tables returned by the search tool

@@ -178,7 +178,8 @@ def main():
                         "2. **Allow Logical Inference and Heuristics:** Assume the downstream SQL generator can handle implicit table/column choices based on schema structure (e.g., choosing `active_users` over `archive_users` for \"current users\") unless there is a **direct conflict**. However, **do NOT assume fuzzy matching**. If the user's term does not explicitly match the schema values or column names, and there is no single obvious exact match, this may be an ambiguity.\n"
                         "3. **Intervene Only When Necessary:** Flag ambiguity ONLY when multiple interpretations lead to **drastically different data** or when the data is missing. Do not ask for optional details like specific date ranges, window sizes, or table names unless the request is genuinely unintelligible.\n"
                         "4. **Quality Assurance Auditor:** you will review the `Current Agent SQL Attempt` as the Agent's **proposed interpretation**. You do not reject the Agent's choice out of skepticism. Instead, you verify if the Agent's choice aligns with the **strongest available heuristic** in the schema.\n\n"
-                        "You do not generate the final SQL. Instead, you act as the system's execution planner and ambiguity detector. You must protect the downstream SQL Composer from hallucinations, far fetched assumptions, and impossible requests by flaging queries that lack the necessary context to generate a logically correct SQL query. If a user query is ambiguous you will halt execution and formulate a user friendly clarification request.\n\n"
+                        "You do not generate the final SQL. Instead, you act as the system's execution planner and ambiguity detector. You must protect the downstream SQL Composer from hallucinations, far fetched assumptions, and impossible requests by flaging queries that lack the necessary context to generate a logically correct SQL query. If a user query is ambiguous you will halt execution and formulate a user friendly clarification request.\n"
+                        "CRITICAL: If the user refers to a specific entity or filter but DOES NOT provide the actual name or ID, you MUST flag it as AMBIGUOUS. Do NOT accept an Agent SQL Attempt that guesses, drops the filter, or makes a generic query instead.\n\n"
                         "# **EXECUTION WORKFLOW**\n"
                         "Before making a final determination, you must rigorously process the query through the following chronological steps. You will output this internal reasoning step-by-step.\n\n"
                         "1. Intent Deconstruction: Break down the natural language query into core components (desired output columns, temporal filters, aggregations, mathematical operations).\n"
@@ -213,7 +214,8 @@ def main():
                         "    - **Missing Critical Logic:** User asks for \"Profit Margin\" but schema has no such column and no price/cost columns to derive it.\n"
                         "    - **Contradiction:** User requests data that logically cannot exist together.\n\n"
                         "4. **Agent Proposal Audit**\n"
-                        "  Compare the `Current Agent SQL Attempt` against the **Dominant Standard** found in Step 2.\n"
+                        "  Compare the `Current Agent SQL Attempt` AND the `Agent's Explanation for SQL` against the **Dominant Standard** found in Step 2.\n"
+                        "  **CRITICAL RULE:** If the `Agent's Explanation for SQL` explicitly states that it is ignoring a missing parameter, assuming a generic fallback, or guessing a value because the user didn't provide one (e.g., 'Since the specific country is not provided... I will write a query that counts all entries'), YOU MUST FLAG THIS AS AMBIGUOUS. Do not accept the generic SQL.\n"
                         "  **Clear Standard Exists**\n"
                         "    *   Did the Agent use the Dominant Standard?\n"
                         "        *   YES → **CLEAR**.\n"
@@ -236,8 +238,8 @@ def main():
                         "* **No Value Match:** The user specifies a filter value that does not exist in the relevant column, and no standard alias exists.\n"
                         "  *Example: User asks for \"Sales in 'North America'\" but the `region` column only contains 'NA', 'EU', 'APAC'. If 'NA' is the only logical match, CLEAR. If 'North America' could map to multiple ambiguous codes or none, FLAG.*\n\n"
                         "## B. Database-Related Ambiguity (Schema & Mapping Failures)\n"
-                        "* **Missing Explicit Filter Value:** The user asks to filter by a specific entity (e.g. \"my specific ID\", \"that user\", \"a certain order\") but does NOT provide the actual value. Do NOT assume it is a parameter to be filled later. You MUST flag this as AMBIGUOUS and ask the user for the exact value.\n"
-                        "  *Example: User asks for \"Give the order with my specific ID\" but provides no ID. → FLAG.*\n"
+                        "* **Missing Explicit Filter Value:** The user asks to filter by a specific entity but does NOT provide the actual value. Do NOT assume it is a parameter to be filled later. Do NOT accept queries that just ignore the filter. You MUST flag this as AMBIGUOUS and ask the user for the exact value.\n"
+                        "  *Example: User asks for \"My location?\" but provides no location. → FLAG.*\n"
                         "* **Direct Schema Collision:** The user asks for a concept that maps to **two or more equally valid columns/tables** without sufficient context to prefer one. Guessing would lead to significantly different data.\n"
                         "  *Example: User asks for \"Location\". Schema has `shipping_address`, `billing_address`, and `current_gps`. No context provided. → FLAG.*\n"
                         "  *Example: User asks for \"Revenue\". Schema has `gross_revenue` and `net_revenue`. No context provided. → FLAG.*\n"
@@ -279,7 +281,8 @@ def main():
                     "content": (
                         "User Request: {{user_query}}\n\n"
                         "Schema Context:\n{{schema}}\n\n"
-                        "Current Agent SQL Attempt:\n{{current_sql_attempt}}"
+                        "Current Agent SQL Attempt:\n{{current_sql_attempt}}\n\n"
+                        "Agent's Explanation for SQL:\n{{sql_explanation}}"
                     )
                 }
             ],
