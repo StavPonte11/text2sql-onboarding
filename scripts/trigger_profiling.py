@@ -24,7 +24,7 @@ sys.path.insert(0, "/app/backend")
 from sqlmodel import Session, select
 from core.db.engine import engine
 from core.models.models import Table, TableProfile, ColumnProfile, ProfilingStatus
-from app.services.profiling_engine import run_table_profiling
+from core.services.profiling_engine import run_table_profiling
 
 MAX_TABLES = 25  # Profile at most this many tables
 
@@ -94,7 +94,6 @@ def run():
             p.sample_size = result.sample_size
             p.column_count = result.column_count
             p.null_rate_avg = result.null_rate_avg
-            p.auto_insights = result.auto_insights
             p.sample_data = result.sample_data
             p.profile_json = result.profile_json
             p.cached_until = datetime.utcnow() + timedelta(hours=24)

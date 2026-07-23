@@ -28,6 +28,12 @@ class AgentSettings(BaseSettings):
     JEEN_LLM_CORE_URL: str = ""  # If empty, agent gracefully skips fetching
     JEEN_API_KEY: str = ""       # If empty, agent gracefully skips fetching
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
+    NOMINATIM_USER_AGENT: str = "text2sql-agent/1.0"  # Nominatim acceptable-use identifier
+    NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
+    NOMINATIM_TIMEOUT: int = Field(default=10, gt=0)  # seconds
+    NOMINATIM_RATE_LIMIT_SECONDS: float = Field(default=1.0, gt=0)  # min gap between requests
+    NOMINATIM_SIMPLIFY_ITERATIONS: int = Field(default=25, gt=0)  # binary-search WKT simplify steps
+    LOCATION_MAX_WKT_LENGTH: int = Field(default=2100, gt=0)  # max chars for WKT polygon string
 
     # ── G4: Feature Flags & Execution Modes ──────────────────────────────────
     BACKEND_URL: str = "http://localhost:8000"  # Studio backend URL
@@ -43,6 +49,7 @@ class AgentSettings(BaseSettings):
         "text2sql/finalizer_sql_explanation"
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
+    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
     LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity"
 
     MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)

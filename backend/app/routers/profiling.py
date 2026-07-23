@@ -6,31 +6,31 @@ New endpoint: GET /tables/{id}/profile/context — LLM-ready context blob.
 """
 
 import logging
-import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
-from core.db.engine import engine, get_session
+from core.db.engine import get_session
 from core.models.models import (
     ColumnProfile,
     ColumnProfileRead,
     CrossTableProfile,
     CrossTableProfileRead,
     EnrichmentVersion,
+    ProfilingRun,
     ProfilingStatus,
     Table,
     TableProfile,
     TableProfileRead,
 )
+from core.services.profiling_engine import build_context_for_llm
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
+from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
+from app.config import settings
 from app.services.join_detection import discover_joins_for_table
-from app.services.profiling_engine import (
-    build_context_for_llm,
-    generate_table_summary,
-    run_table_profiling,
-)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["profiling"])
@@ -74,113 +74,46 @@ def _upsert_ai_summary(session: Session, table_id: str, summary: str) -> None:
 
 
 # ── Background worker ──────────────────────────────────────────────────────────
-def _run_profile_job(table_id: str):
+# ── Background worker ──────────────────────────────────────────────────────────
+async def trigger_temporal_profiling_workflow(
+    table_id: str, resume_from_partial: bool = False
+) -> bool:
     """
-    Background task: runs real Trino profiling via profiling_engine,
-    then upserts results into table_profiles + column_profiles.
+    Attempts to trigger the profiling workflow via Temporal.
+    Returns True if started successfully, False otherwise.
     """
-    with Session(engine) as session:
-        table = session.get(Table, table_id)
-        if not table:
-            logger.error(f"[Profiling] table_id={table_id} not found")
-            return
-
-        schema_name = table.schema_name
-        table_name = table.name
-        catalog = table.catalog
-
-    # Run engine OUTSIDE the session to avoid long-held DB connections
     try:
-        result = run_table_profiling(
-            table_id=table_id,
-            catalog=catalog,
-            schema=schema_name,
-            table=table_name,
-            version=1,
-        )
-    except Exception as exc:
-        with open("error.log", "w") as f:
-            f.write(traceback.format_exc())
-        logger.error(f"[Profiling] Engine failed for {table_id}: {exc}")
-        return
-
-    if not result.success:
-        logger.error(f"[Profiling] Engine unsuccessful for {table_id}")
-        return
-
-    # Persist results (Upsert by table_id)
-    with Session(engine) as session:
-        profile = session.exec(
-            select(TableProfile).where(TableProfile.table_id == table_id)
-        ).first()
-        if not profile:
-            profile = TableProfile(table_id=table_id)
-            session.add(profile)
-
-        profile.status = ProfilingStatus.completed
-        profile.row_count = result.row_count
-        profile.sample_size = result.sample_size
-        profile.column_count = result.column_count
-        profile.null_rate_avg = result.null_rate_avg
-        profile.auto_insights = result.auto_insights
-        profile.sample_data = result.sample_data
-        profile.profile_json = result.profile_json
-        profile.cached_until = datetime.now() + timedelta(hours=24)
-        profile.updated_at = datetime.now()
-        session.add(profile)
-        session.commit()
-        session.refresh(profile)
-
-        # Clear old column profiles
-        old_cols = session.exec(
-            select(ColumnProfile).where(ColumnProfile.table_id == table_id)
-        ).all()
-        for old_c in old_cols:
-            session.delete(old_c)
-        session.commit()
-
-        # Persist new column profiles
-        for cs in result.column_stats:
-            cp = ColumnProfile(
-                table_id=table_id,
-                profile_id=profile.id,
-                column_name=cs.column_name,
-                data_type=cs.data_type,
-                null_count=cs.null_count,
-                null_rate=cs.null_rate,
-                distinct_count=cs.distinct_count,
-                min_value=cs.min_value,
-                max_value=cs.max_value,
-                avg_value=cs.avg_value,
-                median_value=cs.median_value,
-                top_values=cs.top_values,
-                is_categorical=cs.is_categorical,
-                is_geo=cs.is_geo,
-                is_time=cs.is_time,
-                semantic_type=cs.semantic_type,
-                stats_json=cs.stats_json,
-            )
-            session.add(cp)
-
-        session.commit()
         logger.info(
-            f"[Profiling] Persisted profile {profile.id} for table {table_id} "
-            f"({len(result.column_stats)} columns)"
+            "[Profiling] Connecting to Temporal client at %s", settings.TEMPORAL_HOST
         )
-
-    # Generate one-time LLM summary and persist into EnrichmentVersion
-    try:
-        summary = generate_table_summary(result)
-        if summary:
-            with Session(engine) as session:
-                _upsert_ai_summary(session, table_id, summary)
-    except Exception as exc:
-        logger.warning("[Profiling] AI summary step failed for %s: %s", table_id, exc)
+        client = await Client.connect(settings.TEMPORAL_HOST)
+        await client.start_workflow(
+            "TableProfilingWorkflow",
+            id=f"profile-{table_id}",
+            task_queue="profiling-tasks",
+            args=[table_id, resume_from_partial],
+        )
+        logger.info(
+            "[Profiling] Successfully started Temporal workflow for table %s", table_id
+        )
+        return True
+    except WorkflowAlreadyStartedError:
+        logger.info(
+            "[Profiling] Profiling workflow is already running for table %s", table_id
+        )
+        return True
+    except Exception as e:
+        logger.error(
+            "[Profiling] Failed to start Temporal workflow for table %s: %s",
+            table_id,
+            e,
+        )
+        return False
 
 
 # ── GET /tables/{id}/profile ───────────────────────────────────────────────────
 @router.get("/tables/{table_id}/profile", response_model=TableProfileRead)
-def get_table_profile(table_id: str, session: Session = Depends(get_session)):
+async def get_table_profile(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -189,17 +122,87 @@ def get_table_profile(table_id: str, session: Session = Depends(get_session)):
         select(TableProfile).where(TableProfile.table_id == table_id)
     ).first()
 
-    if not profile:
+    latest_run = session.exec(
+        select(ProfilingRun)
+        .where(ProfilingRun.table_id == table_id)
+        .order_by(ProfilingRun.started_at.desc())
+    ).first()
+
+    if not profile and not latest_run:
         raise HTTPException(
             status_code=404, detail="No profile found. Run POST /profile/run first."
         )
 
-    return profile
+    # Sync state from Temporal if stuck
+    if latest_run and latest_run.status in (
+        ProfilingStatus.running,
+        ProfilingStatus.pending,
+    ):
+        try:
+            client = await Client.connect(settings.TEMPORAL_HOST)
+            handle = client.get_workflow_handle(f"profile-{table_id}")
+            desc = await handle.describe()
+            if desc.status in (
+                WorkflowExecutionStatus.FAILED,
+                WorkflowExecutionStatus.TERMINATED,
+                WorkflowExecutionStatus.TIMED_OUT,
+            ):
+                latest_run.status = ProfilingStatus.failed
+                session.add(latest_run)
+                session.commit()
+                session.refresh(latest_run)
+            elif desc.status == WorkflowExecutionStatus.CANCELED:
+                latest_run.status = ProfilingStatus.canceled
+                session.add(latest_run)
+                session.commit()
+                session.refresh(latest_run)
+        except RPCError as e:
+            if e.status == RPCStatusCode.NOT_FOUND:
+                latest_run.status = ProfilingStatus.failed
+                session.add(latest_run)
+                session.commit()
+                session.refresh(latest_run)
+            else:
+                logger.warning(
+                    "[Profiling] Failed to sync temporal status for %s: %s", table_id, e
+                )
+        except Exception as e:
+            logger.warning(
+                "[Profiling] Failed to sync temporal status for %s: %s", table_id, e
+            )
+
+    # If latest_run is missing but we bypassed the 404, it means we have legacy TableProfile data
+    # without a run history. In this case, we default the status to completed.
+    status = latest_run.status if latest_run else ProfilingStatus.completed
+
+    # If we have a failed or running latest_run but no TableProfile data yet,
+    # return a stub dictionary so the frontend can still display the run's status/error.
+    profile_dict = (
+        profile.model_dump()
+        if profile
+        else {
+            "id": "pending",
+            "table_id": table_id,
+            "row_count": None,
+            "sample_size": None,
+            "column_count": None,
+            "size_bytes": None,
+            "null_rate_avg": None,
+            "duplicate_rate": None,
+            "sample_data": None,
+            "profile_json": None,
+            "cached_until": None,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+    )
+
+    return TableProfileRead(**profile_dict, status=status, is_partial=False)
 
 
 # ── POST /tables/all/profile/run ──────────────────────────────────────────────
 @router.post("/tables/all/profile/run", status_code=202)
-def run_all_profiles(
+async def run_all_profiles(
     background_tasks: BackgroundTasks,
     force: bool = False,
     session: Session = Depends(get_session),
@@ -208,11 +211,18 @@ def run_all_profiles(
     Triggers profiling for all registered tables.
     Ideal for Airflow DAGs to keep profiles up-to-date.
     """
+    try:
+        await Client.connect(settings.TEMPORAL_HOST)
+    except Exception as e:
+        logger.error("[Profiling] Temporal not available: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Temporal workflow engine is unavailable."
+        )
+
     tables = session.exec(select(Table)).all()
     count = 0
     for table in tables:
-        # If not force, check for running profile
-        background_tasks.add_task(_run_profile_job, str(table.id))
+        background_tasks.add_task(trigger_temporal_profiling_workflow, table.id)
         count += 1
 
     logger.info(
@@ -229,10 +239,11 @@ def run_all_profiles(
 @router.post(
     "/tables/{table_id}/profile/run", response_model=TableProfileRead, status_code=202
 )
-def run_table_profile(
+async def run_table_profile(
     table_id: str,
     background_tasks: BackgroundTasks,
     force: bool = False,
+    resume_from_partial: bool = False,
     session: Session = Depends(get_session),
 ):
     """
@@ -244,18 +255,89 @@ def run_table_profile(
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
+    run = ProfilingRun(table_id=table_id, status=ProfilingStatus.pending)
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    success = await trigger_temporal_profiling_workflow(table_id, resume_from_partial)
+    if not success:
+        run.status = ProfilingStatus.failed
+        run.error_message = "Temporal workflow engine is unavailable."
+        session.add(run)
+        session.commit()
+        raise HTTPException(
+            status_code=503, detail="Temporal workflow engine is unavailable."
+        )
+
+    logger.info(f"[Profiling] Queued profiling job: table={table_id}")
+
     profile = session.exec(
         select(TableProfile).where(TableProfile.table_id == table_id)
     ).first()
 
-    background_tasks.add_task(_run_profile_job, table_id)
-    logger.info(f"[Profiling] Queued profiling job: table={table_id}")
+    profile_dict = (
+        profile.model_dump()
+        if profile
+        else {
+            "id": "pending",
+            "table_id": table_id,
+            "row_count": None,
+            "sample_size": None,
+            "column_count": None,
+            "size_bytes": None,
+            "null_rate_avg": None,
+            "duplicate_rate": None,
+            "sample_data": None,
+            "profile_json": None,
+            "cached_until": None,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+    )
 
-    if profile:
-        return profile
+    return TableProfileRead(
+        **profile_dict, status=ProfilingStatus.pending, is_partial=False
+    )
 
-    # Return a dummy pending profile just to satisfy response_model if not exists yet
-    return TableProfile(table_id=table_id, status=ProfilingStatus.pending)
+
+# ── POST /tables/{id}/profile/terminate ───────────────────────────────────────
+@router.post("/tables/{table_id}/profile/terminate", status_code=200)
+async def terminate_table_profile(
+    table_id: str, session: Session = Depends(get_session)
+):
+    """
+    Terminates a running Temporal profiling workflow for the given table.
+    """
+    table = session.get(Table, table_id)
+    latest_run = session.exec(
+        select(ProfilingRun)
+        .where(ProfilingRun.table_id == table_id)
+        .order_by(ProfilingRun.started_at.desc())
+    ).first()
+
+    if (
+        not table
+        or not latest_run
+        or latest_run.status not in (ProfilingStatus.running, ProfilingStatus.pending)
+    ):
+        raise HTTPException(status_code=404, detail="Table or active run not found")
+
+    try:
+        client = await Client.connect(settings.TEMPORAL_HOST)
+        handle = client.get_workflow_handle(f"profile-{table_id}")
+        await handle.cancel()
+    except Exception as e:
+        logger.warning(f"Failed to cancel temporal workflow for {table_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to cancel temporal workflow: {e}"
+        )
+
+    latest_run.status = ProfilingStatus.canceled
+    session.add(latest_run)
+    session.commit()
+
+    return {"message": "Profiling job terminated", "status": "canceled"}
 
 
 # ── GET /tables/{id}/profile/columns ──────────────────────────────────────────

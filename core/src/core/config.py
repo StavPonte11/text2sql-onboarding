@@ -24,6 +24,12 @@ class CoreSettings(BaseSettings):
 
     CATALOG_VALID_TTL: int = 300
 
+    PROFILER_MAX_CONCURRENT_QUERIES: int = 20
+    PROFILING_CHUNK_SIZE: int = 15
+    LLM_BASE_URL: str | None = None
+    LLM_MODEL: str | None = None
+    LLM_API_KEY: str | None = None
+
     # Starburst Galaxy Configuration
     USE_GALAXY: bool = False
     GALAXY_HOST: str = ""
