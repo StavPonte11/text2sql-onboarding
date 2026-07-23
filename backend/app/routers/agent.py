@@ -66,6 +66,7 @@ class ChatResponse(BaseModel):
     schema_plan: str | None = None
     trace_id: str | None = None
     execution_path: list[str] | None = None
+    is_unanswerable: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +261,7 @@ async def get_trace_timeline(trace_id: str):
     auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
     url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, auth=auth)
         if resp.status_code != 200:
             if resp.status_code == 404:

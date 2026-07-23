@@ -1088,9 +1088,8 @@ def _ensure_airlines_registered() -> None:
         TableProfile,
         TableStatus,
     )
-    from sqlmodel import Session, select
-
     from core.services.profiling_engine import run_table_profiling
+    from sqlmodel import Session, select
 
     logger.info("[InfraInit] Registering airlines Snowflake tables...")
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-from langgraph.types import interrupt
 import json
 import re
 import urllib.request
@@ -29,7 +28,6 @@ from agent.llm import get_llm
 from agent.utils.schema_enrichment import (
     run_semantic_typing,
     run_join_graph,
-    run_ambiguity_detection,
 )
 from core.cache import get_cache_service
 from core.embeddings import get_embedding
@@ -40,47 +38,6 @@ logger = logging.getLogger(__name__)
 
 # Cache singleton
 _cache = get_cache_service()
-
-async def _resolve_ambiguity(
-    data: SchemaExplorerOutput,
-    chain,
-    tables_info: list,
-    profiles_json_str: str,
-    human_message: str,
-    state: AgentState,
-) -> SchemaExplorerOutput:
-    """Helper to handle ambiguity detection and interactive resolution."""
-    if (
-        data.ambiguity_detected
-        and data.ambiguity_message
-        and not state.get("non_interactive")
-    ):
-        user_choice = interrupt(
-            {
-                "type": "schema_explorer_ambiguity",
-                "message": data.ambiguity_message,
-                "options": data.candidate_options,
-            }
-        )
-
-        clarified_message = f"{human_message}\nSelected table/option: {user_choice}"
-        try:
-            return await chain.ainvoke(
-                {
-                    "tables_json": json.dumps(tables_info, indent=2),
-                    "profiles_json": profiles_json_str,
-                    "human_message": clarified_message,
-                }
-            )
-        except Exception as e:
-            logger.error(f"Structured output parsing failed in schema explorer after clarification: {e}")
-            return SchemaExplorerOutput(
-                schema_plan=None,
-                ambiguity_detected=False,
-                ambiguity_message="",
-                candidate_options=[],
-            )
-    return data
 
 # Skill Registry
 from agent.utils.skill_registry import SkillRegistry
@@ -136,21 +93,12 @@ def _build_column_context(cp: "ColumnProfile") -> dict:
 
 
 # Define standardized Schema Explorer Output Type
+# Ambiguity detection is handled exclusively by the detect_ambiguity node in the
+# refiner subgraph — schema_explorer only produces a query plan and table list.
 class SchemaExplorerOutput(BaseModel):
-    schema_plan: Optional[Any] = Field(
-        default=None,
-        description="Detailed query plan describing tables, columns, and joins.",
-    )
-    ambiguity_detected: bool = Field(
-        default=False, description="Set to true if there is table selection ambiguity."
-    )
-    ambiguity_message: str = Field(
+    schema_plan: str = Field(
         default="",
-        description="A question to ask the user to clarify/select the right table(s). Must be empty if ambiguity_detected is false.",
-    )
-    candidate_options: List[str] = Field(
-        default_factory=list,
-        description="List of strings (table names or options) for the user to choose from. Must be empty if ambiguity_detected is false.",
+        description="Detailed query plan describing tables, columns, and joins. Must be a detailed string explanation.",
     )
     tables_used: List[str] = Field(
         default_factory=list,
@@ -395,9 +343,6 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
     schema_summarization = _parse_bool_flag(
         runtime_flags.get("SCHEMA_SUMMARIZATION", settings.ENABLE_SCHEMA_SUMMARIZATION)
     )
-    schema_ambiguity_detect = _parse_bool_flag(
-        runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
-    )
     schema_skill_injection = _parse_bool_flag(
         runtime_flags.get("SCHEMA_SKILL_INJECTION", settings.ENABLE_SKILL_INJECTION)
     )
@@ -540,15 +485,6 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
         except Exception as exc:
             logger.warning("SCHEMA_SUMMARIZATION phase failed: %s", exc)
 
-    # Phase D: Ambiguity Detection
-    if schema_ambiguity_detect and profile_details:
-        try:
-            notes = await run_ambiguity_detection(profile_details, user_query, _llm)
-            if notes:
-                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
-                active_phases.append("SCHEMA_AMBIGUITY_DETECT")
-        except Exception as exc:
-            logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
 
     # ── Langfuse trace metadata ───────────────────────────────────────────────
     try:
@@ -588,24 +524,11 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
         )
     except Exception as e:
         print(f"Structured output parsing failed in schema explorer: {e}")
-        data = SchemaExplorerOutput(
-            schema_plan=None,
-            ambiguity_detected=False,
-            ambiguity_message="",
-            candidate_options=[],
-        )
+        data = SchemaExplorerOutput(schema_plan="")
 
-    data = await _resolve_ambiguity(data, chain, tables_info, profiles_json_str, human_message, state)
-
-    plan = data.schema_plan
-    if plan is not None and not isinstance(plan, str):
-        plan = json.dumps(plan)
-    elif plan is None:
-        plan = ""
+    plan = data.schema_plan or ""
 
     tables_used = getattr(data, "tables_used", [])
-    if tables_used:
-        state["tables_used"] = tables_used
 
     result_state: dict = {"schema_plan": plan, "tables_used": tables_used}
     result_state["execution_path"] = ["schema_explorer"]

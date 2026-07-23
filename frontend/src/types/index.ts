@@ -26,10 +26,7 @@ export type UserScopeCreate = Schemas['UserScopeCreate'];
 
 export type AuditQuery = Schemas['AuditQueryRead'];
 
-export type TableProfile = Omit<
-  Schemas['TableProfileRead'],
-  'sample_data' | 'profile_json'
-> & {
+export type TableProfile = Omit<Schemas['TableProfileRead'], 'sample_data' | 'profile_json'> & {
   sample_data?: any[];
   profile_json?: any;
   is_partial?: boolean;

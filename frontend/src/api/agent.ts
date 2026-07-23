@@ -45,6 +45,7 @@ export interface ChatResponse {
   schema_plan?: string;
   trace_id?: string;
   execution_path?: string[];
+  is_unanswerable?: boolean;
 }
 
 export const agentApi = {
