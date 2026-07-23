@@ -10,7 +10,7 @@ class AgentSettings(BaseSettings):
 
     ESCA_API_KEY: str = ""
     ESCA_URL: str = "http://localhost:7010"
-    ESCA_WRITE_ENABLED: bool = True
+    ESCA_WRITE_ENABLED: bool = False
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "gemma4:e4b"
@@ -81,7 +81,7 @@ class AgentSettings(BaseSettings):
     SATISFACTION_CHECK_ENABLED: bool = True
     SATISFACTION_CHECK_EXECUTION: bool = True
     SATISFACTION_CHECK_PLAUSIBILITY: bool = True
-    SATISFACTION_CHECK_COLUMNS: bool = True
+    SATISFACTION_CHECK_COLUMNS: bool = False
     SATISFACTION_CHECK_SEMANTIC: bool = False  # LLM-heavy, off by default
     SATISFACTION_MIN_ROWS: int = 1
     SATISFACTION_MAX_ROWS: int = 50_000
