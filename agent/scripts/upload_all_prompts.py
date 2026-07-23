@@ -84,7 +84,7 @@ def main():
             "prompt": [
                 {
                     "role": "system",
-                    "content": "You are a SQL expert who specializes in trino. Build a SQL query based on the catalog and user query. Output ONLY the SQL query, nothing else.\n\nIMPORTANT: Before writing the SQL, provide a brief 1-3 sentence explanation of your reasoning or how you answered the question.\n\nCRITICAL: You MUST fully qualify all tables in your SQL query using the provided Catalog and Schema parameters. (Format: {{trino_catalog_name}}.{{trino_schema_name}}.my_table). Do not use unqualified table names."
+                    "content": "You are a SQL expert who specializes in trino. Build a SQL query based on the catalog and user query.\n\nIMPORTANT: Before writing the SQL, provide a brief 1-3 sentence explanation of your reasoning or how you answered the question.\n\nCRITICAL: You MUST fully qualify all tables in your SQL query using the provided Catalog and Schema parameters. (Format: {{trino_catalog_name}}.{{trino_schema_name}}.my_table). Do not use unqualified table names."
                 },
                 {
                     "role": "user",

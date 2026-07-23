@@ -26,7 +26,6 @@ class AgentState(TypedDict):
     active_skills: list[str] | None
     loaded_skills: list[dict] | None
     last_error: str | None
-    hallucinated_tables: list[str] | None
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None
     inline_result_columns: list[str] | None
@@ -43,8 +42,7 @@ class AgentState(TypedDict):
     # G4: feature flags & execution modes
     execution_mode: str | None          # e.g. "cost_saving", "high_quality", "benchmark"
     runtime_flags: dict[str, Any] | None  # resolved by init_flags_node
-    # Enriched table profiles — populated by schema_explorer for reuse by refiner
-    table_profiles: list[dict[str, Any]] | None
+    # ── Map related state ─────────────────────────────────────────────────────
     locations_dict: dict[str, dict[str, str]] | None
     location_wkt_instruction: str | None
     # ── Ambiguity Detection (detect_ambiguity node) ───────────────────────────

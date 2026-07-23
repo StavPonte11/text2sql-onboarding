@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # G2-02 limits
 MAX_SCHEMA_RETRIES = 3
 
-async def schema_explorer_node(state: AgentState, config: RunnableConfig = None):
+async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
     """Schema Explorer node — just fetches the full catalog prompt from MCP."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
 
@@ -46,12 +46,8 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
 
     result_state: dict = {
         "jeen_catalog": catalog_prompt,
-        "tables_used": [], 
-        "table_profiles": None, 
         "execution_path": ["schema_explorer"],
         "schema_explorer_retry_count": 0,
-        "hallucinated_tables": None,
-        "last_error": None
     }
 
     return result_state

@@ -96,7 +96,7 @@ async def hitl_query_approval_node(state: AgentState, config: RunnableConfig | N
         }
     else:
         return {
-            "feedback": approval_result.get("feedback", "Query rejected by user"),
+            "feedback": approval_result.get("feedback") or "Query rejected by user",
             "sql_query": None,
             "execution_path": ["hitl_query_approval"],
         }

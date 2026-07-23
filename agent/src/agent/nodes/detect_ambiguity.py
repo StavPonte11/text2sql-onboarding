@@ -131,7 +131,6 @@ async def detect_ambiguity_node(
     # contains the sql_query from the query builder.
     user_message = (
         f"User Request: {state.get('user_query', '')}\n\n"
-        # f"Schema Context:\n{state.get('jeen_catalog', '')}\n\n"
         f"Current Agent SQL Attempt:\n{state.get('sql_query', '')}\n\n"
         f"Agent's Explanation for SQL:\n{state.get('sql_explanation', '')}\n"
     )

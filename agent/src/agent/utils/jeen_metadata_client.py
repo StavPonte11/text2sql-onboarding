@@ -8,7 +8,7 @@ calls with equivalent calls to the jeen-metadata MCP server.
 
 MCP tools used
 --------------
-- ``search``            → table discovery (replaces hybrid_search_tables)
+- ``get_catalog_prompt``            → table discovery (replaces hybrid_search_tables)
 - ``get_table_profile`` → per-table column stats (replaces get_table_profile tool)
 - ``list_tables_rich``  → fallback full-table list with row counts
 
@@ -113,7 +113,7 @@ class JeenMetadataClient:
     High-level async client for jeen-metadata's MCP server.
 
     Methods map 1-to-1 to what schema_explorer_node needs:
-    - search_tables()     replaces hybrid_search_tables()
+    - get_catalog_prompt()     get the big catalog prompt about the whole database we work with
     - get_table_profile() replaces the @tool get_table_profile()
     - list_tables_rich()  fallback when search returns nothing
     """
