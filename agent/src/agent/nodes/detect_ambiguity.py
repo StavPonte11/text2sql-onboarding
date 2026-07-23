@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
-from agent.nodes.refiner import build_refiner_schema_context
+from agent.llm import get_llm
 from agent.state import AgentState
 from agent.utils.redis_publisher import publish_node_event
 
@@ -101,10 +101,7 @@ async def detect_ambiguity_node(
 
     # ── Gather inputs ─────────────────────────────────────────────────────────
     user_query: str = state.get("user_query") or ""
-    # schema_plan is the agent's explicit interpretation of the query before any
-    # SQL is written — richer than SQL for auditing intent.
-    agent_plan: str = state.get("schema_plan") or "(no query plan available)"
-    schema_context: str = build_refiner_schema_context(state)
+    # jeen_catalog now contains the catalog prompt
     current_time: str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # ── Fetch system prompt from Langfuse ─────────────────────────────────────
@@ -130,13 +127,11 @@ async def detect_ambiguity_node(
     # ── Build user message ────────────────────────────────────────────────────
     # NOTE: The field is labelled "Current Agent SQL Attempt" in the prompt to
     # stay consistent with the Langfuse prompt template. At this stage it
-    # contains the schema_plan (the agent's intent in natural language), which
-    # is equally valid — the prompt's Agent Proposal Audit works on intent, not
-    # syntax.
+    # contains the sql_query from the query builder.
     user_message = (
         f"User Request: {state.get('user_query', '')}\n\n"
-        f"Schema Context:\n{schema_context}\n\n"
-        f"Current Agent SQL Attempt:\n{agent_plan}\n"
+        f"Schema Context:\n{state.get('jeen_catalog', '')}\n\n"
+        f"Current Agent SQL Attempt:\n{state.get('sql_query', '')}\n"
     )
 
     # ── LLM call ─────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ class AgentState(TypedDict):
     execution_path: Annotated[list[str], operator.add]
     messages: Annotated[list[BaseMessage], add_messages]
     query_enrichments: list[dict[str, Any]]
-    schema_plan: str
+    jeen_catalog: str
     sql_query: str
     trino_error: str | None
     refinement_count: int

@@ -16,16 +16,10 @@ from agent.utils.esca import get_esca_client
 llm = get_llm("refiner")
 
 def build_refiner_schema_context(state: AgentState) -> str:
-    profiles = state.get("table_profiles")
-    if not profiles:
+    catalog = state.get("jeen_catalog")
+    if not catalog:
         return "No schema context available."
-
-    runtime_flags = state.get("runtime_flags") or {}
-    limit = int(runtime_flags.get("REFINER_SCHEMA_CONTEXT_TABLES", settings.REFINER_SCHEMA_CONTEXT_TABLES))
-
-    # Cap the context to REFINER_SCHEMA_CONTEXT_TABLES
-    capped_profiles = profiles[:limit]
-    return json.dumps(capped_profiles, indent=2)
+    return catalog
 
 
 async def refiner_node(state: AgentState, config: RunnableConfig | None = None):

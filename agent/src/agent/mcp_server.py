@@ -162,7 +162,7 @@ async def chat_with_agent(
                 "thread_id": thread_id,
                 "status": "interrupted",
                 "interrupt_details": interrupt_val,
-                "schema_plan": final_state.values.get("schema_plan") or (interrupt_val.get("schema_plan") if isinstance(interrupt_val, dict) else None),
+                "schema_plan": None,
                 "sql_query": final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None),
                 "sql_explanation": interrupt_val.get("sql_explanation") if isinstance(interrupt_val, dict) else None,
                 "trace_id": trace_id,
@@ -183,7 +183,7 @@ async def chat_with_agent(
                 "thread_id": thread_id,
                 "status": "interrupted",
                 "interrupt_details": interrupt_val,
-                "schema_plan": final_state.values.get("schema_plan"),
+                "schema_plan": None,
                 "sql_query": final_state.values.get("sql_query"),
                 "trace_id": trace_id,
                 "execution_path": final_state.values.get("execution_path", []),
@@ -202,7 +202,7 @@ async def chat_with_agent(
             "raw_data_ref": result.get("raw_data_ref"),
             "sql_query": result.get("sql_query"),
             "sql_explanation": result.get("sql_explanation"),
-            "schema_plan": result.get("schema_plan"),
+            "schema_plan": None,
             "trace_id": trace_id,
             "execution_path": result.get("execution_path", []),
             "is_unanswerable": is_unans,
@@ -220,7 +220,7 @@ async def suggest_fixes(thread_id: str, category: str) -> str:
         return "[]"
     
     sql_query = state_snapshot.values.get("sql_query", "")
-    schema_plan = state_snapshot.values.get("schema_plan", "")
+    jeen_catalog = state_snapshot.values.get("jeen_catalog", "")
     user_query = state_snapshot.values.get("user_query", "")
     runtime_flags = state_snapshot.values.get("runtime_flags", {})
     
@@ -233,7 +233,7 @@ async def suggest_fixes(thread_id: str, category: str) -> str:
     The user rejected the agent's Text2SQL output with category '{category}'.
     User Query: {user_query}
     Current SQL: {sql_query}
-    Current Plan: {schema_plan}
+    Current Plan: {jeen_catalog}
     
     Provide 2-3 short, distinct button labels for the user to quickly apply a fix.
     For example: "GROUP BY date instead of month", "Include cancelled orders", "Filter by region".

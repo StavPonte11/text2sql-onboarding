@@ -80,15 +80,15 @@ def main():
             "type": "chat"
         },
         {
-            "name": "text2sql/query_builder",
+            "name": "text2sql/query_builder_v2",
             "prompt": [
                 {
                     "role": "system",
-                    "content": "You are a SQL expert who specializes in trino. Build a SQL query based on the plan and user query. Output ONLY the SQL query, nothing else."
+                    "content": "You are a SQL expert who specializes in trino. Build a SQL query based on the catalog and user query. Output ONLY the SQL query, nothing else.\n\nIMPORTANT: Before writing the SQL, provide a brief 1-3 sentence explanation of your reasoning or how you answered the question.\n\nCRITICAL: You MUST fully qualify all tables in your SQL query using the provided Catalog and Schema parameters. (Format: {{trino_catalog_name}}.{{trino_schema_name}}.my_table). Do not use unqualified table names."
                 },
                 {
                     "role": "user",
-                    "content": "Plan: {{schema_plan}}\nQuery: {{user_query}}{{feedback_str}}"
+                    "content": "Jeen Metadata Catalog Overview: {{jeen_catalog}}\nTarget Trino Catalog Name: {{trino_catalog_name}}\nTarget Trino Schema Name: {{trino_schema_name}}\nQuery: {{user_query}}. {{feedback_str}}"
                 }
             ],
             "type": "chat"
@@ -164,7 +164,7 @@ def main():
             "type": "chat"
         },
         {
-            "name": "text2sql/detect_ambiguity",
+            "name": "text2sql/detect_ambiguity_v2",
             "prompt": [
                 {
                     "role": "system",
@@ -278,7 +278,7 @@ def main():
                     "role": "user",
                     "content": (
                         "User Request: {{user_query}}\n\n"
-                        "Schema:\n{{schema}}\n\n"
+                        "Schema Context:\n{{schema}}\n\n"
                         "Current Agent SQL Attempt:\n{{current_sql_attempt}}"
                     )
                 }

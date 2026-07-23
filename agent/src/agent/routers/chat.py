@@ -149,7 +149,7 @@ async def chat_endpoint(
             thread_id=thread_id,
             status="interrupted",
             interrupt_details=interrupt_val,
-            schema_plan=final_state.values.get("schema_plan") or (interrupt_val.get("schema_plan") if isinstance(interrupt_val, dict) else None),
+            schema_plan=None,
             sql_query=final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None),
         )
 
@@ -160,5 +160,5 @@ async def chat_endpoint(
         raw_data_ref=result.get("raw_data_ref"),
         sql_query=result.get("sql_query"),
         sql_explanation=result.get("sql_explanation"),
-        schema_plan=result.get("schema_plan"),
+        schema_plan=None,
     )

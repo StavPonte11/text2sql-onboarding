@@ -35,6 +35,19 @@ class AgentSettings(BaseSettings):
     NOMINATIM_SIMPLIFY_ITERATIONS: int = Field(default=25, gt=0)  # binary-search WKT simplify steps
     LOCATION_MAX_WKT_LENGTH: int = Field(default=2100, gt=0)  # max chars for WKT polygon string
 
+    # ── Jeen Metadata MCP Integration ─────────────────────────────────────────
+    # When set, schema_explorer pulls tables/profiles from jeen-metadata via MCP
+    # instead of from the local Postgres DB.  Leave empty to keep the local path.
+    JEEN_METADATA_MCP_URL: str = "http://localhost:3001/api/mcp"          # e.g. https://jeen-metadata.example.com/api/mcp
+    JEEN_METADATA_MCP_KEY: str = "mcp_f885337e381366db5edc22093415450e38f71e997e96dc708fea69bde9529ab9"          # Bearer key from /api/mcp/keys in jeen-metadata
+    JEEN_METADATA_CONNECTION_ID: int = 89     # Numeric service ID (from list_connections)
+    JEEN_METADATA_SEARCH_LIMIT: int = 10     # Max tables returned by the search tool
+    JEEN_METADATA_PROFILE_TIMEOUT: float = 30.0  # Per-MCP-call timeout (seconds)
+
+    # ── Trino connection info for explicit catalog/schema qualification ──
+    TRINO_CATALOG: str = ""
+    TRINO_SCHEMA: str = ""
+
     # ── G4: Feature Flags & Execution Modes ──────────────────────────────────
     BACKEND_URL: str = "http://localhost:8000"  # Studio backend URL
     REDIS_URL: str = "redis://localhost:6379"
@@ -42,7 +55,7 @@ class AgentSettings(BaseSettings):
     # Langfuse prompt names
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"
-    LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder"
+    LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder_v2"
     LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
     LANGFUSE_PROMPT_FINALIZER_SUMMARY: str = "text2sql/finalizer_summary"
     LANGFUSE_PROMPT_FINALIZER_SQL_EXPLANATION: str = (
@@ -50,7 +63,7 @@ class AgentSettings(BaseSettings):
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
     LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
-    LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity"
+    LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity_v2"
 
     MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)
     REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=4, gt=0)
