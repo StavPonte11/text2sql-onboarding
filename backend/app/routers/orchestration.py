@@ -493,13 +493,50 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     ).all()
     question_map = {q.id: q.question for q in questions}
 
+    if not results and run.table_id:
+        table_questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
+        ).all()
+        is_running = run.status == EvalStatus.running
+        per_question = [
+            {
+                "question_id": q.id,
+                "question": q.question,
+                "score": None if is_running else 0.0,
+                "status": "pending" if is_running else "fail",
+                "failure_type": None
+                if is_running
+                else (
+                    "evaluation_failed" if run.status == EvalStatus.failed else "failed"
+                ),
+            }
+            for q in table_questions
+        ]
+    else:
+        per_question = [
+            {
+                "question_id": r.question_id,
+                "question": question_map.get(r.question_id, r.question_id),
+                "score": r.score,
+                "status": r.status,
+                "failure_type": r.error_type,
+            }
+            for r in results
+        ]
+
+    failure_breakdown = run.failure_breakdown or (
+        {"evaluation_failed": run.total_questions or len(per_question)}
+        if run.status == EvalStatus.failed
+        else {}
+    )
+
     return {
         "run_id": run_id,
         "table_id": run.table_id,
         "overall_score": run.score,
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
-        "total_questions": run.total_questions,
+        "total_questions": run.total_questions or len(per_question),
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
@@ -509,20 +546,11 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         else False,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
-        "failure_breakdown": run.failure_breakdown or {},
+        "failure_breakdown": failure_breakdown,
         "dimension_averages": run.dimension_averages or {},
         "started_at": run.started_at.isoformat(),
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-        "per_question": [
-            {
-                "question_id": r.question_id,
-                "question": question_map.get(r.question_id),
-                "score": r.score,
-                "status": r.status,
-                "failure_type": r.error_type,
-            }
-            for r in results
-        ],
+        "per_question": per_question,
     }
 
 

@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
 from app.config import settings
+from app.routers.orchestration import get_run_report as get_orchestration_report
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -976,31 +977,7 @@ def get_results(run_id: str, session: Session = Depends(get_session)):
 
 @router.get("/eval/{run_id}/report")
 def get_run_report(run_id: str, session: Session = Depends(get_session)):
-    run = session.get(EvalRun, run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Eval run not found")
-
-    results = session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
-
-    total = len(results)
-    passes = sum(1 for r in results if r.status == "pass")
-
-    return {
-        "run_id": run_id,
-        "table_id": run.table_id,
-        "contains_execution_accuracy": run.score,
-        "pass_rate": round(passes / total, 3) if total else 0,
-        "total_questions": total,
-        "is_publishable": run.score >= 0.50,
-        "regression_detected": run.regression_detected,
-        "regression_delta": run.regression_delta,
-        "status": run.status,
-        "created_at": run.created_at.isoformat(),
-        "per_question": [
-            {"question_id": r.question_id, "score": r.score, "status": r.status}
-            for r in results
-        ],
-    }
+    return get_orchestration_report(run_id, session)
 
 
 @router.get("/eval/{run_id}/regression-diff")

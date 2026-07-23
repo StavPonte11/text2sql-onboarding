@@ -15,6 +15,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
     enabled: !!runId,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 4000 : false),
   });
 
   const isRegressionRun = report?.triggered_by === 'promotion-regression';
@@ -192,18 +193,43 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       <div key={q.question_id} className="question-item">
                         <div
                           className="question-item__dot"
-                          style={{ background: q.status === 'pass' ? '#10b981' : '#ef4444' }}
+                          style={{
+                            background:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.status === 'pass'
+                                  ? '#10b981'
+                                  : '#ef4444',
+                            opacity: q.status === 'pending' ? 0.7 : 1,
+                            animation:
+                              q.status === 'pending' ? 'pulse 1.4s ease-in-out infinite' : 'none',
+                          }}
                         />
                         <div className="question-item__id" title={q.question ?? q.question_id}>
                           {(q.question ?? q.question_id).slice(0, 16)}…
                         </div>
                         <div
                           className="question-item__score"
-                          style={{ color: q.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                          style={{
+                            color:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.score >= 0.5
+                                  ? '#10b981'
+                                  : '#ef4444',
+                          }}
                         >
-                          {q.score >= 0.5 ? 100 : 0}%
+                          {q.status === 'pending' ? '—' : q.score >= 0.5 ? '100%' : '0%'}
                         </div>
-                        {q.failure_type && (
+                        {q.status === 'pending' && (
+                          <span
+                            className="question-item__failure-type"
+                            style={{ color: '#f59e0b' }}
+                          >
+                            evaluating…
+                          </span>
+                        )}
+                        {q.status !== 'pending' && q.failure_type && (
                           <span className="question-item__failure-type">{q.failure_type}</span>
                         )}
                       </div>

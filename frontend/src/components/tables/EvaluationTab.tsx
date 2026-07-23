@@ -42,6 +42,11 @@ export function EvaluationTab({ tableId }: Props) {
   } = useQuery({
     queryKey: ['eval-runs', tableId],
     queryFn: () => evalApi.listRuns(tableId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasRunning = Array.isArray(data) && data.some((r) => r.status === 'running');
+      return hasRunning ? 3000 : false;
+    },
   });
 
   const { data: enrichment } = useQuery({

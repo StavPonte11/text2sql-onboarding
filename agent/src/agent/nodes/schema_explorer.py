@@ -33,6 +33,8 @@ from agent.utils.schema_enrichment import (
 )
 from core.cache import get_cache_service
 from core.embeddings import get_embedding
+from core.trino import execute_query_sync
+
 
 # Initialize LLM
 llm = get_llm("schema_explorer")
@@ -202,6 +204,7 @@ def hybrid_search_tables(
                     table.id in allowed
                     or table.name in allowed
                     or f"{table.schema_name}.{table.name}" in allowed
+                    or f"{table.catalog}.{table.schema_name}.{table.name}" in allowed
                 )
             )
         else:
@@ -212,6 +215,7 @@ def hybrid_search_tables(
                     table.id in allowed
                     or table.name in allowed
                     or f"{table.schema_name}.{table.name}" in allowed
+                    or f"{table.catalog}.{table.schema_name}.{table.name}" in allowed
                 )
             )
 
@@ -282,6 +286,13 @@ def hybrid_search_tables(
         : settings.HYBRID_SEARCH_MAX_TABLES
     ]
 
+    # If scoping_mode == "strict" or allowed_tables was specified,
+    # ensure explicitly allowed tables are never dropped due to low keyword/vector scores
+    if allowed_tables_set:
+        for table in allowed_tables_set:
+            if table.id not in combined_ids:
+                combined_ids.append(table.id)
+
     result_tables = []
     for tid in combined_ids:
         t = session.get(Table, tid)
@@ -312,6 +323,32 @@ async def get_table_profile(table_id: str) -> str:
         ).first()
 
         if not profile:
+            # Fallback to querying Trino directly if no static profile exists in DB
+            try:
+                trino_res = execute_query_sync(
+                    f"DESCRIBE {table.catalog}.{table.schema_name}.{table.name}"
+                )
+                if trino_res.success and trino_res.rows:
+                    cols = [
+                        {
+                            "name": row[0],
+                            "type": row[1],
+                            "sample_values": [],
+                            "null_count": 0,
+                        }
+                        for row in trino_res.rows
+                    ]
+                    res = {
+                        "table_id": table_id,
+                        "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
+                        "row_count": 0,
+                        "columns": cols,
+                        "description": "",
+                    }
+                    return json.dumps(res)
+            except Exception as e:
+                print(f"Trino DESCRIBE fallback failed for {table.name}: {e}")
+
             return json.dumps(
                 {
                     "error": f"No completed profile found for Table ID {table_id}. Make sure to trigger profiling first."
