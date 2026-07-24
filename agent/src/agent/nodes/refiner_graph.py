@@ -16,6 +16,7 @@ def route_refiner_subgraph(state: AgentState) -> str:
     if state.get("trino_error"):
         if state.get("refinement_count", 0) >= max_iterations:
             return END
+        return "refiner"
             
     # Issue 37: check SATISFACTION_CHECK_ENABLED in router
     check_enabled = runtime_flags.get("SATISFACTION_CHECK_ENABLED", settings.SATISFACTION_CHECK_ENABLED)
@@ -60,6 +61,7 @@ workflow.add_conditional_edges(
     route_refiner_subgraph,
     {
         "satisfaction_check": "satisfaction_check",
+        "refiner": "refiner",
         END: END,
     },
 )
