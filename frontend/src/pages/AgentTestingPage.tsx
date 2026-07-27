@@ -30,7 +30,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { agentApi } from '../api/agent';
 import { AgentGraph } from '../components/AgentGraph';
-import { SchemaPlanDisplay } from '../components/SchemaPlanDisplay';
 import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
 
 import type { ChatRequest, ChatResponse } from '../api/agent';
@@ -466,7 +465,6 @@ const AgentApprovalForm = ({
   const interruptType = interrupt.type;
 
   const sqlQuery = chatResponse.sql_query || (interrupt.sql_query as string) || '';
-  const schemaPlan = chatResponse.schema_plan || (interrupt.schema_plan as string) || '';
   const sqlExplanation =
     chatResponse.sql_explanation || (interrupt.sql_explanation as string) || '';
 
@@ -602,25 +600,6 @@ const AgentApprovalForm = ({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 16 }}>
-        {schemaPlan && (
-          <div>
-            <div
-              style={{
-                marginBottom: 8,
-                fontWeight: 600,
-                color: 'var(--text-h)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <Database size={15} color="#faad14" />
-              <span>Proposed Schema Plan</span>
-            </div>
-            <SchemaPlanDisplay planString={schemaPlan} />
-          </div>
-        )}
-
         {sqlQuery && (
           <div>
             <div

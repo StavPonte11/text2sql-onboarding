@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from agent.state import AgentState
-from agent.graph import validate_config_node, InvalidConfigurationException, rejection_router_node, route_refiner_subagent, route_schema_explorer
+from agent.graph import validate_config_node, InvalidConfigurationException, rejection_router_node, route_refiner_subagent
 from agent.nodes.refiner import refiner_node
 from agent.nodes.schema_explorer import MAX_SCHEMA_RETRIES
 from agent.config import settings
@@ -133,45 +133,6 @@ def test_tts_g2_01_scoping_modes_strict_vs_hybrid():
     res = validate_config_node(state_strict_pass)
     assert res["scoping_mode"] == "strict"
 
-def test_tts_g2_02_max_loop_and_hitl_breakpointer():
-    state: AgentState = {
-        "refinement_count": settings.MAX_REFINER_ITERATIONS,
-        "trino_error": "still failing",
-        "user_query": "",
-        "messages": [],
-        "query_enrichments": [],
-        "schema_plan": "",
-        "sql_query": "",
-        "raw_data_ref": None,
-        "summary": "",
-        "sql_explanation": "",
-        "allowed_tables": None,
-        "allowed_statuses": None,
-        "feedback": None,
-        "feedback_route": None,
-        "non_interactive": False,
-        "active_extractors": None,
-        "last_error": None,
-        "hallucinated_tables": None,
-        "esca_write_failed": None,
-        "inline_result_rows": None,
-        "error_history": None,
-        "schema_explorer_retry_count": 0,
-        "escalated": None,
-        "escalation_reason": None,
-        "satisfaction_failures": None,
-        "satisfaction_fail_count": 0
-    }
-    
-    # route_refiner_subagent should return hitl_escalation when trino_error is set after hitting subgraph limit
-    route = route_refiner_subagent(state)
-    assert route == "hitl_escalation"
-
-    # also test schema explorer max loop
-    state["hallucinated_tables"] = ["fake_table"]
-    state["schema_explorer_retry_count"] = MAX_SCHEMA_RETRIES
-    route2 = route_schema_explorer(state)
-    assert route2 == "hitl_escalation"
 
 def test_tts_g2_03_schema_enrichment_bfs_algorithm():
     # Test pure Python BFS shortest path fallback

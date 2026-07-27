@@ -18,12 +18,15 @@ The ambiguity-detection prompt requires three inputs:
 Using schema_plan (rather than waiting for actual SQL) means:
   - Ambiguity is caught BEFORE query_builder runs (saves 1 LLM call)
   - Ambiguity is caught BEFORE Trino executes (saves the DB round-trip)
-  - The schema_plan is actually MORE explicit about intent than the final SQL,
     because it spells out the reasoning in plain language.
   - False positives from SQL syntax errors are impossible (no SQL exists yet).
 
+NOTE: The graph was reordered so detect_ambiguity runs AFTER query_builder.
+Now, it evaluates BOTH the `sql_query` and the `sql_explanation` to see if
+the query builder had to guess or drop a filter.
+
 If a query is genuinely ambiguous, we short-circuit the entire expensive
-pipeline — no query_builder, no refiner, no Trino — and return a clarifying
+pipeline — no refiner, no Trino — and return a clarifying
 question to the user immediately.
 
 Graph position (main agent graph):
@@ -44,7 +47,7 @@ from pydantic import BaseModel, Field
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
-from agent.nodes.refiner import build_refiner_schema_context
+from agent.llm import get_llm
 from agent.state import AgentState
 from agent.utils.redis_publisher import publish_node_event
 
@@ -56,9 +59,8 @@ def _resolve_ambiguity_type(parsed: dict) -> str:
     ambiguity_type = parsed.get("ambiguity_type")
     clarifying: str | None = parsed.get("clarifying_questions")
 
-    # If the LLM generated a clarifying question (and it's not null/empty), it MUST be ambiguous
-    # regardless of whether it accidentally classified it as unanswerable.
-    if clarifying is not None and clarifying.strip():
+    # If the LLM classified it as unanswerable but generated a clarifying question, it MUST be ambiguous.
+    if ambiguity_type == "unanswerable" and clarifying is not None and clarifying.strip():
         return "ambiguous"
 
     if ambiguity_type in ["clear", "ambiguous", "unanswerable"]:
@@ -80,11 +82,10 @@ async def detect_ambiguity_node(
     config: RunnableConfig | None = None,
 ) -> dict:
     """
-    Pre-SQL ambiguity gate — runs after schema_explorer, before query_builder.
+    Pre-SQL ambiguity gate — previously pre-SQL, now runs AFTER query_builder.
 
-    Reads the schema_plan (the agent's natural-language query plan describing
-    which tables and columns it intends to use), the user query, and the enriched
-    schema profiles, then asks an LLM whether the interpretation is deterministic
+    Reads the jeen_catalog, the user query, the SQL attempt, and the SQL explanation,
+    then asks an LLM whether the interpretation is deterministic
     or ambiguous/unanswerable.
 
     Returns a partial state update with:
@@ -101,10 +102,7 @@ async def detect_ambiguity_node(
 
     # ── Gather inputs ─────────────────────────────────────────────────────────
     user_query: str = state.get("user_query") or ""
-    # schema_plan is the agent's explicit interpretation of the query before any
-    # SQL is written — richer than SQL for auditing intent.
-    agent_plan: str = state.get("schema_plan") or "(no query plan available)"
-    schema_context: str = build_refiner_schema_context(state)
+    # jeen_catalog now contains the catalog prompt
     current_time: str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # ── Fetch system prompt from Langfuse ─────────────────────────────────────
@@ -130,13 +128,11 @@ async def detect_ambiguity_node(
     # ── Build user message ────────────────────────────────────────────────────
     # NOTE: The field is labelled "Current Agent SQL Attempt" in the prompt to
     # stay consistent with the Langfuse prompt template. At this stage it
-    # contains the schema_plan (the agent's intent in natural language), which
-    # is equally valid — the prompt's Agent Proposal Audit works on intent, not
-    # syntax.
+    # contains the sql_query from the query builder.
     user_message = (
         f"User Request: {state.get('user_query', '')}\n\n"
-        f"Schema Context:\n{schema_context}\n\n"
-        f"Current Agent SQL Attempt:\n{agent_plan}\n"
+        f"Current Agent SQL Attempt:\n{state.get('sql_query', '')}\n\n"
+        f"Agent's Explanation for SQL:\n{state.get('sql_explanation', '')}\n"
     )
 
     # ── LLM call ─────────────────────────────────────────────────────────────
