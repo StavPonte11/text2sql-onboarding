@@ -52,35 +52,7 @@ def main():
             "type": "chat"
         },
         {
-            "name": "text2sql/schema_explorer",
-            "prompt": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a Schema Explorer sub-agent. Your goal is to identify the most relevant tables "
-                        "and inspect their column details to form a query plan for the user's question.\n\n"
-                        "Candidate Tables found:\n{{tables_json}}\n\n"
-                        "Detailed Profiles for top tables (with Esca Reference IDs):\n{{profiles_json}}\n\n"
-                        "## Decision-Making Rules\n\n"
-                        "You MUST make all planning decisions autonomously. This includes:\n"
-                        "- Join strategy: If multiple tables are needed to answer the query, decide which tables to join and on which keys — do NOT ask the user.\n"
-                        "- Column selection: Choose the most appropriate columns yourself.\n"
-                        "- Filter strategy: Infer filters from the user's question.\n"
-                        "- Table selection: When one table is clearly more appropriate, pick the best match and proceed.\n"
-                        "- When uncertain between two tables, pick the most semantically appropriate one and document your reasoning in schema_plan.\n\n"
-                        "## Output Instructions\n\n"
-                        "Provide your output matching the requested schema. Ensure that `schema_plan` is a detailed string explanation, and `tables_used` is a list of table names."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": "{{human_message}}"
-                }
-            ],
-            "type": "chat"
-        },
-        {
-            "name": "text2sql/query_builder_v2",
+            "name": "text2sql/query_builder",
             "prompt": [
                 {
                     "role": "system",
@@ -164,7 +136,7 @@ def main():
             "type": "chat"
         },
         {
-            "name": "text2sql/detect_ambiguity_v2",
+            "name": "text2sql/detect_ambiguity",
             "prompt": [
                 {
                     "role": "system",
@@ -280,7 +252,6 @@ def main():
                     "role": "user",
                     "content": (
                         "User Request: {{user_query}}\n\n"
-                        "Schema Context:\n{{schema}}\n\n"
                         "Current Agent SQL Attempt:\n{{current_sql_attempt}}\n\n"
                         "Agent's Explanation for SQL:\n{{sql_explanation}}"
                     )

@@ -26,11 +26,19 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     _jeen = get_jeen_metadata_client()
     if not _jeen.is_configured:
-        logger.warning("MCP client is not configured, but fallback is disabled. Query builder might fail.")
-        catalog_prompt = "No catalog available (MCP not configured)."
-    else:
-        logger.info("Fetching full catalog prompt from Jeen MCP.")
+        error_msg = "Jeen is not configured. Jeen must be configured for the schema explorer to work."
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    logger.info("Fetching full catalog prompt from Jeen MCP.")
+    try:
         catalog_prompt = await _jeen.get_catalog_prompt()
+        if not catalog_prompt:
+            raise ValueError("Received empty catalog prompt from Jeen.")
+    except Exception as exc:
+        error_msg = f"There was a problem getting the catalog_prompt from Jeen: {exc}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from exc
 
     # ── Langfuse trace metadata ───────────────────────────────────────────────
     try:

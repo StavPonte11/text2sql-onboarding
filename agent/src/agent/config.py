@@ -55,7 +55,7 @@ class AgentSettings(BaseSettings):
     # Langfuse prompt names
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"
-    LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder_v2"
+    LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder"
     LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
     LANGFUSE_PROMPT_FINALIZER_SUMMARY: str = "text2sql/finalizer_summary"
     LANGFUSE_PROMPT_FINALIZER_SQL_EXPLANATION: str = (
@@ -63,7 +63,7 @@ class AgentSettings(BaseSettings):
     )
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
     LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
-    LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity_v2"
+    LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity"
 
     MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)
     REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=4, gt=0)
