@@ -33,8 +33,6 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
             "jeen_catalog": state.get("jeen_catalog"),
             "user_query": state.get("user_query"),
             "feedback_str": feedback_str,
-            "trino_catalog_name": settings.TRINO_CATALOG,
-            "trino_schema_name": settings.TRINO_SCHEMA,
         }
     )
     content = response.content
