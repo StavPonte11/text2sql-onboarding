@@ -128,8 +128,10 @@ export const auditApi = {
 // ── Profiling ─────────────────────────────────────────────────────────────────
 export const profilingApi = {
   get: (tableId: string) => api.get<TableProfile>(`/tables/${tableId}/profile`).then((r) => r.data),
-  run: (tableId: string) =>
-    api.post<TableProfile>(`/tables/${tableId}/profile/run`).then((r) => r.data),
+  run: (tableId: string, params?: { force?: boolean; resume_from_partial?: boolean }) =>
+    api.post<TableProfile>(`/tables/${tableId}/profile/run`, null, { params }).then((r) => r.data),
+  terminate: (tableId: string) =>
+    api.post(`/tables/${tableId}/profile/terminate`).then((r) => r.data),
   getColumns: (tableId: string) =>
     api.get<ColumnProfile[]>(`/tables/${tableId}/profile/columns`).then((r) => r.data),
   getCrossProfiles: (tableId: string) =>

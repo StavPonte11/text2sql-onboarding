@@ -52,3 +52,12 @@ export const TABLE_STATUS = {
   PRODUCTION: 'production',
   DEGRADED: 'degraded',
 } as const;
+
+// Well-known owner IDs used for filtering
+export const OWNER_IDS = {
+  SPIDER2: 'spider2',
+} as const;
+
+/** Returns true when a table row belongs to the Spider2 evaluation dataset. */
+export const isSpider2Table = (t: unknown): boolean =>
+  (t as { owner_id?: string }).owner_id === OWNER_IDS.SPIDER2;

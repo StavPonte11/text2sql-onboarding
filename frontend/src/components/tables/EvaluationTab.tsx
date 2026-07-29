@@ -7,26 +7,13 @@ import { AlertTriangle, BarChart2, CheckCircle, Play } from 'lucide-react';
 
 import { enrichmentApi, evalApi, questionsApi } from '../../api/client';
 import { ErrorState } from '../common/ErrorState';
-import { Spinner } from '../common/EvalUI';
+import { ScoreRing } from '../common/EvalUI';
 import { SkeletonTable } from '../common/Skeleton';
 
 import './EvaluationTab.css';
 
 interface Props {
   tableId: string;
-}
-
-function ScoreRing({ score, status }: { score: number; status?: string }) {
-  if (status === 'running') {
-    return (
-      <div className="score-ring score-ring--running" title="Evaluation in progress…">
-        <Spinner size={14} color="#f59e0b" />
-      </div>
-    );
-  }
-  const pct = Math.round(score * 100);
-  const cls = pct >= 50 ? 'score-ring--high' : 'score-ring--low';
-  return <div className={`score-ring ${cls}`}>{pct}%</div>;
 }
 
 export function EvaluationTab({ tableId }: Props) {
@@ -184,7 +171,9 @@ export function EvaluationTab({ tableId }: Props) {
                     <code className="run-id-code">{run.id.slice(0, 8)}…</code>
                   </td>
                   <td>
-                    <ScoreRing score={run.score} status={run.status} />
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <ScoreRing score={run.score} status={run.status} />
+                    </div>
                   </td>
                   <td>
                     <span

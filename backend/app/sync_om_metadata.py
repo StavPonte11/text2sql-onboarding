@@ -92,7 +92,6 @@ Run with:
 """
 
 import argparse
-import json
 import logging
 import os
 import re
@@ -103,6 +102,7 @@ import sqlglot
 from core.db.engine import engine
 from core.embeddings import EXPECTED_EMBEDDING_DIM, get_embedding as core_get_embedding
 from core.models.models import EnrichmentVersion, Table as AppTable
+from core.spider2 import fetch_spider2_snow_sf_questions
 from dotenv import load_dotenv
 from sqlmodel import Session, col, select
 
@@ -495,27 +495,13 @@ def fetch_spider2_snow_questions() -> list[dict]:
         {"input": {"query": ...}, "expected_output": {"sql": ...},
          "metadata": {"db": ..., "difficulty": ..., "question_type": ...}}
     """
+
     logger.info(f"Fetching Spider2-Snow questions from {SPIDER2_SNOW_JSONL_URL} ...")
-    resp = requests.get(SPIDER2_SNOW_JSONL_URL, timeout=GITHUB_TIMEOUT)
-    resp.raise_for_status()
-
-    raw_questions = []
-    for line in resp.text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            raw_questions.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-
-    # Only Snowflake-derived questions (sf_ prefix) belong to Spider2-Snow.
-    sf_questions = [
-        q for q in raw_questions if q.get("instance_id", "").startswith("sf_")
-    ]
+    sf_questions = fetch_spider2_snow_sf_questions(
+        url=SPIDER2_SNOW_JSONL_URL, timeout=GITHUB_TIMEOUT
+    )
     logger.info(
-        f"spider2-snow.jsonl: {len(raw_questions)} total rows, "
-        f"{len(sf_questions)} sf_ (Snowflake) questions."
+        f"spider2-snow.jsonl: fetched {len(sf_questions)} sf_ (Snowflake) questions."
     )
 
     # Diagnostic: how many distinct Snowflake databases (db_id) does the

@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
+    AGENT_READ_TIMEOUT_SECONDS: float = 900.0
+    AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
@@ -38,8 +40,8 @@ class Settings(BaseSettings):
     OPENMETADATA_ADMIN_PASSWORD: str = "admin"
     OPENMETADATA_VERIFY_SSL: bool = False
     OPENMETADATA_SERVICE_NAME: str = "local_trino"
-    RUN_SEED: bool = True
-    RUN_INFRA_INIT: bool = True
+    RUN_SEED: bool = False
+    RUN_INFRA_INIT: bool = False
     # Trino connection
     TRINO_HOST: str = "localhost"
     TRINO_PORT: int = 8080
@@ -94,7 +96,10 @@ class Settings(BaseSettings):
     LANGFUSE_WAIT_MAX_ATTEMPTS: int = 20
     LANGFUSE_WAIT_INITIAL_DELAY_SECS: float = 0.5
     LANGFUSE_WAIT_BACKOFF_FACTOR: float = 1.5
+    # Concurrency and Trino
     PROFILER_MAX_CONCURRENT_QUERIES: int = 10
+    PROFILING_CHUNK_SIZE: int = 5
+    TEMPORAL_HOST: str = "localhost:7233"
 
     # JWT Config
     JWT_SECRET: str = "dev-secret-change-in-production"
@@ -108,6 +113,8 @@ class Settings(BaseSettings):
 
     FLAG_CACHE_TTL: int = 30
     MODE_CACHE_TTL: int = 30
+
+    EVAL_THRESHOLD: float = 0.5
 
 
 settings = Settings()

@@ -32,6 +32,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import snowflake.connector
 import json
+from core.spider2 import fetch_spider2_snow_sf_questions
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("generate_trino_catalogs")
@@ -99,7 +101,7 @@ def get_snowflake_databases(account: str, user: str, password: str, role: str, w
         conn.close()
 
 
-def get_question_referenced_db_ids() -> set[str]:
+def get_question_referenced_db_ids() -> set[str] | None:
     """
     Fetch the Spider2-Snow sf_ question set and return the distinct db_id
     values it references (uppercased, matching Snowflake's SHOW DATABASES
@@ -107,22 +109,18 @@ def get_question_referenced_db_ids() -> set[str]:
     never have a single golden question -- no point ingesting/syncing them
     at all.
     """
-    import requests as _requests
-    url = "https://raw.githubusercontent.com/xlang-ai/Spider2/main/spider2-snow/spider2-snow.jsonl"
-    resp = _requests.get(url, timeout=15)
-    resp.raise_for_status()
-    db_ids = set()
-    for line in resp.text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            q = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if q.get("instance_id", "").startswith("sf_") and q.get("db_id"):
-            db_ids.add(q["db_id"].upper())
-    return db_ids
+
+    try:
+        sf_questions = fetch_spider2_snow_sf_questions()
+    except Exception as exc:
+        logger.warning(
+            "Could not fetch golden-question db_id set from GitHub (%s); "
+            "will not filter target databases by referenced questions.", exc
+        )
+        return None
+
+    return {q["db_id"].upper() for q in sf_questions if q.get("db_id")}
+
 
 # ---------------------------------------------------------------------------
 # Main

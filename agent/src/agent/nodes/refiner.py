@@ -11,9 +11,16 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
 from agent.utils.sql import clean_sql
 from agent.utils.esca import get_esca_client
+from agent.utils.serialization import json_serial
 import datetime
 
 llm = get_llm("refiner")
+
+def build_refiner_schema_context(state: AgentState) -> str:
+    catalog = state.get("jeen_catalog")
+    if not catalog:
+        return "No schema context available."
+    return catalog
 
 
 async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
@@ -32,8 +39,8 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
 
     if satisfaction_failures:
         success = False
-        trino_error = "; ".join(satisfaction_failures)
-        error_history.append(f"Satisfaction Check Failed: {trino_error}")
+        trino_error = "\n".join([f"• {f}" for f in satisfaction_failures])
+        error_history.append(f"Satisfaction Check Failed:\n{trino_error}")
         result = None
         # Clear satisfaction failures so next pass can execute cleanly
         # Note: LangGraph state updates require explicitly passing None or handling it if merging
@@ -69,21 +76,15 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 "execution_path": execution_path + ["refiner"],
             }
 
-        try:
-            langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
-        except Exception as prompt_err:
-            logging.getLogger(__name__).warning(f"Failed to get refiner prompt from Langfuse: {prompt_err}. Using fallback.")
-            langfuse_prompt = None
-
-        if langfuse_prompt is not None:
-            prompt = ChatPromptTemplate.from_messages(
-                langfuse_prompt.get_langchain_prompt()
+        langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_REFINER)
+        if langfuse_prompt is None:
+            raise RuntimeError(
+                f"Langfuse prompt '{settings.LANGFUSE_PROMPT_REFINER}' could not be retrieved."
             )
-        else:
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are a Trino SQL expert database assistant. Your task is to fix a Trino SQL query that failed with a syntax or schema error."),
-                ("user", "Original User Query: {user_query}\n\nFailed SQL Query: {sql}\n\nTrino Error: {error}\n\nError History: {error_history}\n\nDatabase Schema Context:\n{schema_context}\n\nPlease rewrite the SQL query to fix the error. Return ONLY the valid SQL query inside a ```sql ``` block.")
-            ])
+
+        prompt = ChatPromptTemplate.from_messages(
+            langfuse_prompt.get_langchain_prompt()
+        )
         _llm = get_llm("refiner", runtime_flags=runtime_flags)
         chain = prompt | _llm
 
@@ -123,10 +124,6 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
 
         esca_write_enabled = str(runtime_flags.get("ESCA_WRITE_ENABLED", settings.ESCA_WRITE_ENABLED)).lower() == "true"
         
-        def json_serial(obj):
-            if isinstance(obj, (datetime.datetime, datetime.date)):
-                return obj.isoformat()
-            raise TypeError("Type %s not serializable" % type(obj))
 
         if esca_write_enabled:
             try:
@@ -158,12 +155,31 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
         }
 
 def build_refiner_schema_context(state: AgentState) -> str:
-    """Build schema context for the refiner, preferring enriched table
-    profiles over the raw schema plan when available."""
+    """Build a token-capped schema context for the refiner.
+
+    Trims the table_profiles blob so repeated LLM calls in the retry loop
+    don't blow up the context window or token budget:
+      • Limits tables to REFINER_SCHEMA_CONTEXT_TABLES (default 4).
+      • Strips sample_values from every column — they're useful for query
+        planning but add noise when fixing a syntax/schema error.
+      • Uses compact JSON (no indent) to reduce token count further.
+
+    Falls back to the raw schema_plan string when table_profiles is absent.
+    """
     table_profiles = state.get("table_profiles")
     if table_profiles:
-        # Rich, structured schema info (columns, notes, assumptions, constraints)
-        return json.dumps(table_profiles, ensure_ascii=False, indent=2)
+        max_tables = settings.REFINER_SCHEMA_CONTEXT_TABLES
+        capped = table_profiles[:max_tables]
+
+        trimmed = []
+        for profile in capped:
+            slim_cols = [
+                {k: v for k, v in col.items() if k != "sample_values"}
+                for col in profile.get("columns", [])
+            ]
+            trimmed.append({**profile, "columns": slim_cols})
+
+        return json.dumps(trimmed, ensure_ascii=False)
 
     schema_plan = state.get("schema_plan")
     if schema_plan:

@@ -1592,8 +1592,6 @@ export interface components {
       duplicate_rate: number | null;
       /** Sample Data */
       sample_data: unknown | null;
-      /** Auto Insights */
-      auto_insights: string[] | null;
       /** Profile Json */
       profile_json: unknown | null;
       /** Cached Until */

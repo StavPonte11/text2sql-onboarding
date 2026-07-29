@@ -69,6 +69,7 @@ class ChatResponse(BaseModel):
     schema_plan: str | None = None
     trace_id: str | None = None
     execution_path: list[str] | None = None
+    is_unanswerable: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +103,9 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
                 result = await session.call_tool(
                     "chat_with_agent",
                     arguments=tool_arguments,
-                    read_timeout_seconds=timedelta(seconds=900.0),
+                    read_timeout_seconds=timedelta(
+                        seconds=settings.AGENT_READ_TIMEOUT_SECONDS
+                    ),
                 )
 
                 if not result.content:
@@ -277,7 +280,7 @@ async def get_trace_timeline(trace_id: str):
     auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
     url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, auth=auth)
         if resp.status_code != 200:
             if resp.status_code == 404:
@@ -332,7 +335,9 @@ async def suggest_fixes(req: SuggestFixesRequest):
             result = await session.call_tool(
                 "suggest_fixes",
                 arguments={"thread_id": req.thread_id, "category": req.category},
-                read_timeout_seconds=timedelta(seconds=300.0),
+                read_timeout_seconds=timedelta(
+                    seconds=settings.AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS
+                ),
             )
             content = result.content[0].text
             return json.loads(content)

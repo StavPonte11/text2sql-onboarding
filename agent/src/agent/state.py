@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict, Any, Literal
+from typing import Annotated, TypedDict, Any, Literal, Optional
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 import operator
@@ -9,7 +9,7 @@ class AgentState(TypedDict):
     execution_path: Annotated[list[str], operator.add]
     messages: Annotated[list[BaseMessage], add_messages]
     query_enrichments: list[dict[str, Any]]
-    schema_plan: str
+    jeen_catalog: str
     sql_query: str
     trino_error: str | None
     refinement_count: int
@@ -26,7 +26,6 @@ class AgentState(TypedDict):
     active_skills: list[str] | None
     loaded_skills: list[dict] | None
     last_error: str | None
-    hallucinated_tables: list[str] | None
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None
     inline_result_columns: list[str] | None
@@ -43,5 +42,17 @@ class AgentState(TypedDict):
     # G4: feature flags & execution modes
     execution_mode: str | None          # e.g. "cost_saving", "high_quality", "benchmark"
     runtime_flags: dict[str, Any] | None  # resolved by init_flags_node
-    # Enriched table profiles — populated by schema_explorer for reuse by refiner
-    table_profiles: list[dict[str, Any]] | None
+    # ── Map related state ─────────────────────────────────────────────────────
+    locations_dict: dict[str, dict[str, str]] | None
+    location_wkt_instruction: str | None
+    # ── Ambiguity Detection (detect_ambiguity node) ───────────────────────────
+    # Raw parsed JSON output from the detect_ambiguity LLM call.
+    ambiguity_result: Optional[dict] | None
+    # Drives the conditional edge: "clear" | "ambiguous" | "unanswerable"
+    ambiguity_type: Optional[Literal["clear", "ambiguous", "unanswerable"]] | None
+    # Populated on "ambiguous" terminal — the clarifying question shown to the user.
+    clarifying_questions: str | None
+    # Populated on "unanswerable" terminal.
+    failure_reason: str | None
+    # Counts how many times ambiguity_resolution has been attempted (loop guard).
+    ambiguity_retry_count: int | None

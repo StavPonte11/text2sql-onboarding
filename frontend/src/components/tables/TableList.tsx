@@ -10,6 +10,7 @@ import { Database, Eye, EyeOff, Loader2, Plus, Search, Wand2 } from 'lucide-reac
 import { z } from 'zod';
 
 import { tablesApi } from '../../api/client';
+import { isSpider2Table } from '../../config/constants';
 import { ErrorState } from '../common/ErrorState';
 import { SkeletonTable } from '../common/Skeleton';
 import { StatusBadge } from '../common/StatusBadge';
@@ -92,7 +93,7 @@ export function TableList() {
       }),
   });
 
-  const data = rawData?.filter((t) => showSpider2 || (t as any).owner_id !== 'spider2') || [];
+  const data = rawData?.filter((t) => showSpider2 || !isSpider2Table(t)) || [];
   const displayedData = data.slice(0, visibleCount);
 
   const createMutation = useMutation({

@@ -419,8 +419,6 @@ class LangfuseDatasetService:
                 )
 
         self.flush()
-        if items_to_delete or items_to_create:
-            time.sleep(0.5)
 
         self.logger.info(
             f"[LangfuseDatasetService] Sync complete for '{dataset_name}': "

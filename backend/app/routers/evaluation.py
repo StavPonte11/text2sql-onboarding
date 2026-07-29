@@ -228,7 +228,7 @@ def _map_and_save_run_metrics(
         for case in eval_resp.cases:
             if case.question_id in valid_ids:
                 score = case.scores.get("contains_accuracy", 0.0)
-                status = "pass" if score >= 0.5 else "fail"
+                status = "pass" if score >= settings.EVAL_THRESHOLD else "fail"
                 error_type = None if status == "pass" else case.error
                 session.add(
                     EvalResult(
@@ -239,6 +239,21 @@ def _map_and_save_run_metrics(
                         error_type=error_type,
                     )
                 )
+
+
+def _call_run_single_dataset(req: dict) -> "RunDatasetResponse":
+    """POST to the evaluation service run-single-dataset endpoint.
+
+    Raises requests.HTTPError on a non-2xx response.
+    Returns a parsed RunDatasetResponse.
+    """
+    resp = requests.post(
+        f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+        json=req,
+        timeout=600,
+    )
+    resp.raise_for_status()
+    return RunDatasetResponse(**resp.json())
 
 
 @observe(name="eval-single-table")
@@ -288,13 +303,7 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
                     f"{table.catalog}.{table.schema_name}.{table.name}"
                 ],
             }
-            resp = requests.post(
-                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-                json=req,
-                timeout=600,
-            )
-            resp.raise_for_status()
-            eval_resp = RunDatasetResponse(**resp.json())
+            eval_resp = _call_run_single_dataset(req)
         except Exception as e:
             logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
             run.status = EvalStatus.failed
@@ -388,13 +397,7 @@ def _run_production_dataset_eval(
             "dataset_name": PRODUCTION_DATASET_NAME,
             "additional_tables": table_names,
         }
-        resp = requests.post(
-            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        eval_resp = RunDatasetResponse(**resp.json())
+        eval_resp = _call_run_single_dataset(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
         run.status = EvalStatus.failed
@@ -452,13 +455,7 @@ def _run_candidate_eval(
             "dataset_name": dataset_name,
             "additional_tables": [f"{table.catalog}.{table.schema_name}.{table.name}"],
         }
-        resp = requests.post(
-            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        eval_resp = RunDatasetResponse(**resp.json())
+        eval_resp = _call_run_single_dataset(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
         run.status = EvalStatus.failed
@@ -519,13 +516,7 @@ def _run_regression_eval(
             "dataset_name": PRODUCTION_DATASET_NAME,
             "additional_tables": table_names,
         }
-        resp = requests.post(
-            f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
-            json=req,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        eval_resp = RunDatasetResponse(**resp.json())
+        eval_resp = _call_run_single_dataset(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
         run.status = EvalStatus.failed

@@ -13,6 +13,7 @@ New endpoints:
 import logging
 from datetime import datetime, timedelta
 
+import requests
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
@@ -30,12 +31,20 @@ from core.models.models import (
     EvaluationScheduleUpdate,
     GoldenQuestion,
     Table,
+    TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
 from sqlmodel import Session, select
 
-from app.routers.evaluation import execute_single_table_eval
+from app.config import settings
+from app.routers.evaluation import (
+    RunDatasetResponse,
+    _build_questions_payload,
+    _map_and_save_run_metrics,
+    execute_single_table_eval,
+)
+from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -286,11 +295,6 @@ def trigger_evaluation_run(
 
 
 def _run_dataset_pipeline(dataset_name: str, run_id: str):
-    import requests
-
-    from app.config import settings
-    from app.routers.evaluation import RunDatasetResponse, _map_and_save_run_metrics
-
     with Session(engine) as session:
         run = session.get(EvalRun, run_id)
         if not run:
@@ -298,8 +302,6 @@ def _run_dataset_pipeline(dataset_name: str, run_id: str):
 
         try:
             # Resolve all production table names from the DB to pass as additional_tables
-            from core.models.models import Table, TableStatus
-
             if dataset_name == "spider2":
                 prod_tables = session.exec(
                     select(Table).where(Table.owner_id == "spider2")
@@ -351,8 +353,6 @@ def trigger_dataset_run(
     session: Session = Depends(get_session),
 ):
     """Trigger evaluation for a specific dataset (e.g. 'spider2' or 'text2sql_production')."""
-    from core.models.models import Table, TableStatus
-
     # 1. Sync production dataset if requested
     if dataset_name == "text2sql_production":
         prod_tables = session.exec(
@@ -368,8 +368,6 @@ def trigger_dataset_run(
             all_production_questions.extend(qs)
 
         all_questions_payload = []
-        from app.routers.evaluation import _build_questions_payload
-
         for table in prod_tables:
             qs_for_table = [
                 q for q in all_production_questions if q.table_id == table.id
@@ -377,8 +375,6 @@ def trigger_dataset_run(
             all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
 
         if all_questions_payload:
-            from app.services.langfuse_client import langfuse_client
-
             if langfuse_client.enabled:
                 try:
                     langfuse_client.sync_dataset(

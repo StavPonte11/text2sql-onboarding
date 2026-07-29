@@ -8,7 +8,7 @@ from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
 from agent.utils.esca import get_esca_client
-import datetime
+from agent.utils.serialization import json_serial
 from agent.utils.esca import get_esca_client
 
 
@@ -30,10 +30,6 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
             # Take a slice of the rows to avoid context overload
             preview_rows = rows[:limit]
 
-            def json_serial(obj):
-                if isinstance(obj, (datetime.datetime, datetime.date)):
-                    return obj.isoformat()
-                raise TypeError("Type %s not serializable" % type(obj))
 
             preview_info = {
                 "columns": columns,

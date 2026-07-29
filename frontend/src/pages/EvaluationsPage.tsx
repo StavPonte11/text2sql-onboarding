@@ -18,6 +18,7 @@ import { orchestrationApi } from '../api/orchestration';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import { ScheduleManager } from '../components/monitoring/ScheduleManager';
+import { isSpider2Table } from '../config/constants';
 import {
   useEvalReadiness,
   useTriggerDatasetRun,
@@ -194,7 +195,7 @@ function RunTriggerPanel({
   const filteredTables = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tables.filter((t: Table) => {
-      if (!showSpider2 && (t as any).owner_id === 'spider2') return false;
+      if (!showSpider2 && isSpider2Table(t)) return false;
       if (activeStatuses.length > 0 && !activeStatuses.includes(t.status)) return false;
       const owner = (t as any).owner_id;
       if (activeOwners.length > 0 && !activeOwners.includes(owner)) return false;
@@ -416,6 +417,7 @@ function DatasetRunPanel({
   onLaunch,
 }: DatasetRunPanelProps) {
   const triggerDatasetMut = useTriggerDatasetRun();
+  const { message } = App.useApp();
 
   const handleLaunch = (datasetName: string) => {
     setRunningDataset(datasetName);
@@ -425,9 +427,11 @@ function DatasetRunPanel({
         // Switch to history tab so the user can watch progress
         onLaunch?.();
       },
-      onError: () => {
+      onError: (err: any) => {
         setRunningDataset(null);
         setRunningRunId(null);
+        const detail = err?.response?.data?.detail;
+        message.error(detail || 'Failed to launch dataset evaluation. Please try again.', 10);
       },
     });
   };
@@ -495,12 +499,12 @@ export function EvaluationsPage() {
   // All tables — used to build spider2 table ID set for run history filtering
   const { data: allTables = [] } = useTables();
   const spider2TableIds = useMemo(
-    () => new Set(allTables.filter((t: any) => t.owner_id === 'spider2').map((t: any) => t.id)),
+    () => new Set(allTables.filter(isSpider2Table).map((t: any) => t.id)),
     [allTables],
   );
 
   // Poll the specific run's details if we have a running run
-  useQuery({
+  const { data: runningRunData } = useQuery({
     queryKey: ['running-run-status', runningRunId],
     queryFn: () => {
       if (!runningRunId) return null;
@@ -510,14 +514,21 @@ export function EvaluationsPage() {
     refetchInterval: (query) => {
       const data = query.state.data as any;
       if (data && (data.status === 'completed' || data.status === 'failed')) {
-        // Run has finished, clear states
-        setRunningDataset(null);
-        setRunningRunId(null);
         return false;
       }
       return 3000; // poll every 3 seconds
     },
   });
+
+  useEffect(() => {
+    if (
+      runningRunData &&
+      (runningRunData.status === 'completed' || runningRunData.status === 'failed')
+    ) {
+      setRunningDataset(null);
+      setRunningRunId(null);
+    }
+  }, [runningRunData]);
 
   const switchToHistory = () => setActiveTab('history');
 
