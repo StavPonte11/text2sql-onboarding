@@ -7,6 +7,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
+
+
 async def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
     """Build SQL from plan and pause for user approval."""
     runtime_flags = state.get("runtime_flags") or {}
@@ -16,10 +18,17 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
     loaded_skills = state.get("loaded_skills")
     if loaded_skills:
         from agent.utils.skill_registry import SkillRegistry
+
         _skill_registry = SkillRegistry()
         skill_prompts = _skill_registry.build_system_prompt_addition(loaded_skills)
         if skill_prompts:
             feedback_str += f"\n\n[APPLIED SKILLS]{skill_prompts}"
+
+    enrichments = state.get("query_enrichments")
+    if enrichments:
+        import json
+
+        feedback_str += f"\n\n[QUERY ENRICHMENTS]\nThe user query contains ambiguous terms resolved here:\n{json.dumps(enrichments, indent=2)}"
 
     langfuse_prompt = langfuse_client.get_prompt(settings.LANGFUSE_PROMPT_QUERY_BUILDER)
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
@@ -32,31 +41,31 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
             "schema_plan": state.get("schema_plan"),
             "user_query": state.get("user_query"),
             "feedback_str": feedback_str,
+            "location_wkt_instruction": state.get("location_wkt_instruction") or "",
         }
     )
     content = response.content
-    
-    # Check for built-in reasoning content in model metadata (additional_kwargs)
-    explanation = response.additional_kwargs.get("reasoning_content") or response.additional_kwargs.get("reasonig_content") or ""
-    
-    # Extract SQL from the response content
-    sql_match = re.search(r"```sql\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE)
-    if sql_match:
-        sql = sql_match.group(1).strip()
-        if not explanation:
-            explanation = content.replace(sql_match.group(0), "").strip()
-    else:
-        # Check for general code block
-        block_match = re.search(r"```\s*(.*?)\s*```", content, re.DOTALL)
-        if block_match:
-            sql = block_match.group(1).strip()
-            if not explanation:
-                explanation = content.replace(block_match.group(0), "").strip()
-        else:
-            sql = content.strip()
 
-    if sql.endswith(";"):
-        sql = sql[:-1].strip()
+    from agent.utils.sql import clean_sql
+
+    # Check for built-in reasoning content in model metadata (additional_kwargs)
+    explanation = (
+        response.additional_kwargs.get("reasoning_content")
+        or response.additional_kwargs.get("reasonig_content")
+        or ""
+    )
+
+    sql = clean_sql(content)
+
+    if not explanation:
+        # Extract explanation by removing the SQL block (or the SQL text) from the content
+        match = re.search(
+            r"```(?:sql)?\s*(.*?)\s*```", content, re.IGNORECASE | re.DOTALL
+        )
+        if match:
+            explanation = content.replace(match.group(0), "").strip()
+        else:
+            explanation = content.replace(sql, "").strip()
 
     if state.get("non_interactive"):
         return {

@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 # Cache singleton
 _cache = get_cache_service()
 
+
 async def _resolve_ambiguity(
     data: SchemaExplorerOutput,
     chain,
@@ -73,7 +74,9 @@ async def _resolve_ambiguity(
                 }
             )
         except Exception as e:
-            logger.error(f"Structured output parsing failed in schema explorer after clarification: {e}")
+            logger.error(
+                f"Structured output parsing failed in schema explorer after clarification: {e}"
+            )
             return SchemaExplorerOutput(
                 schema_plan=None,
                 ambiguity_detected=False,
@@ -81,6 +84,7 @@ async def _resolve_ambiguity(
                 candidate_options=[],
             )
     return data
+
 
 # Skill Registry
 from agent.utils.skill_registry import SkillRegistry
@@ -278,7 +282,7 @@ def hybrid_search_tables(
     keyword_matches.sort(key=lambda x: x[1], reverse=True)
     kw_ids = [x[0] for x in keyword_matches[: settings.HYBRID_SEARCH_MAX_TABLES]]
 
-    combined_ids = list(dict.fromkeys(vec_ids + kw_ids))[
+    combined_ids = list(dict.fromkeys(kw_ids + vec_ids))[
         : settings.HYBRID_SEARCH_MAX_TABLES
     ]
 
@@ -305,30 +309,9 @@ async def get_table_profile(table_id: str) -> str:
 
         profile = session.exec(
             select(TableProfile)
-            .where(
-                TableProfile.table_id == table_id, TableProfile.status == "completed"
-            )
+            .where(TableProfile.table_id == table_id)
             .order_by(TableProfile.created_at.desc())
         ).first()
-
-        if not profile:
-            return json.dumps(
-                {
-                    "error": f"No completed profile found for Table ID {table_id}. Make sure to trigger profiling first."
-                }
-            )
-
-        # ── G2-05: Redis cache lookup ─────────────────────────────────────────
-        cache_key = _cache.profile_key(table_id, profile.id)
-        cached = await _cache.get_json(cache_key)
-        if cached is not None:
-            cache_hit = True
-            # Lightweight wrapper returned from cache
-            return json.dumps(cached)
-
-        columns = session.exec(
-            select(ColumnProfile).where(ColumnProfile.profile_id == profile.id)
-        ).all()
 
         # ── Fetch table description from EnrichmentVersion ─────────────────────
         table_description = ""
@@ -343,17 +326,49 @@ async def get_table_profile(table_id: str) -> str:
                 "table_description", ""
             ) or enrichment.data.get("ai_summary", "")
 
+        columns = []
+        if profile:
+            # ── G2-05: Redis cache lookup ─────────────────────────────────────────
+            cache_key = _cache.profile_key(table_id, profile.id)
+            cached = await _cache.get_json(cache_key)
+            if cached is not None:
+                return json.dumps(cached)
+
+            columns = session.exec(
+                select(ColumnProfile).where(ColumnProfile.profile_id == profile.id)
+            ).all()
+
+        col_list = []
+        if columns:
+            col_list = [_build_column_context(cp) for cp in columns]
+        else:
+            # Fetch column names dynamically from Trino DESCRIBE
+            try:
+                from core.trino import execute_query_sync
+                desc_res = execute_query_sync(f"DESCRIBE {table.catalog}.{table.schema_name}.{table.name}")
+                if desc_res.success and desc_res.rows:
+                    for row in desc_res.rows:
+                        col_list.append({
+                            "name": str(row[0]),
+                            "type": str(row[1]),
+                            "semantic_type": "unknown",
+                        })
+            except Exception:
+                pass
+
         # Lightweight response to cache and return to LLM
         lightweight = {
             "table_id": table_id,
-            "table_name": f"{table.catalog}.{table.schema_name}.{table.name}",
-            "description": table_description,
-            "row_count": profile.row_count,
-            "columns": [_build_column_context(cp) for cp in columns],
+            "table_name": table.name,
+            "full_name": f"{table.catalog}.{table.schema_name}.{table.name}",
+            "description": table_description or "",
+            "row_count": profile.row_count if profile else None,
+            "columns": col_list,
         }
 
-        # ── G2-05: Populate cache ─────────────────────────────────────────────
-        await _cache.set_json(cache_key, lightweight, settings.PROFILE_CACHE_TTL)
+        if profile:
+            # ── G2-05: Populate cache ─────────────────────────────────────────────
+            await _cache.set_json(cache_key, lightweight, settings.PROFILE_CACHE_TTL)
 
         return json.dumps(lightweight, indent=2)
 
@@ -380,6 +395,7 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
     max_profiles_to_fetch = int(
         runtime_flags.get("MAX_PROFILES_TO_FETCH", settings.MAX_PROFILES_TO_FETCH)
     )
+
     def _parse_bool_flag(value) -> bool:
         """Parse a flag value that may be a bool or a string like 'true'/'false'/'0'/'1'."""
         if isinstance(value, bool):
@@ -440,7 +456,6 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
                         select(TableProfile)
                         .where(
                             TableProfile.table_id == t_id,
-                            TableProfile.status == "completed",
                         )
                         .order_by(TableProfile.created_at.desc())
                     ).first()
@@ -480,11 +495,10 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
     active_phases: list[str] = []
     table_ids = [t.id for t in candidate_tables]
 
-    # human_message = (
-    #     f"Question: {user_query}\n"
-    #     f"Query Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}"
-    # )
-    human_message = user_query
+    human_message = f"Question: {user_query}\n"
+    if enrichments:
+        human_message += f"Query Enrichments (extra context for ambiguous terms): {json.dumps(enrichments)}\n"
+
     if feedback:
         human_message += f"\nUser Feedback on previous plan/query: {feedback}"
 
@@ -545,7 +559,9 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
         try:
             notes = await run_ambiguity_detection(profile_details, user_query, _llm)
             if notes:
-                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(f"- {n}" for n in notes)
+                human_message += "\n\n[AMBIGUITY NOTES]\n" + "\n".join(
+                    f"- {n}" for n in notes
+                )
                 active_phases.append("SCHEMA_AMBIGUITY_DETECT")
         except Exception as exc:
             logger.warning("SCHEMA_AMBIGUITY_DETECT phase failed: %s", exc)
@@ -595,7 +611,9 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
             candidate_options=[],
         )
 
-    data = await _resolve_ambiguity(data, chain, tables_info, profiles_json_str, human_message, state)
+    data = await _resolve_ambiguity(
+        data, chain, tables_info, profiles_json_str, human_message, state
+    )
 
     plan = data.schema_plan
     if plan is not None and not isinstance(plan, str):
@@ -614,13 +632,16 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig = None)
 
     return result_state
 
-async def sql_static_validations_node(state: AgentState, config: RunnableConfig = None) -> dict:
+
+async def sql_static_validations_node(
+    state: AgentState, config: RunnableConfig = None
+) -> dict:
     """
     Check if tables_used actually exist.
     """
     tables_used = state.get("tables_used") or []
     hallucinated = []
-    
+
     if tables_used:
         try:
             redis_client = get_redis_client()
@@ -672,7 +693,7 @@ async def sql_static_validations_node(state: AgentState, config: RunnableConfig 
     result_state: dict = {
         "schema_explorer_retry_count": retry_count,
     }
-    
+
     if hallucinated:
         new_retry = retry_count + 1
         result_state["hallucinated_tables"] = hallucinated

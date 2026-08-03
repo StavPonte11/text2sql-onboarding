@@ -47,3 +47,6 @@ class AgentState(TypedDict):
     table_profiles: list[dict[str, Any]] | None
     locations_dict: dict[str, dict[str, str]] | None
     location_wkt_instruction: str | None
+    is_satisfied: bool | None
+    last_result_row_count: int | None
+    last_result_data: str | None

@@ -18,15 +18,15 @@ class AgentSettings(BaseSettings):
     EMBEDDER_MODEL: str = "nomic-embed-text:latest"
     EMBEDDER_KEY: str = ""
     HYBRID_SEARCH_MAX_TABLES: int = 10
-    MAX_PROFILES_TO_FETCH: int = 3
+    MAX_PROFILES_TO_FETCH: int = 8
     PROFILE_FETCH_CONCURRENCY: int = Field(default=4, gt=0)
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
     LANGFUSE_BASE_URL: str = Field(min_length=1)
 
     # ── Jeen Integration ──────────────────────────────────────────────────────
-    JEEN_LLM_CORE_URL: str = ""  # If empty, agent gracefully skips fetching
-    JEEN_API_KEY: str = ""       # If empty, agent gracefully skips fetching
+    JEEN_LLM_CORE_URL: str = "http://schema-modeler.dev161.internal/api/mcp"  # If empty, agent gracefully skips fetching
+    JEEN_API_KEY: str = "mcp_ecd023ab04f849b36aef5d797525365c4c095052e6e07577d065bfe82507ae67"       # If empty, agent gracefully skips fetching
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
     NOMINATIM_USER_AGENT: str = "text2sql-agent/1.0"  # Nominatim acceptable-use identifier
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
@@ -51,9 +51,14 @@ class AgentSettings(BaseSettings):
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
     LANGFUSE_PROMPT_CATEGORY_ENRICHMENT: str = "text2sql/category_enrichment"
     LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
+    LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: str = (
+        "text2sql/location_wkt_instruction"
+    )
+    LANGFUSE_PROMPT_REFINER_STEP1: str = "text2sql/refiner_step1"
+    LANGFUSE_PROMPT_REFINER_STEP2: str = "text2sql/refiner_step2"
 
     MAX_REFINER_ITERATIONS: int = Field(default=3, gt=0)
-    REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=4, gt=0)
+    REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=8, gt=0)
 
     # ── G2-01: Table Scoping ──────────────────────────────────────────────────
     DEFAULT_TABLE_SCOPING_MODE: Literal["strict", "hybrid"] = "hybrid"
