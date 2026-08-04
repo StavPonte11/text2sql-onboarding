@@ -8,9 +8,8 @@ from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langgraph.types import interrupt
 
-
 async def query_builder_node(state: AgentState, config: RunnableConfig | None = None):
-    """Build SQL from plan and pause for user approval."""
+    """Build SQL from catalog and user query."""
     runtime_flags = state.get("runtime_flags") or {}
     feedback = state.get("feedback")
     feedback_str = f"\nUser Feedback to apply: {feedback}" if feedback else ""
@@ -38,7 +37,7 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
     publish_node_event_sync(thread_id, "query_builder")
     response = await chain.ainvoke(
         {
-            "schema_plan": state.get("schema_plan"),
+            "jeen_catalog": state.get("jeen_catalog"),
             "user_query": state.get("user_query"),
             "feedback_str": feedback_str,
             "location_wkt_instruction": state.get("location_wkt_instruction") or "",
@@ -65,37 +64,47 @@ async def query_builder_node(state: AgentState, config: RunnableConfig | None = 
         if match:
             explanation = content.replace(match.group(0), "").strip()
         else:
-            explanation = content.replace(sql, "").strip()
+            sql = content.strip()
+
+    if sql.endswith(";"):
+        sql = sql[:-1].strip()
+
+    return {
+        "sql_query": sql,
+        "sql_explanation": explanation,
+        "execution_path": ["query_builder"],
+        "refinement_count": 0,
+        "trino_error": None
+    }
+
+async def hitl_query_approval_node(state: AgentState, config: RunnableConfig | None = None):
+    """Pause for user approval of the generated SQL."""
+    thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+    publish_node_event_sync(thread_id, "hitl_query_approval")
 
     if state.get("non_interactive"):
         return {
-            "sql_query": sql,
-            "refinement_count": 0,
-            "trino_error": None,
             "feedback": None,
-            "execution_path": ["query_builder"],
+            "execution_path": ["hitl_query_approval"],
         }
 
     approval_result = interrupt(
         {
             "type": "query_approval",
-            "schema_plan": state.get("schema_plan"),
-            "sql_query": sql,
-            "sql_explanation": explanation,
+            "schema_plan": "",  # Empty string so we don't send massive catalog to UI
+            "sql_query": state.get("sql_query"),
+            "sql_explanation": state.get("sql_explanation"),
         }
     )
 
     if approval_result.get("approved"):
         return {
-            "sql_query": sql,
-            "refinement_count": 0,
-            "trino_error": None,
             "feedback": None,
-            "execution_path": ["query_builder"],
+            "execution_path": ["hitl_query_approval"],
         }
     else:
         return {
-            "feedback": approval_result.get("feedback", "Query rejected by user"),
+            "feedback": approval_result.get("feedback") or "Query rejected by user",
             "sql_query": None,
-            "execution_path": ["query_builder"],
+            "execution_path": ["hitl_query_approval"],
         }

@@ -1,14 +1,17 @@
 """
 G2-03: Advanced Schema Explorer — Enrichment Phases
 ====================================================
-Four independently feature-gated async functions that enrich schema context
+Three independently feature-gated async functions that enrich schema context
 before the LLM planning call in schema_explorer_node.
 
 Phase constants (used in Langfuse trace metadata):
     SCHEMA_SEMANTIC_TYPING
     SCHEMA_JOIN_GRAPH
     SCHEMA_SUMMARIZATION
-    SCHEMA_AMBIGUITY_DETECT
+
+Note: Ambiguity detection (formerly Phase D) has been removed from schema
+enrichment and consolidated into the dedicated detect_ambiguity node that
+runs post-SQL in the refiner subgraph.
 
 Join-graph algorithm
 --------------------
@@ -55,16 +58,6 @@ class SemanticTypingOutput(BaseModel):
 class SummarizationOutput(BaseModel):
     summary: str = Field(
         description="≤3-sentence plain-English description of the table's purpose and key columns."
-    )
-
-
-class AmbiguityOutput(BaseModel):
-    ambiguity_notes: list[str] = Field(
-        default_factory=list,
-        description=(
-            "List of ambiguity notes for column/table names relative to the user query. "
-            "Empty list if nothing is ambiguous."
-        ),
     )
 
 
@@ -291,7 +284,7 @@ async def run_join_graph(
     return json.dumps(paths, indent=2)
 
 
-# ─── Phase C: Schema Summarization ───────────────────────────────────────────
+# ─── Phase C: Schema Summarization ─────────────────────────────────────
 
 
 async def run_schema_summarization(
@@ -324,58 +317,16 @@ async def run_schema_summarization(
             )
             try:
                 structured = llm.with_structured_output(SummarizationOutput, method="json_schema")
-                # Handle both Pydantic model and raw dict responses gracefully
                 result = await structured.ainvoke(prompt)
-                
-                # Check if it's a dict or object
                 if isinstance(result, dict):
                     summary_text = result.get("summary", "(summarization unavailable)")
                 else:
                     summary_text = getattr(result, "summary", "(summarization unavailable)")
-                    
                 return f"[{tname}] {summary_text}"
             except Exception as exc:
                 logger.warning("run_schema_summarization failed for %s: %s", tname, exc)
-                return f"[{tname}] (summarization unavailable)"
+                return f"[{tname}] (summarization unavailable) "
 
     tasks = [_summarize_one(p) for p in profiles]
     summaries = list(await asyncio.gather(*tasks))
     return summaries
-
-
-# ─── Phase D: Ambiguity Detection ────────────────────────────────────────────
-
-
-async def run_ambiguity_detection(
-    profiles: list[dict[str, Any]],
-    user_query: str,
-    llm: Any,
-) -> list[str]:
-    """
-    Identify any column or table name ambiguities relative to the user query.
-    Returns a list of human-readable ambiguity notes (may be empty).
-    """
-    if not profiles:
-        return []
-
-    col_names = []
-    for p in profiles:
-        for col in p.get("columns", []):
-            col_names.append(f"{p.get('table_name','')}.{col['name']}")
-
-    prompt = (
-        f"User question: {user_query}\n"
-        f"Available columns: {', '.join(col_names[:80])}\n\n"
-        "List any ambiguous column or table names that could be misinterpreted for this question. "
-        "Return an empty list if nothing is ambiguous."
-    )
-    try:
-        structured = llm.with_structured_output(AmbiguityOutput, method="json_schema")
-        result = await structured.ainvoke(prompt)
-        # Handle both Pydantic model and raw dict responses
-        if isinstance(result, dict):
-            return result.get("ambiguity_notes", [])
-        return result.ambiguity_notes
-    except Exception as exc:
-        logger.warning("run_ambiguity_detection failed: %s", exc)
-        return []

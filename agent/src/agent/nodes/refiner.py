@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_refiner_schema_context(state: AgentState) -> str:
-    profiles = state.get("table_profiles")
-    if not profiles:
+    catalog = state.get("jeen_catalog")
+    if not catalog:
         return "No schema context available."
 
     runtime_flags = state.get("runtime_flags") or {}

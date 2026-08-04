@@ -2,13 +2,21 @@
 LangGraph agent graph — Group 2 hardened topology.
 
 Node order:
-  START → validate_config → extractor → schema_explorer → ...
-          (G2-01 fail-fast)
+  START → init_flags → validate_config
+                     → init_skills → extractor → schema_explorer
+                                                    → sql_static_validations
+                                                    → detect_ambiguity
+                                                         ├─ [clear]        → query_builder → ...
+                                                         ├─ [ambiguous]    → ambiguity_resolution  ← interrupt
+                                                         │                      └─ schema_explorer (retry)
+                                                         └─ [unanswerable] → END
 
-HITL escalation compiles with interrupt_before=["hitl_escalation"] so
-LangGraph pauses before executing that node.  After a human injects
-corrected state the graph resumes from hitl_escalation which immediately
-routes to extractor (full state reset path).
+HITL escalation compiles with interrupt_before=["hitl_escalation", "ambiguity_resolution"] so
+LangGraph pauses before executing either node. After a human injects corrected
+state (feedback / clarification) the graph resumes:
+  • hitl_escalation   → extractor (full reset path for hard errors)
+  • ambiguity_resolution → schema_explorer (targeted retry with user’s clarification
+                            appended as feedback)
 
 Satisfaction check sits between refiner success path and finalizer (G2-04).
 """
@@ -23,16 +31,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.prompts import ChatPromptTemplate
 from agent.state import AgentState
-from agent.utils.redis_publisher import publish_node_event_sync
+from agent.utils.redis_publisher import publish_node_event_sync, publish_node_event
 from agent.nodes.extractor import extractor_node
 from agent.nodes.init_flags import init_flags_node
 from agent.nodes.init_skills import init_skills_node
-from agent.nodes.schema_explorer import (
-    schema_explorer_node,
-    MAX_SCHEMA_RETRIES,
-    sql_static_validations_node,
-)
-from agent.nodes.query_builder import query_builder_node
+from agent.nodes.schema_explorer import schema_explorer_node
+from agent.nodes.query_builder import query_builder_node, hitl_query_approval_node
+from agent.nodes.detect_ambiguity import detect_ambiguity_node, ambiguity_resolution_node
 from agent.nodes.refiner_graph import refiner_subgraph
 from agent.nodes.finalizer import finalizer_node
 from agent.config import settings
@@ -182,13 +187,6 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
 # ── Conditional edge functions ────────────────────────────────────────────────
 
 
-def route_schema_explorer(state: AgentState) -> str:
-    """G2-02: route to hitl_escalation after MAX_SCHEMA_RETRIES."""
-    if state.get("hallucinated_tables"):
-        if (state.get("schema_explorer_retry_count") or 0) >= MAX_SCHEMA_RETRIES:
-            return "hitl_escalation"
-        return "schema_explorer"
-    return "query_builder"
 
 
 def route_refiner_subagent(state: AgentState) -> str:
@@ -205,7 +203,39 @@ def route_refiner_subagent(state: AgentState) -> str:
     return "finalizer"
 
 
+def route_detect_ambiguity(state: AgentState) -> str:
+    """
+    Route out of detect_ambiguity based on the resolved ambiguity_type.
+
+      - "clear"        → hitl_query_approval    (proceed normally)
+      - "ambiguous"    → ambiguity_resolution   (HITL: user clarifies, then retry)
+                         → END if MAX_AMBIGUITY_RETRIES exhausted
+      - "unanswerable" → END                    (data doesn’t exist; clarification won’t help)
+    """
+    t = state.get("ambiguity_type") or "clear"
+
+    if t == "clear":
+        return "hitl_query_approval"
+
+    if t == "unanswerable":
+        return END
+
+    # ambiguous — offer HITL (max retries logic is now handled inside detect_ambiguity_node)
+    return "ambiguity_resolution"
+
+
 def route_query_builder(state: AgentState) -> str:
+    runtime_flags = state.get("runtime_flags") or {}
+    enable_ambiguity = runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
+    if isinstance(enable_ambiguity, str):
+        enable_ambiguity = enable_ambiguity.lower() == "true"
+        
+    if enable_ambiguity:
+        return "detect_ambiguity"
+    return "hitl_query_approval"
+
+
+def route_hitl_approval(state: AgentState) -> str:
     if state.get("feedback"):
         return "rejection_router"
     return "refiner_subagent"
@@ -227,8 +257,10 @@ workflow.add_node("init_flags", init_flags_node)
 workflow.add_node("init_skills", init_skills_node)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("schema_explorer", schema_explorer_node)
-workflow.add_node("sql_static_validations", sql_static_validations_node)
 workflow.add_node("query_builder", query_builder_node)
+workflow.add_node("detect_ambiguity", detect_ambiguity_node)
+workflow.add_node("ambiguity_resolution", ambiguity_resolution_node)
+workflow.add_node("hitl_query_approval", hitl_query_approval_node)
 workflow.add_node("rejection_router", rejection_router_node)
 workflow.add_node("refiner_subagent", refiner_subgraph)
 workflow.add_node("hitl_escalation", hitl_escalation_node)
@@ -240,21 +272,34 @@ workflow.add_edge("init_flags", "validate_config")
 workflow.add_edge("init_flags", "init_skills")
 workflow.add_edge("init_skills", "extractor")
 workflow.add_edge("extractor", "schema_explorer")
-workflow.add_edge("schema_explorer", "sql_static_validations")
-
-workflow.add_conditional_edges(
-    "sql_static_validations",
-    route_schema_explorer,
-    {
-        "schema_explorer": "schema_explorer",
-        "query_builder": "query_builder",
-        "hitl_escalation": "hitl_escalation",  # G2-02
-    },
-)
+workflow.add_edge("schema_explorer", "query_builder")
 
 workflow.add_conditional_edges(
     "query_builder",
     route_query_builder,
+    {
+        "detect_ambiguity": "detect_ambiguity",
+        "hitl_query_approval": "hitl_query_approval",
+    },
+)
+
+workflow.add_conditional_edges(
+    "detect_ambiguity",
+    route_detect_ambiguity,
+    {
+        "hitl_query_approval": "hitl_query_approval",
+        "ambiguity_resolution": "ambiguity_resolution",
+        END: END,
+    },
+)
+
+# ambiguity_resolution → query_builder: targeted retry.
+# The user’s clarification is in state["feedback"] which query_builder reads.
+workflow.add_edge("ambiguity_resolution", "query_builder")
+
+workflow.add_conditional_edges(
+    "hitl_query_approval",
+    route_hitl_approval,
     {"rejection_router": "rejection_router", "refiner_subagent": "refiner_subagent"},
 )
 
@@ -284,5 +329,8 @@ workflow.add_edge("finalizer", END)
 memory = MemorySaver()
 agent_graph = workflow.compile(
     checkpointer=memory,
-    interrupt_before=["hitl_escalation"],  # G2-02: pause before HITL node
+    interrupt_before=[
+        "hitl_escalation",      # G2-02: hard error escalation (full reset)
+        "ambiguity_resolution", # Ambiguity HITL: user clarifies, then schema_explorer retry
+    ],
 )

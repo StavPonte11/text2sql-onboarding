@@ -1316,9 +1316,9 @@ function CrossTableCard({ profile }: { profile: CrossTableProfile }) {
 // ── Main ProfilingTab ─────────────────────────────────────────────────────────
 export function ProfilingTab({ tableId }: { tableId: string }) {
   const qc = useQueryClient();
-  const [activeView, setActiveView] = useState<
-    'detail' | 'column' | 'overview' | 'cross'
-  >('detail');
+  const [activeView, setActiveView] = useState<'detail' | 'column' | 'overview' | 'cross'>(
+    'detail',
+  );
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(new Set());
 
   const profileQ = useQuery({
@@ -1338,7 +1338,8 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
   });
 
   const runMutation = useMutation({
-    mutationFn: (params?: { force?: boolean; resume_from_partial?: boolean }) => profilingApi.run(tableId, params),
+    mutationFn: (params?: { force?: boolean; resume_from_partial?: boolean }) =>
+      profilingApi.run(tableId, params),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile', tableId] });
     },
@@ -1358,7 +1359,8 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
   });
 
   const profile = profileQ.data;
-  const isRunning = profile?.status === 'running' || profile?.status === 'pending' || runMutation.isPending;
+  const isRunning =
+    profile?.status === 'running' || profile?.status === 'pending' || runMutation.isPending;
 
   useEffect(() => {
     let poll: ReturnType<typeof setInterval>;
@@ -1410,7 +1412,15 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
               className={`btn btn--outline`}
               onClick={() => terminateMutation.mutate()}
               disabled={terminateMutation.isPending}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8, color: 'red', borderColor: 'red' }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 16px',
+                borderRadius: 8,
+                color: 'red',
+                borderColor: 'red',
+              }}
             >
               <X size={16} />
               Terminate
@@ -1420,7 +1430,13 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
               <button
                 className="btn btn--outline"
                 onClick={() => runMutation.mutate({ force: true })}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '10px 16px',
+                  borderRadius: 8,
+                }}
               >
                 <RefreshCw size={16} />
                 Restart from Start
@@ -1428,7 +1444,13 @@ export function ProfilingTab({ tableId }: { tableId: string }) {
               <button
                 className="btn btn--primary"
                 onClick={() => runMutation.mutate({ resume_from_partial: true })}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 8 }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '10px 16px',
+                  borderRadius: 8,
+                }}
               >
                 <RefreshCw size={16} />
                 Retry from Last Saved Point
