@@ -59,8 +59,8 @@ def _resolve_ambiguity_type(parsed: dict) -> str:
     ambiguity_type = parsed.get("ambiguity_type")
     clarifying: str | None = parsed.get("clarifying_questions")
 
-    # If the LLM classified it as unanswerable but generated a clarifying question, it MUST be ambiguous.
-    if ambiguity_type == "unanswerable" and clarifying is not None and clarifying.strip():
+    # If the LLM generated a clarifying question, it MUST be ambiguous.
+    if clarifying is not None and isinstance(clarifying, str) and clarifying.strip():
         return "ambiguous"
 
     if ambiguity_type in ["clear", "ambiguous", "unanswerable"]:
@@ -70,10 +70,10 @@ def _resolve_ambiguity_type(parsed: dict) -> str:
 
 
 class AmbiguityResult(BaseModel):
+    reason: str = Field(default="", description="Explanation of the ambiguity detection decision. Always think through your reasoning here first.")
     ambiguity_type: Literal["clear", "ambiguous", "unanswerable"] = Field(
         description="The determined state of the query: 'clear' (proceed), 'ambiguous' (needs clarification), or 'unanswerable' (impossible)."
     )
-    reason: str = Field(default="", description="Explanation of the ambiguity detection decision")
     clarifying_questions: str | None = Field(default=None, description="Questions to ask the user if ambiguous. Null if clear or unanswerable.")
 
 

@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
+    # Jeen MCP
+    JEEN_METADATA_MCP_URL: str = "http://schema-modeler.dev161.internal/api/mcp"
+    JEEN_METADATA_MCP_KEY: str = (
+        "mcp_f885337e381366db5edc22093415450e38f71e997e96dc708fea69bde9529ab9"
+    )
+
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"
     OPENMETADATA_ADMIN_EMAIL: str = "admin@open-metadata.org"

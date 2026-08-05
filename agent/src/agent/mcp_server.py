@@ -24,6 +24,7 @@ async def chat_with_agent(
     active_skills: list[str] | None = None,
     execution_mode: str | None = None,
     hitl_enabled: bool = True,
+    connection_id: int | None = None,
 ) -> str:
     """Run the Text2SQL agent to answer database queries.
 
@@ -139,6 +140,7 @@ async def chat_with_agent(
                 "active_skills": active_skills,
                 "execution_mode": execution_mode,
                 "non_interactive": not hitl_enabled,
+                "connection_id": connection_id,
             },
             config=config,
         )

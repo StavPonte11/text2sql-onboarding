@@ -48,6 +48,7 @@ class ChatRequest(BaseModel):
     active_skills: list[str] | None = None
     execution_mode: str | None = None
     hitl_enabled: bool = True
+    connection_id: int | None = None
 
 
 class SuggestFixesRequest(BaseModel):
@@ -78,6 +79,24 @@ class ChatResponse(BaseModel):
 async def _get_mcp_client():
     url = f"{settings.AGENT_URL}/mcp"
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            yield session
+
+
+@asynccontextmanager
+async def _get_jeen_mcp_client():
+    url = settings.JEEN_METADATA_MCP_URL
+    headers = (
+        {"Authorization": f"Bearer {settings.JEEN_METADATA_MCP_KEY}"}
+        if settings.JEEN_METADATA_MCP_KEY
+        else {}
+    )
+    async with streamablehttp_client(url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             yield session
@@ -189,6 +208,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "allowed_statuses": request.allowed_statuses,
         "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
+        "connection_id": request.connection_id,
     }
 
     result = await _call_agent_mcp(tool_arguments)
@@ -323,3 +343,20 @@ async def suggest_fixes(req: SuggestFixesRequest):
     except Exception as e:
         logger.error(f"Suggest fixes error: {e}")
         return []
+
+
+@router.get("/connections")
+async def list_connections():
+    """Fetch list of connections from the Jeen MCP."""
+    try:
+        async with _get_jeen_mcp_client() as session:
+            result = await session.call_tool(
+                "list_connections",
+                arguments={},
+                read_timeout_seconds=timedelta(seconds=60.0),
+            )
+            content = result.content[0].text
+            return json.loads(content)
+    except Exception as e:
+        logger.error(f"List connections error: {e}")
+        return {"connections": []}
