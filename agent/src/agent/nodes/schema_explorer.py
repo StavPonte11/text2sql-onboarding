@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # G2-02 limits
 MAX_SCHEMA_RETRIES = 3
 
-async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
+async def schema_explorer_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """Schema Explorer node — just fetches the full catalog prompt from MCP."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
 

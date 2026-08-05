@@ -44,7 +44,7 @@ _ENV_DEFAULTS: dict[str, Any] = {
     "QUERY_BUILDER_MODEL": settings.LLM_MODEL,
     "QUERY_BUILDER_TEMPERATURE": 0.0,
     # Refiner
-    "MAX_REFINER_ITERATIONS": 4,
+    "MAX_REFINER_ITERATIONS": settings.MAX_REFINER_ITERATIONS,
     "MAX_SCHEMA_REPLAN_ITERATIONS": 2,
     "REFINER_MODEL": settings.LLM_MODEL,
     # Satisfaction Check

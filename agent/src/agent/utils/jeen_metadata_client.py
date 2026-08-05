@@ -186,7 +186,9 @@ class JeenMetadataClient:
             logger.error(
                 "JeenMetadataClient.get_catalog_prompt failed: %s", exc, exc_info=True
             )
-            return ""
+            raise RuntimeError(
+                f"Failed to connect to Jeen MCP at {self._mcp_url} (Connection ID: {self._connection_id}): {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Table profile (columns + stats)

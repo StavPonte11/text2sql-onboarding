@@ -68,7 +68,7 @@ def mock_llm(request):
     mock_instance = MockLLM()
     with (
         patch("agent.llm.get_llm", return_value=mock_instance),
-        patch("agent.nodes.schema_explorer.get_llm", return_value=mock_instance),
+        patch("agent.nodes.schema_explorer.get_llm", return_value=mock_instance, create=True),
         patch("agent.nodes.refiner.get_llm", return_value=mock_instance),
         patch("agent.nodes.query_builder.get_llm", return_value=mock_instance),
         patch("agent.nodes.extractor.get_llm", return_value=mock_instance),

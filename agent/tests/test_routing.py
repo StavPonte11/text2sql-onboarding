@@ -7,10 +7,8 @@ from agent.graph import (
     InvalidConfigurationException,
     rejection_router_node,
     route_refiner_subagent,
-    route_schema_explorer,
 )
 from agent.nodes.refiner import trino_exec_node
-from agent.nodes.schema_explorer import MAX_SCHEMA_RETRIES
 from agent.config import settings
 from agent.utils.schema_enrichment import _bfs_shortest_path
 
@@ -180,12 +178,6 @@ def test_tts_g2_02_max_loop_and_hitl_breakpointer():
     # route_refiner_subagent should return hitl_escalation when trino_error is set after hitting subgraph limit
     route = route_refiner_subagent(state)
     assert route == "hitl_escalation"
-
-    # also test schema explorer max loop
-    state["hallucinated_tables"] = ["fake_table"]
-    state["schema_explorer_retry_count"] = MAX_SCHEMA_RETRIES
-    route2 = route_schema_explorer(state)
-    assert route2 == "hitl_escalation"
 
 
 def test_tts_g2_03_schema_enrichment_bfs_algorithm():

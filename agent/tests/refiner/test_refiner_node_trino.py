@@ -342,3 +342,63 @@ async def test_trino_exec_zero_rows_formatting(
     payload = json.loads(esca_mock_instance.save_data_mock.call_args[0][0].decode())
     assert payload["columns"] == ["id", "name"]
     assert payload["rows"] == []
+
+
+@pytest.mark.asyncio
+@patch("agent.nodes.refiner.publish_node_event", new_callable=AsyncMock)
+@patch("agent.nodes.refiner.get_esca_client")
+@patch("agent.nodes.refiner.execute_query_sync")
+async def test_trino_exec_jeen_catalog_short_table_names(
+    mock_execute, mock_get_esca, mock_publish
+):
+    """
+    Verify that short/unqualified table names (and schema-qualified names)
+    are automatically replaced with 3-part fully qualified names parsed from jeen_catalog.
+    """
+    mock_execute.return_value = MockTrinoResult(
+        success=True, rows=[[42]], columns=["count"]
+    )
+    mock_get_esca.return_value = MockEscaClient(save_result={"esca_id": "esca_test"})
+
+    jeen_catalog = (
+        '# Schema\n'
+        '"postgres"."public"."flights_table": Flights master\n'
+        '"postgres"."public"."flights_landing_table": Landings master\n'
+    )
+
+    # 1. Unquoted short name
+    state1 = AgentState(
+        sql_query="SELECT COUNT(*) FROM flights_table WHERE launch_country = 'France'",
+        jeen_catalog=jeen_catalog,
+    )
+    await trino_exec_node(state1)
+    executed_sql1 = mock_execute.call_args[0][0]
+    assert executed_sql1 == 'SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = \'France\''
+
+    # 2. Quoted short name
+    state2 = AgentState(
+        sql_query='SELECT COUNT(*) FROM "flights_table" WHERE launch_country = \'France\'',
+        jeen_catalog=jeen_catalog,
+    )
+    await trino_exec_node(state2)
+    executed_sql2 = mock_execute.call_args[0][0]
+    assert executed_sql2 == 'SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = \'France\''
+
+    # 3. 2-part schema-qualified name
+    state3 = AgentState(
+        sql_query='SELECT COUNT(*) FROM public.flights_table WHERE launch_country = \'France\'',
+        jeen_catalog=jeen_catalog,
+    )
+    await trino_exec_node(state3)
+    executed_sql3 = mock_execute.call_args[0][0]
+    assert executed_sql3 == 'SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = \'France\''
+
+    # 4. Already fully qualified name should remain intact
+    state4 = AgentState(
+        sql_query='SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = \'France\'',
+        jeen_catalog=jeen_catalog,
+    )
+    await trino_exec_node(state4)
+    executed_sql4 = mock_execute.call_args[0][0]
+    assert executed_sql4 == 'SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = \'France\''
+

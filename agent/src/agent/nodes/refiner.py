@@ -19,18 +19,18 @@ logger = logging.getLogger(__name__)
 
 def build_refiner_schema_context(state: AgentState) -> str:
     catalog = state.get("jeen_catalog")
-    if not catalog:
-        return "No schema context available."
+    if catalog:
+        return catalog
 
-    runtime_flags = state.get("runtime_flags") or {}
-    limit = int(
-        runtime_flags.get(
-            "REFINER_SCHEMA_CONTEXT_TABLES", settings.REFINER_SCHEMA_CONTEXT_TABLES
-        )
-    )
+    table_profiles = state.get("table_profiles") or []
+    if table_profiles:
+        runtime_flags = state.get("runtime_flags") or {}
+        max_tables = runtime_flags.get("REFINER_SCHEMA_CONTEXT_TABLES")
+        if max_tables and isinstance(max_tables, int):
+            table_profiles = table_profiles[:max_tables]
+        return json.dumps(table_profiles, indent=2)
 
-    capped_profiles = profiles[:limit]
-    return json.dumps(capped_profiles, indent=2)
+    return "No schema context available."
 
 
 async def enrich_context_node(state: AgentState, config: RunnableConfig | None = None):
@@ -175,13 +175,14 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     response = await chain.ainvoke(invoke_vars)
     new_sql = clean_sql(response.content)
 
+    import re
+
     is_satisfied = "QUERY_SATISFIED" in response.content
     sql_explanation = state.get("sql_explanation", "")
-    if is_satisfied:
-        import re
 
+    if is_satisfied:
         match = re.search(
-            r"TRANSLATION\s*(.*)", response.content, re.IGNORECASE | re.DOTALL
+            r"TRANSLATION\s*:?\s*\n*(.*)", response.content, re.IGNORECASE | re.DOTALL
         )
         if match:
             sql_explanation = match.group(1).strip()
@@ -214,22 +215,30 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             sql = re.sub(r"@" + re.escape(placeholder) + r"@", f"'{wkt_str}'", sql)
 
     # 2. Short Table Names -> Fully Qualified Names
+    table_mappings: dict[str, str] = {}
     table_profiles = state.get("table_profiles") or []
     for p in table_profiles:
-        # We now implicitly pass the short name as `table_name` and full name as `full_name`
-        short_name = p.get("table_name")
-        full_name = p.get("full_name")
-        if short_name and full_name:
-            # Replace short name with full name, using negative lookbehind to avoid double-qualifying
-            if full_name.endswith(short_name):
-                prefix = full_name[: -len(short_name)]
-                sql = re.sub(
-                    rf"(?<!{re.escape(prefix)})\b{re.escape(short_name)}\b",
-                    full_name,
-                    sql,
-                )
-            else:
-                sql = re.sub(r"\b" + re.escape(short_name) + r"\b", full_name, sql)
+        s_name = p.get("table_name")
+        f_name = p.get("full_name")
+        if s_name and f_name:
+            table_mappings[s_name.strip('"')] = f_name
+
+    jeen_catalog = state.get("jeen_catalog") or ""
+    if jeen_catalog:
+        pattern = r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"'
+        for cat, sch, tbl in re.findall(pattern, jeen_catalog):
+            if cat.lower() != "catalog" and tbl.lower() != "table":
+                full_name = f'"{cat}"."{sch}"."{tbl}"'
+                table_mappings[tbl] = full_name
+
+    for short, full in table_mappings.items():
+        match = re.match(r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"', full)
+        if match:
+            cat, sch, tbl = match.groups()
+            sql = re.sub(rf'(?<![\.\w\"])\"{re.escape(sch)}\"\.\"{re.escape(tbl)}\"', full, sql)
+            sql = re.sub(rf'(?<![\.\w\"]){re.escape(sch)}\.{re.escape(tbl)}(?![\.\w\"])', full, sql)
+        sql = re.sub(rf'(?<![\.\w])\"{re.escape(short)}\"(?![\.\w])', full, sql)
+        sql = re.sub(rf'(?<![\.\w\"]){re.escape(short)}(?![\.\w\"])', full, sql)
 
     try:
         result = await asyncio.to_thread(execute_query_sync, sql)
