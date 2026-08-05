@@ -410,12 +410,14 @@ const AgentChatInput = ({
   onSubmit,
   disabled,
   loading,
+  submitDisabled,
 }: {
   query: string;
   setQuery: (q: string) => void;
   onSubmit: () => void;
   disabled: boolean;
   loading: boolean;
+  submitDisabled?: boolean;
 }) => (
   <div className={`${styles.glassCard} ${styles.animateIn}`}>
     <Space.Compact className={styles.chatInputWrapper}>
@@ -424,14 +426,16 @@ const AgentChatInput = ({
         placeholder="Ask the agent to query a table..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onPressEnter={onSubmit}
+        onPressEnter={(e) => {
+          if (!disabled && !submitDisabled) onSubmit();
+        }}
         disabled={disabled}
       />
       <Button
         className={styles.primaryButton}
         onClick={onSubmit}
         loading={loading}
-        disabled={disabled}
+        disabled={disabled || submitDisabled}
       >
         {!loading && <Play size={18} />}
         Run Agent
@@ -1021,7 +1025,7 @@ export function AgentTestingPage() {
   const isInputDisabled = chatMutation.isPending || chatResponse?.status === 'interrupted';
 
   const handleSubmit = () => {
-    if (!query) return;
+    if (!query || !selectedConnection) return;
     setChatResponse(null);
     const newThreadId = uuidv4();
     setThreadId(newThreadId);
@@ -1047,6 +1051,7 @@ export function AgentTestingPage() {
       chatMutation.mutate({
         thread_id: threadId,
         resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
+        connection_id: selectedConnection,
       });
     }, 300);
   };
@@ -1058,6 +1063,7 @@ export function AgentTestingPage() {
         thread_id: threadId,
         resume_value: { approved: false, feedback, rejection_category: category },
         hitl_enabled: hitlEnabled,
+        connection_id: selectedConnection,
       });
     }, 300);
   };
@@ -1125,6 +1131,7 @@ export function AgentTestingPage() {
         onSubmit={handleSubmit}
         disabled={isInputDisabled}
         loading={isPendingInitial}
+        submitDisabled={!selectedConnection || !query.trim()}
       />
 
       {chatMutation.isError && (

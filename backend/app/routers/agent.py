@@ -48,7 +48,7 @@ class ChatRequest(BaseModel):
     active_skills: list[str] | None = None
     execution_mode: str | None = None
     hitl_enabled: bool = True
-    connection_id: int | None = None
+    connection_id: int
 
 
 class SuggestFixesRequest(BaseModel):

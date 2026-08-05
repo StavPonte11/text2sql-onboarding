@@ -25,7 +25,7 @@ class AgentState(TypedDict):
     active_extractors: list[dict[str, str]] | None
     active_skills: list[str] | None
     loaded_skills: list[dict] | None
-    connection_id: int | None
+    connection_id: int
     last_error: str | None
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None

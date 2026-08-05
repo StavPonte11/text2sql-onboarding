@@ -15,6 +15,7 @@ mcp = FastMCP("Text2SQL Agent")
 @mcp.tool()
 @observe()
 async def chat_with_agent(
+    connection_id: int,
     query: str | None = None,
     thread_id: str | None = None,
     resume_value: str | dict | None = None,
@@ -24,7 +25,6 @@ async def chat_with_agent(
     active_skills: list[str] | None = None,
     execution_mode: str | None = None,
     hitl_enabled: bool = True,
-    connection_id: int | None = None,
 ) -> str:
     """Run the Text2SQL agent to answer database queries.
 
