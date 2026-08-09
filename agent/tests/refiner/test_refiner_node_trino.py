@@ -61,19 +61,17 @@ async def test_trino_exec_success_with_transformations(
     mock_get_esca.return_value = esca_mock_instance
 
     # 3. Setup State with WKT placeholders and short table names
-    original_sql = "SELECT * FROM users WHERE geom = @loc_tel_aviv@"
+    original_sql = "SELECT * FROM users_table WHERE geom = @loc_tel_aviv@"
     state = AgentState(
         sql_query=original_sql,
         locations_dict={"coords": {"loc_tel_aviv_wkt": "POLYGON((34 32, 35 32, ...))"}},
-        table_profiles=[
-            {"table_name": "users", "full_name": "hive.production.users_table"}
-        ],
+        jeen_catalog='"hive"."production"."users_table": users table\n  - "id" (INT)\n  - "name" (VARCHAR)',
         runtime_flags={"ESCA_WRITE_ENABLED": True},
     )
 
     # Note: We simulate a slight mismatch in placeholder above to test exact mapping.
     # Let's fix the SQL to match the exact placeholder dict key:
-    state["sql_query"] = "SELECT * FROM users WHERE geom = @loc_tel_aviv_wkt@"
+    state["sql_query"] = "SELECT * FROM users_table WHERE geom = @loc_tel_aviv_wkt@"
 
     # 4. Run Node
     result = await trino_exec_node(state)
@@ -81,7 +79,7 @@ async def test_trino_exec_success_with_transformations(
     # 5. Assertions
     # Verify the SQL was actually transformed BEFORE being sent to Trino
     executed_sql = mock_execute.call_args[0][0]
-    assert "hive.production.users_table" in executed_sql, (
+    assert '"hive"."production"."users_table"' in executed_sql, (
         "Table name must be fully qualified"
     )
     assert "users" not in executed_sql.replace("users_table", ""), (
@@ -121,7 +119,7 @@ async def test_trino_exec_db_failure(mock_execute, mock_get_esca, mock_publish):
     )
 
     state = AgentState(
-        sql_query="SELECT * FROM missing_table", error_history=["Previous Error"]
+        sql_query="SELECT * FROM missing_table", error_history=[{"sql": "SELECT old", "error": "Previous Error"}]
     )
 
     result = await trino_exec_node(state)
@@ -132,7 +130,7 @@ async def test_trino_exec_db_failure(mock_execute, mock_get_esca, mock_publish):
         == "line 1:8: Table 'hive.production.users_table' does not exist"
     )
     assert len(result["error_history"]) == 2
-    assert result["error_history"][-1] == result["trino_error"]
+    assert result["error_history"][-1] == {"sql": "SELECT * FROM missing_table", "error": result["trino_error"]}
 
     # Verify ESCA was skipped entirely
     mock_get_esca.assert_not_called()
@@ -183,7 +181,7 @@ async def test_trino_exec_table_alias_word_boundary(
     # 'users' is the target. 'active_users' should be ignored.
     state = AgentState(
         sql_query="SELECT users.id FROM users JOIN active_users ON users.id = active_users.id",
-        table_profiles=[{"table_name": "users", "full_name": "hive.schema.users"}],
+        jeen_catalog='"hive"."schema"."users": users table\n  - "id" (INT)',
     )
 
     await trino_exec_node(state)
@@ -191,10 +189,7 @@ async def test_trino_exec_table_alias_word_boundary(
     executed_sql = mock_execute.call_args[0][0]
 
     # Correct transformations
-    assert (
-        "hive.schema.users.id" in executed_sql
-        or "FROM hive.schema.users" in executed_sql
-    )
+    assert '"hive"."schema"."users"' in executed_sql
     # Crucial: "active_users" must remain untouched!
     # If the regex is bad (no \b), it would become "active_hive.schema.users"
     assert "active_users" in executed_sql
@@ -237,10 +232,10 @@ async def test_trino_exec_memory_shield_truncation(
     # The node does: str([columns] + rows[:5])
     llm_payload = ast.literal_eval(result["last_result_data"])
 
-    # 1 header row + 5 data rows = 6 total items
-    assert len(llm_payload) == 6
+    # 1 header row + 15 data rows = 16 total items
+    assert len(llm_payload) == 16
     assert llm_payload[0] == ["id", "name"]  # Header
-    assert llm_payload[-1] == [4, "user_4"]  # 5th data row
+    assert llm_payload[-1] == [14, "user_14"]  # 15th data row
 
 
 @pytest.mark.asyncio
@@ -260,7 +255,7 @@ async def test_trino_exec_hard_exception_survival(
     mock_execute.side_effect = RuntimeError("Connection dropped abruptly")
 
     state = AgentState(
-        sql_query="SELECT * FROM users", error_history=["Syntax error on attempt 1"]
+        sql_query="SELECT * FROM users", error_history=[{"sql": "SELECT bad", "error": "Syntax error on attempt 1"}]
     )
 
     result = await trino_exec_node(state)
@@ -268,7 +263,7 @@ async def test_trino_exec_hard_exception_survival(
     # Node survives and formats the Python exception as a Trino error
     assert result["trino_error"] == "Connection dropped abruptly"
     assert len(result["error_history"]) == 2
-    assert result["error_history"][-1] == "Connection dropped abruptly"
+    assert result["error_history"][-1] == {"sql": "SELECT * FROM users", "error": "Connection dropped abruptly"}
 
     # Ensures payload is zeroed out
     assert result["last_result_row_count"] is None

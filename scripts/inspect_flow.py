@@ -162,22 +162,17 @@ async def run_flow(query: str, auto_approve: bool = True):
                         explanation = updates.get("sql_explanation", "")
 
                         if count == 1:
-                            print_refiner_step_header("STEP 1", "Pre-Execution Candidate Preparation")
-                            print(f"    {CYAN}• Assessment & Objective:{RESET} Preparing initial candidate query for database execution")
+                            print_refiner_step_header("VERIFICATION", "Post-Execution Result Verification & Semantic Alignment")
                         else:
-                            iteration_num = count - 1
-                            if iteration_num == 1:
-                                print_refiner_step_header("STEP 2", "Post-Execution Result Verification")
-                            else:
-                                print_refiner_step_header("STEP 2", f"Post-Execution Result Verification (Iteration #{iteration_num})")
+                            print_refiner_step_header("VERIFICATION", f"Post-Execution Result Verification (Iteration #{count})")
 
-                            if last_trino_error:
-                                first_line_err = str(last_trino_error).strip().splitlines()[0]
-                                print(f"    {YELLOW}• Trigger:{RESET} ❌ Self-correcting previous database error ({first_line_err})")
-                            elif last_trino_row_count == 0:
-                                print(f"    {YELLOW}• Trigger:{RESET} ⚠️ Previous query returned 0 rows — adjusting filters/clauses to match data")
-                            elif last_trino_row_count is not None and last_trino_row_count > 0:
-                                print(f"    {CYAN}• Trigger:{RESET} ✓ Previous query returned {last_trino_row_count} rows — evaluating semantic alignment")
+                        if last_trino_error:
+                            first_line_err = str(last_trino_error).strip().splitlines()[0]
+                            print(f"    {YELLOW}• Trigger:{RESET} ❌ Self-correcting previous database error ({first_line_err})")
+                        elif last_trino_row_count == 0:
+                            print(f"    {YELLOW}• Trigger:{RESET} ⚠️ Previous query returned 0 rows — adjusting filters/clauses to match data")
+                        elif last_trino_row_count is not None and last_trino_row_count > 0:
+                            print(f"    {CYAN}• Trigger:{RESET} ✓ Previous query returned {last_trino_row_count} rows — evaluating semantic alignment")
 
                         if sql:
                             print(f"    {GREEN}• Candidate SQL:{RESET}\n    {BOLD}{sql.replace(chr(10), chr(10) + '    ')}{RESET}")
@@ -187,10 +182,7 @@ async def run_flow(query: str, auto_approve: bool = True):
                             if explanation:
                                 print(f"    {CYAN}• Hebrew Translation / Explanation:{RESET}\n    {explanation.replace(chr(10), chr(10) + '    ')}")
                         else:
-                            if count == 1:
-                                print(f"    {BOLD}• Status:{RESET} {YELLOW}Pre-Execution (Dispatching candidate to Trino){RESET}")
-                            else:
-                                print(f"    {BOLD}• Status:{RESET} {YELLOW}Not Yet Satisfied (Dispatching revised query to Trino){RESET}")
+                            print(f"    {BOLD}• Status:{RESET} {YELLOW}Not Yet Satisfied (Dispatching revised query to Trino){RESET}")
 
                     elif node_name == "trino_exec":
                         err = updates.get("trino_error")

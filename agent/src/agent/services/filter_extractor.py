@@ -38,8 +38,9 @@ class FilterExtractor:
             A list of SQLFilterParams containing details on each leaf filter predicate.
         """
         try:
+            from agent.utils.sql import replace_unquoted_char
             # 1. Trino catalog workaround: replace '@' in table references with '$'
-            sql_processed: str = sql.replace("@", "$")
+            sql_processed: str = replace_unquoted_char(sql, "@", "$")
             
             # Parse query using standard Trino dialect
             expression: exp.Expression = sqlglot.parse_one(sql_processed, dialect="trino")
@@ -52,11 +53,17 @@ class FilterExtractor:
             
             expression = expression.transform(lowercase_identifiers)
             
-            # Helper to nest flat schema keys e.g. "dataverse.orders" -> {"dataverse": {"orders": {...}}}
             def nest_schema(flat_schema: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
                 nested: Dict[str, Any] = {}
+                if not flat_schema:
+                    return nested
+                # sqlglot requires a uniform nesting level. Filter out short names (e.g. city_info_table) 
+                # if fully qualified names (postgres.public.city_info_table) exist.
+                max_parts = max(len(t.split(".")) for t in flat_schema.keys())
                 for table_name, columns in flat_schema.items():
                     parts: List[str] = table_name.split(".")
+                    if len(parts) != max_parts:
+                        continue
                     parts = [p.lower() for p in parts]
                     col_dict: Dict[str, str] = {c.lower(): str(t).lower() for c, t in columns.items()}
                     
@@ -330,7 +337,7 @@ class FilterExtractor:
                             source_column=source_column,
                             operator=op,
                             value=value,
-                            original_expression=leaf.sql(dialect="trino").replace("$", "@"),
+                            original_expression=replace_unquoted_char(leaf.sql(dialect="trino"), "$", "@"),
                             is_unnest=is_unnest,
                             match_type=match_type
                         )

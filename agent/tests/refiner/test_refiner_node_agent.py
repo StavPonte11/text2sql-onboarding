@@ -50,14 +50,13 @@ async def test_agent_step1_baseline(
     state = AgentState(
         execution_path=["enrich_context"],
         sql_query="SELECT 1;",
-        table_profiles=[],
         refinement_count=0,
     )
 
     result = await agent_node(state)
 
-    # Verifies Step 1 Prompt was requested
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP1)
+    # Verifies Step 2 Prompt was requested
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
 
     assert (
         result["sql_query"] == "SELECT 1"
@@ -88,7 +87,6 @@ async def test_agent_step2a_error_fixing(
         execution_path=["enrich_context", "agent", "trino_exec"],
         sql_query="SELECT 1;",
         trino_error="Syntax error at line 1",
-        table_profiles=[],
         refinement_count=1,
     )
 
@@ -120,7 +118,6 @@ async def test_agent_step2b_satisfied(
         execution_path=["trino_exec"],
         sql_query="SELECT 1;",
         trino_error=None,
-        table_profiles=[],
     )
 
     result = await agent_node(state)
@@ -167,28 +164,21 @@ async def test_agent_injects_enrichments_and_schema_cap(
     """
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, "SELECT 1")
 
-    # Create 3 table profiles
-    profiles = [{"table_name": f"table_{i}", "columns": []} for i in range(3)]
-    enrichments_mock = [{"column": "status", "refined_values": ["active"]}]
+    # Pass jeen_catalog in state
+    enrichments_mock = [{"term": "status", "context": "active status"}]
 
     state = AgentState(
         user_query="get active",
-        table_profiles=profiles,
+        jeen_catalog='"postgres"."public"."table_0": Table 0\n  - "id" (INT)',
         query_enrichments=enrichments_mock,
-        # Cap the context to 1 table via runtime flags
-        runtime_flags={"REFINER_SCHEMA_CONTEXT_TABLES": 1},
     )
 
     await agent_node(state)
 
     # Inspect the dictionary that was passed to the LLM (ainvoke)
     invoke_vars = mock_chain.ainvoke.call_args[0][0]
-
-    # 1. Verify schema truncation (only 1 table should be in the JSON)
-    schema_string = invoke_vars["schema"]
-    parsed_schema = json.loads(schema_string)
-    assert len(parsed_schema) == 1
-    assert parsed_schema[0]["table_name"] == "table_0"
+    # 1. Verify schema context was passed cleanly
+    assert invoke_vars["schema"] == '"postgres"."public"."table_0": Table 0\n  - "id" (INT)'
 
     # 2. Verify enrichments were injected
     enriched_instruction = invoke_vars["enriched_instruction"]
@@ -353,8 +343,8 @@ async def test_agent_null_state_variables_safe_formatting(
     assert invoke_vars["location_wkt_instruction"] == ""
     assert invoke_vars["initial_query"] == ""
     assert invoke_vars["last_result_error"] == ""
-    # Make sure we defaulted to step 1 logic
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP1)
+    # Make sure we defaulted to step 2 logic
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
 
 
 @pytest.mark.asyncio

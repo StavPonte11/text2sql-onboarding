@@ -7,7 +7,7 @@ WHY THIS NODE SITS PRE-SQL (AFTER SCHEMA EXPLORER, BEFORE QUERY BUILDER):
 The ambiguity-detection prompt requires three inputs:
 
   1. The original user request   — always available
-  2. The database schema         — available from state["table_profiles"] after
+  2. The database schema         — available from state["jeen_catalog"] after
                                    schema_explorer runs
   3. The agent's current plan    — the schema_plan produced by schema_explorer
                                    describes WHICH tables and columns the agent

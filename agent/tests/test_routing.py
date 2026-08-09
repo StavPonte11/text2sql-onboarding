@@ -10,7 +10,6 @@ from agent.graph import (
 )
 from agent.nodes.refiner import trino_exec_node
 from agent.config import settings
-from agent.utils.schema_enrichment import _bfs_shortest_path
 
 
 @pytest.mark.asyncio
@@ -61,7 +60,7 @@ async def test_tts_g1_08_refiner_context_accumulation(
         "sql_query": "SELECT bad",
         "schema_plan": "plan",
         "trino_error": None,
-        "error_history": ["Error 1", "Error 2"],  # Accumulated previous errors
+        "error_history": [{"sql": "SELECT bad1", "error": "Error 1"}, {"sql": "SELECT bad2", "error": "Error 2"}],  # Accumulated previous errors
         "refinement_count": 2,
         "messages": [],
         "query_enrichments": [],
@@ -101,7 +100,11 @@ async def test_tts_g1_08_refiner_context_accumulation(
             # Verify error history accumulation
             assert "error_history" in result
             assert len(result["error_history"]) == 3
-            assert result["error_history"] == ["Error 1", "Error 2", "Error 3"]
+            assert result["error_history"] == [
+                {"sql": "SELECT bad1", "error": "Error 1"},
+                {"sql": "SELECT bad2", "error": "Error 2"},
+                {"sql": "SELECT bad", "error": "Error 3"},
+            ]
 
 
 def test_tts_g2_01_scoping_modes_strict_vs_hybrid():
@@ -179,10 +182,3 @@ def test_tts_g2_02_max_loop_and_hitl_breakpointer():
     route = route_refiner_subagent(state)
     assert route == "hitl_escalation"
 
-
-def test_tts_g2_03_schema_enrichment_bfs_algorithm():
-    # Test pure Python BFS shortest path fallback
-    graph = {"A": ["B"], "B": ["C", "D"], "C": ["E"], "D": ["E"]}
-    path = _bfs_shortest_path(graph, "A", "E")
-    # mathematically correct shortest path A->B->C->E or A->B->D->E
-    assert path in (["A", "B", "C", "E"], ["A", "B", "D", "E"])

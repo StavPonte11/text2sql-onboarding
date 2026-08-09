@@ -1,4 +1,5 @@
 import json
+import re
 import asyncio
 import logging
 from langchain_core.runnables.config import RunnableConfig
@@ -21,61 +22,75 @@ def build_refiner_schema_context(state: AgentState) -> str:
     catalog = state.get("jeen_catalog")
     if catalog:
         return catalog
-
-    table_profiles = state.get("table_profiles") or []
-    if table_profiles:
-        runtime_flags = state.get("runtime_flags") or {}
-        max_tables = runtime_flags.get("REFINER_SCHEMA_CONTEXT_TABLES")
-        if max_tables and isinstance(max_tables, int):
-            table_profiles = table_profiles[:max_tables]
-        return json.dumps(table_profiles, indent=2)
-
     return "No schema context available."
+
+
+def parse_jeen_catalog_tables(jeen_catalog: str) -> tuple[dict, list[AgentSQLTable]]:
+    """Parse schema dictionary and AgentSQLTable list from jeen_catalog markdown."""
+    schema: dict = {}
+    tables: list[AgentSQLTable] = []
+    if not jeen_catalog:
+        return schema, tables
+
+    table_pattern = r'^\"?([^\".\s]+)\"?\.\"?([^\".\s]+)\"?\.\"?([^\":\s]+)\"?:?\s*(.*)$'
+    col_pattern = r'^\s*-\s*\"?([^\"]+)\"?\s*\(([^)]+)\):?\s*(.*)$'
+
+    current_tbl = None
+
+    for line in jeen_catalog.splitlines():
+        tbl_match = re.match(table_pattern, line.strip())
+        if tbl_match:
+            cat, sch, tbl, desc = tbl_match.groups()
+            if cat.lower() == "catalog" and tbl.lower() == "table":
+                continue
+                
+            current_tbl = f'"{cat}"."{sch}"."{tbl}"'
+            schema[tbl] = {}
+            schema[current_tbl] = {}
+            
+            tables.append(AgentSQLTable(
+                name=current_tbl,
+                description=desc.strip(),
+                columns={}
+            ))
+            continue
+            
+        if current_tbl:
+            col_match = re.match(col_pattern, line.strip())
+            if col_match:
+                c_name, c_type, c_desc = col_match.groups()
+                schema[current_tbl][c_name] = c_type.lower()
+                schema[current_tbl.split(".")[-1].strip('"')][c_name] = c_type.lower()
+                tables[-1].columns[c_name] = {
+                    "column_type": c_type.lower(),
+                    "description": c_desc.strip(),
+                }
+
+    return schema, tables
 
 
 async def enrich_context_node(state: AgentState, config: RunnableConfig | None = None):
     """Entry point: enriches the query."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     await publish_node_event(thread_id, "enrich_context")
-    execution_path = state.get("execution_path") or []
 
     sql = state.get("sql_query")
-    table_profiles = state.get("table_profiles")
-    if table_profiles and sql:
+    jeen_catalog = state.get("jeen_catalog") or ""
+    if jeen_catalog and sql:
         try:
-            schema = {}
-            tables = []
-            for p in table_profiles:
-                t_name = p.get("table_name", "")
-                if not t_name:
-                    continue
-                columns_schema = {}
-                columns_meta = {}
-                for col in p.get("columns", []):
-                    c_name = col.get("name", "")
-                    sem_type = col.get("semantic_type", "unknown")
-                    columns_schema[c_name] = sem_type
-                    columns_meta[c_name] = {"column_type": sem_type}
-                schema[t_name] = columns_schema
-                tables.append(
-                    AgentSQLTable(
-                        name=t_name,
-                        description=p.get("description", ""),
-                        columns=columns_meta,
+            schema, tables = parse_jeen_catalog_tables(jeen_catalog)
+            if tables:
+                refined_sql, _, enriched = await EnrichmentOrchestrator.enrich_query(
+                    user_request=state.get("user_query"),
+                    initial_sql=sql,
+                    schema=schema,
+                    tables=tables,
+                )
+                if enriched and refined_sql:
+                    logger.info(
+                        "Category Enrichment successfully refined query filters in refiner."
                     )
-                )
-
-            refined_sql, _, enriched = await EnrichmentOrchestrator.enrich_query(
-                user_request=state.get("user_query"),
-                initial_sql=sql,
-                schema=schema,
-                tables=tables,
-            )
-            if enriched and refined_sql:
-                logger.info(
-                    "Category Enrichment successfully refined query filters in refiner."
-                )
-                sql = refined_sql
+                    sql = refined_sql
         except Exception as e:
             logger.error(
                 f"Category Enrichment failed in enrich_context_node: {e}", exc_info=True
@@ -98,9 +113,6 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
 
     prev_node = execution_path[-1] if execution_path else None
 
-    # We no longer short-circuit; we let the LLM execute step 1 or step 2.
-    is_step_1 = prev_node == "enrich_context" or count == 0
-
     trino_error = state.get("trino_error") or ""
     satisfaction_failures = state.get("satisfaction_failures")
 
@@ -109,6 +121,14 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         error_msg = "Satisfaction Check Failed: " + "; ".join(satisfaction_failures)
 
     error_history = state.get("error_history") or []
+    if error_history:
+        history_str = "\n\n# *Recent Failed Attempts:*\n"
+        for idx, err_item in enumerate(error_history[-4:], 1):
+            if isinstance(err_item, dict):
+                history_str += f"{idx}. SQL: {err_item.get('sql', '')}\n   Error: {err_item.get('error', '')}\n"
+            else:
+                history_str += f"{idx}. Error: {err_item}\n"
+        error_msg += history_str
 
     if count >= max_iterations:
         return {
@@ -116,11 +136,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
             "execution_path": ["agent"],
         }
 
-    prompt_key = (
-        settings.LANGFUSE_PROMPT_REFINER_STEP1
-        if is_step_1
-        else settings.LANGFUSE_PROMPT_REFINER_STEP2
-    )
+    prompt_key = settings.LANGFUSE_PROMPT_REFINER_STEP2
     try:
         langfuse_prompt = langfuse_client.get_prompt(prompt_key)
         prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
@@ -154,7 +170,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     if langfuse_client and langfuse_client.get_current_trace_id():
         langfuse_client._create_trace_tags_via_ingestion(
             trace_id=langfuse_client.get_current_trace_id(),
-            tags=["schema_context_injected=True", f"step={'1' if is_step_1 else '2'}"],
+            tags=["schema_context_injected=True", "step=refiner"],
         )
 
     # Prepare variables matching the new human prompts
@@ -211,18 +227,12 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
     locations_dict = state.get("locations_dict")
     if locations_dict and "coords" in locations_dict:
         for placeholder, wkt_str in locations_dict["coords"].items():
-            # The prompt instructs the LLM to use @<placeholder>@
-            sql = re.sub(r"@" + re.escape(placeholder) + r"@", f"'{wkt_str}'", sql)
+            # Strip any existing quotes on wkt_str so we always produce standard 'POLYGON (...)'
+            clean_wkt = wkt_str.strip("'")
+            sql = re.sub(r"['\"]?@" + re.escape(placeholder) + r"@['\"]?", f"'{clean_wkt}'", sql)
 
-    # 2. Short Table Names -> Fully Qualified Names
+    # 2. Short Table Names -> Fully Qualified Names (derived from jeen_catalog)
     table_mappings: dict[str, str] = {}
-    table_profiles = state.get("table_profiles") or []
-    for p in table_profiles:
-        s_name = p.get("table_name")
-        f_name = p.get("full_name")
-        if s_name and f_name:
-            table_mappings[s_name.strip('"')] = f_name
-
     jeen_catalog = state.get("jeen_catalog") or ""
     if jeen_catalog:
         pattern = r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"'
@@ -231,25 +241,56 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
                 full_name = f'"{cat}"."{sch}"."{tbl}"'
                 table_mappings[tbl] = full_name
 
-    for short, full in table_mappings.items():
-        match = re.match(r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"', full)
-        if match:
-            cat, sch, tbl = match.groups()
-            sql = re.sub(rf'(?<![\.\w\"])\"{re.escape(sch)}\"\.\"{re.escape(tbl)}\"', full, sql)
-            sql = re.sub(rf'(?<![\.\w\"]){re.escape(sch)}\.{re.escape(tbl)}(?![\.\w\"])', full, sql)
-        sql = re.sub(rf'(?<![\.\w])\"{re.escape(short)}\"(?![\.\w])', full, sql)
-        sql = re.sub(rf'(?<![\.\w\"]){re.escape(short)}(?![\.\w\"])', full, sql)
+    if table_mappings:
+        try:
+            import sqlglot
+            from sqlglot import exp
+            
+            ast = sqlglot.parse_one(sql, dialect="trino")
+            
+            cte_names = set()
+            for cte in ast.find_all(exp.CTE):
+                cte_names.add(cte.alias)
+                
+            for table in ast.find_all(exp.Table):
+                short_name = table.name
+                if short_name in cte_names:
+                    continue
+                    
+                # Check for table name match
+                full_name_sql = None
+                
+                # We need to handle when the LLM writes `schema.table` or `table`
+                if short_name in table_mappings:
+                    full_name_sql = table_mappings[short_name]
+                elif table.db and table.name:
+                    # sometimes sqlglot parses schema.table as table.db = schema, table.name = table
+                    # check if the table name is in mappings
+                    if short_name in table_mappings:
+                         full_name_sql = table_mappings[short_name]
+
+                if full_name_sql:
+                    match = re.match(r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"', full_name_sql)
+                    if match:
+                        cat, sch, tbl = match.groups()
+                        table.set("catalog", exp.Identifier(this=cat, quoted=True))
+                        table.set("db", exp.Identifier(this=sch, quoted=True))
+                        table.set("this", exp.Identifier(this=tbl, quoted=True))
+                        
+            sql = ast.sql(dialect="trino")
+        except Exception as e:
+            logger.warning(f"Failed to qualify table names with sqlglot: {e}")
 
     try:
         result = await asyncio.to_thread(execute_query_sync, sql)
         success = result.success
         trino_error = result.error_message or "Unknown Trino error"
         if not success:
-            error_history.append(trino_error)
+            error_history.append({"sql": sql, "error": trino_error})
     except Exception as e:
         success = False
         trino_error = str(e)
-        error_history.append(trino_error)
+        error_history.append({"sql": sql, "error": trino_error})
         result = None
 
     if not success:
@@ -305,7 +346,7 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             "last_result_row_count": len(inline_result_rows)
             if inline_result_rows
             else 0,
-            "last_result_data": str([inline_result_columns] + inline_result_rows[:5])
+            "last_result_data": str([inline_result_columns] + inline_result_rows[:15])
             if inline_result_rows
             else "[]",
         }

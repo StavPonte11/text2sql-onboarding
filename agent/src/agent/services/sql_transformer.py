@@ -33,8 +33,9 @@ class SQLTransformer:
             The modified SQL query string.
         """
         try:
+            from agent.utils.sql import replace_unquoted_char
             # 1. Trino catalog workaround: replace '@' in table references with '$'
-            sql_processed: str = sql.replace("@", "$")
+            sql_processed: str = replace_unquoted_char(sql, "@", "$")
             
             # 2. Parse SQL using Trino dialect
             expression: exp.Expression = sqlglot.parse_one(sql_processed, dialect="trino")
@@ -221,8 +222,8 @@ class SQLTransformer:
             # Generate SQL string back using Trino dialect
             refined_sql: str = modified_ast.sql(dialect="trino")
             
-            # Revert $ to @
-            refined_sql_final: str = refined_sql.replace("$", "@")
+            # 4. Revert Trino catalog workaround using the safe unquoted replacement
+            refined_sql_final: str = replace_unquoted_char(refined_sql, "$", "@")
             return refined_sql_final
             
         except Exception as e:

@@ -24,13 +24,8 @@ def mock_filters():
     ]
 
 
-def get_test_profiles():
-    return [
-        {
-            "table_name": "products",
-            "columns": [{"name": "category", "semantic_type": "large_category"}],
-        }
-    ]
+def get_test_catalog():
+    return '"postgres"."public"."products": Products table\n  - "category" (large_category): Product category'
 
 
 def get_mock_langfuse_prompt():
@@ -92,7 +87,7 @@ async def test_enrich_success_legit(
     state = AgentState(
         user_query="get all fruits",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -125,7 +120,7 @@ async def test_enrich_no_filters_extracted(mock_extract):
     state = AgentState(
         user_query="get all products",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -151,7 +146,7 @@ async def test_enrich_no_candidates(mock_extract, mock_search):
     state = AgentState(
         user_query="get nonexistent",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -190,7 +185,7 @@ async def test_enrich_llm_failure_graceful_degradation(
     state = AgentState(
         user_query="get fruit",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -206,17 +201,16 @@ async def test_enrich_llm_failure_graceful_degradation(
 
 @pytest.mark.asyncio
 @patch("agent.services.enrichment_orchestrator.FilterExtractor.extract")
-async def test_enrich_missing_table_profiles(mock_extract):
+async def test_enrich_missing_jeen_catalog(mock_extract):
     """
-    STATE EDGE-CASE: If the LLM previously failed to gather table profiles
-    (or state is corrupted), the node should detect the missing dependencies
-    and instantly bypass enrichment without crashing.
+    STATE EDGE-CASE: If jeen_catalog is missing or empty, the node should
+    instantly bypass enrichment without crashing.
     """
     original_sql = "SELECT * FROM products WHERE category = 'fruit'"
     state = AgentState(
         user_query="get fruit",
         sql_query=original_sql,
-        table_profiles=[],  # EMPTY PROFILES!
+        jeen_catalog="",  # EMPTY CATALOG!
         execution_path=[],
     )
 
@@ -269,7 +263,7 @@ async def test_enrich_llm_decides_no_change(
     state = AgentState(
         user_query="get fruit",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -337,7 +331,7 @@ async def test_enrich_fallback_json_parsing(
     state = AgentState(
         user_query="get fruit",
         sql_query="SELECT * FROM products WHERE category = 'fruit'",
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 
@@ -363,7 +357,7 @@ async def test_enrich_unhandled_exception_survival(mock_extract):
     state = AgentState(
         user_query="get fruit",
         sql_query=original_sql,
-        table_profiles=get_test_profiles(),
+        jeen_catalog=get_test_catalog(),
         execution_path=[],
     )
 

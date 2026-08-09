@@ -29,7 +29,7 @@ class AgentState(TypedDict):
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None
     inline_result_columns: list[str] | None
-    error_history: list[str] | None
+    error_history: list[dict[str, str]] | None
     schema_explorer_retry_count: int | None
     # G2-01: table scoping
     scoping_mode: Literal["strict", "hybrid"] | None  # controlled via config / runtime_flags

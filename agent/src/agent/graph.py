@@ -174,8 +174,9 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
         response = chain.invoke({"feedback": feedback})
         route = response.route
     except Exception as e:
-        logger.error(f"Structured output parsing failed: {e}")
-        raise RuntimeError(f"Rejection router failed to parse structured output: {e}")
+        logger.warning(f"Rejection router structured output failed: {e}. Falling back to query_builder.")
+        # Graceful degradation instead of raising RuntimeError
+        route = "query_builder"
     return {
         "feedback_route": route,
         "raw_data_ref": None,
