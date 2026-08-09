@@ -426,7 +426,7 @@ const AgentChatInput = ({
         placeholder="Ask the agent to query a table..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onPressEnter={(e) => {
+        onPressEnter={() => {
           if (!disabled && !submitDisabled) onSubmit();
         }}
         disabled={disabled}

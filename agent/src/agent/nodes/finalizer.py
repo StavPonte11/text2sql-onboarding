@@ -12,8 +12,8 @@ from agent.utils.esca import get_esca_client
 from agent.utils.esca import get_esca_client
 
 
-async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
-    """Load data from Esca and return a preview of the columns and the first few rows."""
+async def get_esca_preview(esca_id: str, limit: int | None = None) -> str:
+    """Load data from Esca and return a preview of the columns and the rows."""
     if not esca_id:
         return "No data reference found."
 
@@ -27,8 +27,8 @@ async def get_esca_preview(esca_id: str, limit: int = 5) -> str:
             rows = data.get("rows", [])
             total_rows = len(rows)
 
-            # Take a slice of the rows to avoid context overload
-            preview_rows = rows[:limit]
+            # Take a slice of the rows to avoid context overload if limit is provided
+            preview_rows = rows[:limit] if limit is not None else rows
 
             preview_info = {
                 "columns": columns,
@@ -71,11 +71,13 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
 
     esca_write_enabled = str(runtime_flags.get("ESCA_WRITE_ENABLED", settings.ESCA_WRITE_ENABLED)).lower() == "true"
     
+    raw_limit = runtime_flags.get("PREVIEW_ROWS_COUNT", settings.PREVIEW_ROWS_COUNT)
+    limit = int(raw_limit) if raw_limit is not None else None
+    
     preview_str = ""
     if not esca_write_enabled:
         if inline_result_rows is not None:
-            limit = 5
-            preview_rows = inline_result_rows[:limit]
+            preview_rows = inline_result_rows[:limit] if limit is not None else inline_result_rows
             columns = (
                 list(preview_rows[0].keys())
                 if preview_rows and isinstance(preview_rows[0], dict)
@@ -91,7 +93,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
         else:
             preview_str = "No data reference found."
     else:
-        preview_str = await get_esca_preview(raw_data_ref)
+        preview_str = await get_esca_preview(raw_data_ref, limit=limit)
 
     langfuse_prompt_summary = langfuse_client.get_prompt(
         settings.LANGFUSE_PROMPT_FINALIZER_SUMMARY
