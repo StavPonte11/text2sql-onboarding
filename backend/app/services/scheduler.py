@@ -59,7 +59,11 @@ def _run_scheduled_evaluation(schedule_id: str):
                 logger.info(f"[Scheduler] Skipping {table_id} — no questions")
                 continue
 
-            run = EvalRun(table_id=table_id, triggered_by="scheduler")
+            run = EvalRun(
+                table_id=table_id,
+                total_questions=len(questions),
+                triggered_by="scheduler",
+            )
             session.add(run)
             session.commit()
             session.refresh(run)

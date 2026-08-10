@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CopyOutlined, CheckOutlined } from '@ant-design/icons';
+import { CheckOutlined, CopyOutlined } from '@ant-design/icons';
 
 interface JsonTreeViewProps {
   label: 'INPUT' | 'OUTPUT';
@@ -13,15 +13,15 @@ const RenderNode: React.FC<{ data: any; depth?: number }> = ({ data, depth = 0 }
   if (!isObject) {
     return <span>{String(data)}</span>;
   }
-  const entries = Array.isArray(data)
-    ? data.map((v, i) => [i, v])
-    : Object.entries(data);
+  const entries = Array.isArray(data) ? data.map((v, i) => [i, v]) : Object.entries(data);
   return (
     <ul style={{ listStyle: 'none', margin: 0, paddingLeft: depth * 12 }}>
       {entries.map(([key, value]) => (
         <li key={key} style={{ marginBottom: 4 }}>
           <details open={depth < 1} style={{ cursor: 'pointer' }}>
-            <summary style={{ fontWeight: depth === 0 ? '600' : '400' }}>{Array.isArray(data) ? `[${key}]` : key}:</summary>
+            <summary style={{ fontWeight: depth === 0 ? '600' : '400' }}>
+              {Array.isArray(data) ? `[${key}]` : key}:
+            </summary>
             <RenderNode data={value} depth={depth + 1} />
           </details>
         </li>
@@ -58,8 +58,17 @@ export default function JsonTreeView({ label, content, themeColor }: JsonTreeVie
 
   return (
     <div style={{ position: 'relative' }} className="json-block-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1px', color: themeColor }}>{label}</span>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 6,
+        }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1px', color: themeColor }}>
+          {label}
+        </span>
         <button
           onClick={handleCopy}
           style={{

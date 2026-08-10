@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
+    AGENT_READ_TIMEOUT_SECONDS: float = 900.0
+    AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     OPENMETADATA_TOKEN: str = ""
 
@@ -117,6 +119,8 @@ class Settings(BaseSettings):
 
     FLAG_CACHE_TTL: int = 30
     MODE_CACHE_TTL: int = 30
+
+    EVAL_THRESHOLD: float = 0.5
 
 
 settings = Settings()

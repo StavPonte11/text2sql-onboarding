@@ -158,6 +158,11 @@ export const orchestrationApi = {
       .post<EvalRunFull[]>('/evaluations/run', table_ids, { params: { triggered_by } })
       .then((r) => r.data),
 
+  triggerDatasetRun: (dataset_name: string) =>
+    api
+      .post<EvalRunFull>('/evaluations/run-dataset', null, { params: { dataset_name } })
+      .then((r) => r.data),
+
   listRuns: (params?: { limit?: number; offset?: number; status?: string; table_id?: string }) =>
     api.get<EvalRunFull[]>('/evaluations/runs', { params }).then((r) => r.data),
 

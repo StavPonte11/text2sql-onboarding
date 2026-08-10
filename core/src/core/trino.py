@@ -23,8 +23,15 @@ class TrinoExecutionResult(BaseModel):
     error_message: str | None = None
 
 
-def get_trino_connection():
-    """Create a real Trino DBAPI connection from settings."""
+def get_trino_connection(catalog: str | None = None, schema: str | None = None):
+    """Create a real Trino DBAPI connection from settings.
+
+    Args:
+        catalog: Override the default catalog (settings.TRINO_CATALOG).
+                 Pass a table's specific catalog to run queries in the right context
+                 (e.g. Spider2 Snowflake catalogs instead of the default 'minio').
+        schema:  Override the default schema (settings.TRINO_SCHEMA).
+    """
     auth = None
     if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
         auth = trino.auth.CertificateAuthentication(
@@ -39,8 +46,8 @@ def get_trino_connection():
         host=settings.TRINO_HOST,
         port=settings.TRINO_PORT,
         user=settings.TRINO_USER,
-        catalog=settings.TRINO_CATALOG,
-        schema=settings.TRINO_SCHEMA,
+        catalog=catalog or settings.TRINO_CATALOG,
+        schema=schema or settings.TRINO_SCHEMA,
         http_scheme=settings.TRINO_HTTP_SCHEME,
         auth=auth,
         request_timeout=settings.TRINO_REQUEST_TIMEOUT,
@@ -48,7 +55,13 @@ def get_trino_connection():
     )
 
 
-def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list | None = None) -> TrinoExecutionResult:
+def execute_query_sync(
+    sql: str,
+    table_id: str = "",
+    params: tuple | dict | list | None = None,
+    catalog: str | None = None,
+    schema: str | None = None,
+) -> TrinoExecutionResult:
     """
     Execute a SQL query against the real Trino cluster.
     """
@@ -67,7 +80,7 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
     conn = None
     cur = None
     try:
-        conn = get_trino_connection()
+        conn = get_trino_connection(catalog=catalog, schema=schema)
         cur = conn.cursor()
         if params is not None:
             cur.execute(sql, params)

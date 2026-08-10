@@ -15,6 +15,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
     enabled: !!runId,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 4000 : false),
   });
 
   const isRegressionRun = report?.triggered_by === 'promotion-regression';
@@ -57,13 +58,29 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
               {[
                 {
                   label: 'Score',
-                  value: `${Math.round(report.overall_score * 100)}%`,
-                  color: report.overall_score >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? 'Evaluating…'
+                      : `${Math.round(report.overall_score * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.overall_score >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
                 {
                   label: 'Pass Rate',
-                  value: `${Math.round(report.pass_rate * 100)}%`,
-                  color: report.pass_rate >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? 'Calculating…'
+                      : `${Math.round(report.pass_rate * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.pass_rate >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
                 { label: 'Questions', value: report.total_questions, color: 'var(--text-primary)' },
                 {
@@ -83,12 +100,30 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
             {/* Publishable status */}
             <div
-              className={`publishable-status ${report.is_publishable ? 'publishable-status--ready' : 'publishable-status--not-ready'}`}
+              className={`publishable-status ${
+                report.status === 'running'
+                  ? 'publishable-status--running'
+                  : report.is_publishable
+                    ? 'publishable-status--ready'
+                    : 'publishable-status--not-ready'
+              }`}
             >
-              <span>{report.is_publishable ? <Check size={14} /> : <X size={14} />}</span>
-              {report.is_publishable
-                ? 'Ready to publish (score ≥ 50%)'
-                : 'Not publishable — score below 50%'}
+              <span>
+                {report.status === 'running' ? (
+                  <Spinner size={14} color="#f59e0b" />
+                ) : report.is_publishable ? (
+                  <Check size={14} />
+                ) : (
+                  <X size={14} />
+                )}
+              </span>
+              {report.status === 'running'
+                ? 'Evaluation running — publishability pending evaluation completion'
+                : report.status === 'failed'
+                  ? 'Not publishable — evaluation run failed'
+                  : report.is_publishable
+                    ? 'Ready to publish (score ≥ 50%)'
+                    : 'Not publishable — score below 50%'}
             </div>
 
             {/* Regression */}
@@ -158,18 +193,43 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       <div key={q.question_id} className="question-item">
                         <div
                           className="question-item__dot"
-                          style={{ background: q.status === 'pass' ? '#10b981' : '#ef4444' }}
+                          style={{
+                            background:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.status === 'pass'
+                                  ? '#10b981'
+                                  : '#ef4444',
+                            opacity: q.status === 'pending' ? 0.7 : 1,
+                            animation:
+                              q.status === 'pending' ? 'pulse 1.4s ease-in-out infinite' : 'none',
+                          }}
                         />
                         <div className="question-item__id" title={q.question ?? q.question_id}>
                           {(q.question ?? q.question_id).slice(0, 16)}…
                         </div>
                         <div
                           className="question-item__score"
-                          style={{ color: q.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                          style={{
+                            color:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.score >= 0.5
+                                  ? '#10b981'
+                                  : '#ef4444',
+                          }}
                         >
-                          {q.score >= 0.5 ? 100 : 0}%
+                          {q.status === 'pending' ? '—' : q.score >= 0.5 ? '100%' : '0%'}
                         </div>
-                        {q.failure_type && (
+                        {q.status === 'pending' && (
+                          <span
+                            className="question-item__failure-type"
+                            style={{ color: '#f59e0b' }}
+                          >
+                            evaluating…
+                          </span>
+                        )}
+                        {q.status !== 'pending' && q.failure_type && (
                           <span className="question-item__failure-type">{q.failure_type}</span>
                         )}
                       </div>
@@ -312,9 +372,15 @@ interface RunHistoryTableProps {
   tableId?: string;
   limit?: number;
   compact?: boolean;
+  excludeTableIds?: Set<string>;
 }
 
-export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHistoryTableProps) {
+export function RunHistoryTable({
+  tableId,
+  limit = 50,
+  compact = false,
+  excludeTableIds,
+}: RunHistoryTableProps) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = compact ? 5 : 10;
@@ -327,11 +393,19 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
   } = useQuery({
     queryKey: ['eval-runs', tableId, limit],
     queryFn: () => orchestrationApi.listRuns({ limit, table_id: tableId }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) => {
+      const data = query.state.data as typeof runs;
+      const hasRunning = data?.some((r) => r.status === 'running');
+      return hasRunning ? 5_000 : 15_000;
+    },
   });
 
-  const paged = runs.slice(page * pageSize, (page + 1) * pageSize);
-  const totalPages = Math.ceil(runs.length / pageSize);
+  const visibleRuns = excludeTableIds?.size
+    ? runs.filter((r) => !r.table_id || !excludeTableIds.has(r.table_id))
+    : runs;
+
+  const paged = visibleRuns.slice(page * pageSize, (page + 1) * pageSize);
+  const totalPages = Math.ceil(visibleRuns.length / pageSize);
 
   if (isLoading)
     return (
@@ -381,7 +455,9 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
               <tr key={run.id} onClick={() => setSelectedRunId(run.id)} className="run-history-row">
                 {!compact && (
                   <td>
-                    <code className="run-id-text">{run.id.slice(0, 8)}…</code>
+                    <code className="run-id-text" title={run.id}>
+                      {run.id.slice(0, 8)}…
+                    </code>
                   </td>
                 )}
                 {!tableId && (
@@ -390,23 +466,42 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                       <Link
                         to={`/tables/${run.table_id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="table-link hover:underline"
+                        className="table-link hover:underline run-table-name"
+                        title={run.table_name || run.table_id}
                       >
                         {run.table_name || run.table_id.slice(0, 8)}
                       </Link>
                     ) : (
-                      <span className="table-link">{run.table_name}</span>
+                      <span className="table-link run-table-name" title={run.table_name}>
+                        {run.table_name}
+                      </span>
                     )}
                   </td>
                 )}
                 <td>
                   <div className="score-cell-content">
-                    <span
-                      className="score-text"
-                      style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
-                    >
-                      {Math.round(run.score * 100)}%
-                    </span>
+                    {run.status === 'running' ? (
+                      <span
+                        className="score-text score-text--running"
+                        style={{
+                          color: '#f59e0b',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontSize: 12,
+                        }}
+                      >
+                        <Spinner size={12} color="#f59e0b" />
+                        Evaluating…
+                      </span>
+                    ) : (
+                      <span
+                        className="score-text"
+                        style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                      >
+                        {Math.round(run.score * 100)}%
+                      </span>
+                    )}
                     {run.regression_detected && (
                       <span title="Regression detected">
                         <AlertTriangle size={12} style={{ color: '#ef4444' }} />
@@ -415,7 +510,11 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                   </div>
                 </td>
                 <td className="pass-rate-cell">
-                  <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  {run.status === 'running' ? (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
+                  ) : (
+                    <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  )}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>
@@ -423,7 +522,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                 </td>
                 <td>
                   <span
-                    className={`triggered-by-text${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    className={`triggered-by-text run-triggered-by ${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    title={run.triggered_by}
                   >
                     {run.triggered_by}
                   </span>
@@ -441,8 +541,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
       {totalPages > 1 && (
         <div className="run-history-pagination">
           <span className="pagination-info">
-            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, runs.length)} of{' '}
-            {runs.length} runs
+            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, visibleRuns.length)} of{' '}
+            {visibleRuns.length} runs
           </span>
           <div className="pagination-btns">
             <button

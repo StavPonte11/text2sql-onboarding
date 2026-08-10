@@ -1,5 +1,4 @@
 import json
-
 import asyncio
 import logging
 from langchain_core.runnables.config import RunnableConfig
@@ -12,6 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
 from agent.utils.sql import clean_sql
 from agent.utils.esca import get_esca_client
+from agent.utils.serialization import json_serial
+import datetime
 
 llm = get_llm("refiner")
 
@@ -80,6 +81,7 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             raise RuntimeError(
                 f"Langfuse prompt '{settings.LANGFUSE_PROMPT_REFINER}' could not be retrieved."
             )
+
         prompt = ChatPromptTemplate.from_messages(
             langfuse_prompt.get_langchain_prompt()
         )
@@ -94,15 +96,16 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
                 tags=["schema_context_injected=True"],
             )
 
-        response = await chain.ainvoke(
+        llm_response = await chain.ainvoke(
             {
                 "sql": sql,
                 "error": trino_error,
                 "schema_context": schema_context,
                 "error_history": json.dumps(error_history),
+                "user_query": state.get("user_query", ""),
             }
         )
-        new_sql = clean_sql(response.content)
+        new_sql = clean_sql(llm_response.content)
         return {
             "sql_query": new_sql,
             "trino_error": trino_error,
@@ -121,22 +124,24 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
 
         esca_write_enabled = str(runtime_flags.get("ESCA_WRITE_ENABLED", settings.ESCA_WRITE_ENABLED)).lower() == "true"
         
+
         if esca_write_enabled:
             try:
                 payload_data = {"columns": result.columns, "rows": result.rows}
-                payload = json.dumps(payload_data, default=str).encode()
+                payload = json.dumps(payload_data, default=json_serial).encode()
                 async with get_esca_client() as client:
                     res = await client.save_data(payload)
                     raw_ref = res.get("esca_id")
             except Exception as e:
                 esca_write_failed = True
+                error_msg = f"ESCA write failed: {e}"
                 if langfuse_client and langfuse_client.get_current_trace_id():
                     langfuse_client.update_current_span(
-                        level="ERROR", status_message=f"ESCA write failed: {e}"
+                        level="WARNING", status_message=error_msg
                     )
-                else:
-                    logging.error(f"ESCA write failed: {e}")
-                raise RuntimeError(f"Failed to write query result to ESCA: {e}")
+                logging.warning(error_msg)
+                # ESCA is an optional output store — do not crash the agent.
+                # The query result is still available as inline_result_rows/columns.
 
         return {
             "trino_error": None,
@@ -148,3 +153,37 @@ async def refiner_node(state: AgentState, config: RunnableConfig | None = None):
             "error_history": error_history,
             "execution_path": execution_path + ["refiner"],
         }
+
+def build_refiner_schema_context(state: AgentState) -> str:
+    """Build a token-capped schema context for the refiner.
+
+    Trims the table_profiles blob so repeated LLM calls in the retry loop
+    don't blow up the context window or token budget:
+      • Limits tables to REFINER_SCHEMA_CONTEXT_TABLES (default 4).
+      • Strips sample_values from every column — they're useful for query
+        planning but add noise when fixing a syntax/schema error.
+      • Uses compact JSON (no indent) to reduce token count further.
+
+    Falls back to the raw schema_plan string when table_profiles is absent.
+    """
+    table_profiles = state.get("table_profiles")
+    if table_profiles:
+        max_tables = settings.REFINER_SCHEMA_CONTEXT_TABLES
+        capped = table_profiles[:max_tables]
+
+        trimmed = []
+        for profile in capped:
+            slim_cols = [
+                {k: v for k, v in col.items() if k != "sample_values"}
+                for col in profile.get("columns", [])
+            ]
+            trimmed.append({**profile, "columns": slim_cols})
+
+        return json.dumps(trimmed, ensure_ascii=False)
+
+    schema_plan = state.get("schema_plan")
+    if schema_plan:
+        # Fallback: flat schema/plan string used by the composer
+        return schema_plan
+
+    return "No schema context available."

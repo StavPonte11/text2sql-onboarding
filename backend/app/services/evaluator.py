@@ -120,8 +120,14 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         Returns:
             dict with keys: response (generated SQL), question_id, expected_sql
         """
-        trace_id = _lf_client.client.get_current_trace_id() if _lf_client.client else None
-        observation_id = _lf_client.client.get_current_observation_id() if _lf_client.client else None
+        trace_id = (
+            _lf_client.client.get_current_trace_id() if _lf_client.client else None
+        )
+        observation_id = (
+            _lf_client.client.get_current_observation_id()
+            if _lf_client.client
+            else None
+        )
 
         q_id = item.metadata.get("question_id")
         question_obj = self.session.get(GoldenQuestion, q_id)
@@ -143,12 +149,12 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         )
 
         if _lf_client.client and trace_id:
-            _lf_client.client.trace(id=trace_id,
-            input={
-                "query": question_obj.question,
-                "databases": [question_obj.table_id],
-            },
-        )
+            _lf_client.client.set_current_trace_io(
+                input={
+                    "query": question_obj.question,
+                    "databases": [question_obj.table_id],
+                },
+            )
 
         # ── STUB: call TextToSQL MCP tool ──────────────────────────────────────
         # MERGE: replace with real call:
@@ -160,7 +166,7 @@ class TextToSQLEvaluator(BaseLangfuseEvaluator):
         generated_sql = f"SELECT * FROM {question_obj.table_id} LIMIT 100"  # STUB
 
         if _lf_client.client and trace_id:
-            _lf_client.client.trace(id=trace_id,output={"response": generated_sql})
+            _lf_client.client.set_current_trace_io(output={"response": generated_sql})
 
         # Persist EvalResult (score will be updated by evaluators after task returns)
         result_db = EvalResult(

@@ -18,9 +18,6 @@ Auth: all write operations require X-Admin-Email header pointing to
 
 import logging
 
-from app.config import settings
-from app.services.auth import require_admin
-from app.services.flag_service import FlagService
 from core.db.engine import get_session
 from core.models.models import (
     ExecutionModeRead,
@@ -31,6 +28,9 @@ from core.models.models import (
 )
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlmodel import Session
+
+from app.services.auth import require_admin
+from app.services.flag_service import FlagService
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,9 @@ def reset_flag(
     Reset a flag to its env-var default by clearing the DB override value.
     Writes an audit record with new_value=null to mark the reset event.
     """
-    logger.info("Admin '%s' resetting flag '%s' to env default", current_admin.email, name)
+    logger.info(
+        "Admin '%s' resetting flag '%s' to env default", current_admin.email, name
+    )
     svc.delete(name, actor=current_admin.email)
 
 
@@ -140,7 +142,10 @@ def get_modes_map(svc: FlagService = Depends(get_flag_service)):
     No admin auth required.
     """
     modes = svc.list_modes()
-    return [{"name": m.name, "description": m.description, "is_active": m.is_active} for m in modes]
+    return [
+        {"name": m.name, "description": m.description, "is_active": m.is_active}
+        for m in modes
+    ]
 
 
 @router.get("/modes/{name}", response_model=ExecutionModeRead)
@@ -151,7 +156,9 @@ def get_mode(
     """Get a single execution mode (flag_overrides included). No admin auth required."""
     mode = svc.get_mode(name)
     if mode is None:
-        raise HTTPException(status_code=404, detail=f"Execution mode '{name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Execution mode '{name}' not found"
+        )
     return mode
 
 

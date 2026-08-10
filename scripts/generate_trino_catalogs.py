@@ -8,6 +8,16 @@ infra/trino/etc/catalog/.
 
 Idempotent: skips databases whose catalog file already exists.
 
+IMPORTANT: Trino (file-based catalog config) only loads .properties files
+from infra/trino/etc/catalog/ at container STARTUP. Running this script
+while Trino is already running will create new files that Trino will NOT
+see until it is restarted. After running this script, always:
+    docker compose restart trino
+(or `docker compose up -d --force-recreate trino`) before running
+sync_om_metadata.py, or newly-added catalogs will silently be invisible
+to OpenMetadata and the app DB, even though the .properties files exist
+on disk.
+
 Usage:
     uv run --with python-dotenv --with snowflake-connector-python scripts/generate_trino_catalogs.py
 
@@ -21,6 +31,9 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 import snowflake.connector
+import json
+from core.spider2 import fetch_spider2_snow_sf_questions
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("generate_trino_catalogs")
@@ -88,6 +101,27 @@ def get_snowflake_databases(account: str, user: str, password: str, role: str, w
         conn.close()
 
 
+def get_question_referenced_db_ids() -> set[str] | None:
+    """
+    Fetch the Spider2-Snow sf_ question set and return the distinct db_id
+    values it references (uppercased, matching Snowflake's SHOW DATABASES
+    casing). Used to skip generating Trino catalogs for databases that will
+    never have a single golden question -- no point ingesting/syncing them
+    at all.
+    """
+
+    try:
+        sf_questions = fetch_spider2_snow_sf_questions()
+    except Exception as exc:
+        logger.warning(
+            "Could not fetch golden-question db_id set from GitHub (%s); "
+            "will not filter target databases by referenced questions.", exc
+        )
+        return None
+
+    return {q["db_id"].upper() for q in sf_questions if q.get("db_id")}
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -110,15 +144,31 @@ def main() -> None:
     extra_deny = {db.strip().upper() for db in deny_env.split(",") if db.strip()}
     deny_list = SYSTEM_DENY | extra_deny
 
-    # Fetch ALL live Snowflake databases
+    # Fetch ALL live Snowflake databases visible to this role/account. If this
+    # number looks low (e.g. you expected ~129 spider2-snow databases but only
+    # see a handful), that's a Snowflake grants problem -- this script can
+    # only ever federate what SHOW DATABASES actually returns for sf_role.
     all_dbs = get_snowflake_databases(sf_account, sf_user, sf_password, sf_role, sf_warehouse)
-    logger.info(f"Snowflake reports {len(all_dbs)} total databases.")
+    logger.info(f"Snowflake reports {len(all_dbs)} total databases visible to role '{sf_role}':")
+    for db in sorted(all_dbs):
+        logger.info(f"    {db}")
 
-    # Filter out system/denied databases — everything else gets a catalog file
-    target_dbs = [db for db in all_dbs if db.upper() not in deny_list]
-    logger.info(f"Will ensure {len(target_dbs)} catalog file(s) exist (excluding {len(deny_list)} denied databases).")
+    referenced_db_ids = get_question_referenced_db_ids()
+    logger.info(f"Golden questions reference {len(referenced_db_ids)} distinct database(s).")
+
+    target_dbs = [
+        db for db in all_dbs
+        if db.upper() not in deny_list and db.upper() in referenced_db_ids
+    ]
+    logger.info(
+        f"Will ensure {len(target_dbs)} catalog file(s) exist "
+        f"(restricted to golden-question databases; excluding {len(deny_list)} denied "
+        f"database(s), and {len([d for d in all_dbs if d.upper() not in deny_list]) - len(target_dbs)} "
+        f"database(s) with zero golden questions)."
+    )
 
     created, skipped = 0, 0
+    created_names, skipped_names = [], []
     for db in sorted(target_dbs):
         catalog_name = sanitize_catalog_name(db)
         props_file = CATALOG_DIR / f"{catalog_name}.properties"
@@ -126,17 +176,36 @@ def main() -> None:
         if props_file.exists():
             logger.info(f"  [SKIP]    {props_file.name}  (already exists)")
             skipped += 1
+            skipped_names.append(catalog_name)
             continue
 
         content = TEMPLATE.format(database=db)
         props_file.write_text(content)
         logger.info(f"  [CREATED] {props_file.name}  → Snowflake DB '{db}'")
         created += 1
+        created_names.append(catalog_name)
 
+    total_files = len(list(CATALOG_DIR.glob('*.properties')))
     logger.info(
         f"\nDone. Created: {created}  Skipped (already existed): {skipped}  "
-        f"Total catalog files: {len(list(CATALOG_DIR.glob('*.properties')))}"
+        f"Total catalog files on disk: {total_files}"
     )
+
+    if created:
+        logger.warning(
+            "\n"
+            "==================================================================\n"
+            f"{created} NEW catalog file(s) were just written to {CATALOG_DIR}/.\n"
+            "Trino only loads catalog .properties files at container STARTUP.\n"
+            "It will NOT see these new catalogs until you restart it:\n"
+            "\n"
+            "    docker compose restart trino\n"
+            "\n"
+            "Do this BEFORE re-running the OpenMetadata ingestion pipeline or\n"
+            "scripts/sync_om_metadata.py, or the new catalogs will silently be\n"
+            "invisible to both and you'll see the same tables/catalogs as before.\n"
+            "=================================================================="
+        )
 
 
 if __name__ == "__main__":

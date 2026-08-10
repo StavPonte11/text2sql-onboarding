@@ -28,6 +28,7 @@ from app.routers import (
     orchestration,
     profiling,
     publish,
+    query,
     questions,
     scopes,
     tables,
@@ -132,6 +133,7 @@ api_router.include_router(health.router)
 api_router.include_router(admin_auth.router)
 api_router.include_router(admin_approval.router)
 api_router.include_router(agent.router)
+api_router.include_router(query.router)
 api_router.include_router(auth_api.router, prefix="/v1/auth", tags=["auth"])
 
 # Private endpoints (SSO protected)

@@ -10,8 +10,10 @@ New endpoints:
   System:      GET /evaluations/system-health
 """
 
+import logging
 from datetime import datetime, timedelta
 
+import requests
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
@@ -29,13 +31,22 @@ from core.models.models import (
     EvaluationScheduleUpdate,
     GoldenQuestion,
     Table,
+    TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse import observe
+from langfuse import observe, propagate_attributes
 from sqlmodel import Session, select
 
-from app.routers.evaluation import execute_single_table_eval
+from app.config import settings
+from app.routers.evaluation import (
+    RunDatasetResponse,
+    _build_questions_payload,
+    _map_and_save_run_metrics,
+    execute_single_table_eval,
+)
 from app.services.langfuse_client import langfuse_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -56,117 +67,130 @@ def _run_full_pipeline(
     table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
 ):
     """Run evaluation for multiple tables (one run per table)."""
-    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(
-            id=langfuse_client.client.get_current_trace_id(),
-            tags=["evaluation_run"],
-            metadata={
-                "table_ids": table_ids,
-                "run_ids": run_ids,
-                "triggered_by": triggered_by,
-            },
-        )
+    with propagate_attributes(
+        tags=["evaluation_run"],
+        metadata={
+            "table_ids": table_ids,
+            "run_ids": run_ids,
+            "triggered_by": triggered_by,
+        },
+    ):
+        for table_id, run_id in zip(table_ids, run_ids, strict=False):
+            with Session(engine) as session:
+                run = session.get(EvalRun, run_id)
+                if not run:
+                    continue
 
-    for table_id, run_id in zip(table_ids, run_ids, strict=False):
-        with Session(engine) as session:
-            run = session.get(EvalRun, run_id)
-            if not run:
-                continue
+                try:
+                    # ── Delegate to shared core logic ───────────────────────────
+                    score = execute_single_table_eval(table_id, run_id, session)
 
-            # ── Delegate to shared core logic ───────────────────────────
-            score = execute_single_table_eval(table_id, run_id, session)
+                    # Fetch updated run state
+                    session.refresh(run)
 
-            # Fetch updated run state
-            session.refresh(run)
+                    # Detect regression vs previous run
+                    prev_runs = session.exec(
+                        select(EvalRun)
+                        .where(
+                            EvalRun.table_id == table_id,
+                            EvalRun.status == EvalStatus.completed,
+                            EvalRun.id != run_id,
+                        )
+                        .order_by(EvalRun.created_at.desc())
+                        .limit(1)
+                    ).first()
 
-            # Detect regression vs previous run
-            prev_runs = session.exec(
-                select(EvalRun)
-                .where(
-                    EvalRun.table_id == table_id,
-                    EvalRun.status == EvalStatus.completed,
-                    EvalRun.id != run_id,
-                )
-                .order_by(EvalRun.created_at.desc())
-                .limit(1)
-            ).first()
+                    regression_detected = False
+                    regression_delta = None
 
-            regression_detected = False
-            regression_delta = None
+                    if prev_runs and prev_runs.score > 0:
+                        delta = prev_runs.score - score
+                        if delta > REGRESSION_BLOCK_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.critical,
+                                f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
+                        elif delta > REGRESSION_WARNING_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.warning,
+                                f"Score warning: {delta:.1%} drop detected",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
 
-            if prev_runs and prev_runs.score > 0:
-                delta = prev_runs.score - score
-                if delta > REGRESSION_BLOCK_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.critical,
-                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
+                    # Low score alert
+                    if score < LOW_SCORE_THRESHOLD:
+                        _create_alert(
+                            session,
+                            run_id,
+                            table_id,
+                            "low_score",
+                            AlertSeverity.warning,
+                            f"Table performance is low ({score:.1%})",
+                        )
+
+                    # Finalize run orchestration fields
+                    run.regression_detected = regression_detected
+                    run.regression_delta = regression_delta
+                    session.add(run)
+
+                    # Persist metrics for analytics
+                    metrics_to_save = [
+                        ("accuracy", score if score is not None else 0.0),
+                    ]
+                    if run.dimension_averages:
+                        for dim_name, dim_val in run.dimension_averages.items():
+                            metrics_to_save.append(
+                                (dim_name, dim_val if dim_val is not None else 0.0)
+                            )
+                    if run.failure_breakdown:
+                        for fail_type, count in run.failure_breakdown.items():
+                            metrics_to_save.append(
+                                (fail_type, float(count) if count is not None else 0.0)
+                            )
+
+                    for metric_name, m_val in metrics_to_save:
+                        metric = EvaluationHistoryMetric(
+                            run_id=run_id, metric_name=metric_name, metric_value=m_val
+                        )
+                        session.add(metric)
+
+                    session.commit()
+                except Exception as e:
+                    logger.error(
+                        f"[Orchestrator] Error evaluating table {table_id} in run {run_id}: {e}",
+                        exc_info=True,
                     )
-                elif delta > REGRESSION_WARNING_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.warning,
-                        f"Score warning: {delta:.1%} drop detected",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
-                    )
-
-            # Low score alert
-            if score < LOW_SCORE_THRESHOLD:
-                _create_alert(
-                    session,
-                    run_id,
-                    table_id,
-                    "low_score",
-                    AlertSeverity.warning,
-                    f"Table performance is low ({score:.1%})",
-                )
-
-            # Finalize run orchestration fields
-            run.regression_detected = regression_detected
-            run.regression_delta = regression_delta
-            session.add(run)
-
-            # Persist metrics for analytics
-            metrics_to_save = [
-                ("accuracy", score if score is not None else 0.0),
-            ]
-            if run.dimension_averages:
-                for dim_name, dim_val in run.dimension_averages.items():
-                    metrics_to_save.append(
-                        (dim_name, dim_val if dim_val is not None else 0.0)
-                    )
-            if run.failure_breakdown:
-                for fail_type, count in run.failure_breakdown.items():
-                    metrics_to_save.append(
-                        (fail_type, float(count) if count is not None else 0.0)
-                    )
-
-            for metric_name, m_val in metrics_to_save:
-                metric = EvaluationHistoryMetric(
-                    run_id=run_id, metric_name=metric_name, metric_value=m_val
-                )
-                session.add(metric)
-
-            session.commit()
+                    try:
+                        session.refresh(run)
+                        run.status = EvalStatus.failed
+                        run.score = 0.0
+                        session.add(run)
+                        session.commit()
+                    except Exception as db_err:
+                        logger.error(
+                            f"[Orchestrator] Failed to mark run {run_id} as failed: {db_err}"
+                        )
 
 
 def _create_alert(
@@ -240,7 +264,14 @@ def trigger_evaluation_run(
     runs = []
     for table_id in table_ids:
         table = session.get(Table, table_id)
-        run = EvalRun(table_id=table_id, triggered_by=triggered_by)
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+        ).all()
+        run = EvalRun(
+            table_id=table_id,
+            total_questions=len(questions),
+            triggered_by=triggered_by,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -261,6 +292,125 @@ def trigger_evaluation_run(
             )
         )
     return read_runs
+
+
+def _run_dataset_pipeline(dataset_name: str, run_id: str):
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return
+
+        try:
+            # Resolve all production table names from the DB to pass as additional_tables
+            if dataset_name == "spider2":
+                prod_tables = session.exec(
+                    select(Table).where(Table.owner_id == "spider2")
+                ).all()
+                table_names = [
+                    f"{t.catalog}.{t.schema_name}.{t.name}" for t in prod_tables
+                ]
+            else:
+                prod_tables = session.exec(
+                    select(Table)
+                    .where(Table.status == TableStatus.production)
+                    .where(Table.owner_id != "spider2")
+                ).all()
+                table_names = [t.name for t in prod_tables]
+
+            req = {
+                "dataset_name": dataset_name,
+                "additional_tables": table_names,
+            }
+            resp = requests.post(
+                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+                json=req,
+                timeout=600,
+            )
+            resp.raise_for_status()
+            eval_resp = RunDatasetResponse(**resp.json())
+
+            _map_and_save_run_metrics(run, eval_resp, session, run_id)
+            session.commit()
+        except Exception as e:
+            logger.error(
+                f"[Eval] Dataset {dataset_name} evaluation failed: {e}",
+                exc_info=True,
+            )
+            try:
+                session.refresh(run)
+                run.status = EvalStatus.failed
+                run.score = 0.0
+                session.add(run)
+                session.commit()
+            except Exception as db_err:
+                logger.error(f"[Eval] Failed to mark run {run_id} as failed: {db_err}")
+
+
+@router.post("/run-dataset", response_model=EvalRunRead, status_code=202)
+def trigger_dataset_run(
+    dataset_name: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Trigger evaluation for a specific dataset (e.g. 'spider2' or 'text2sql_production')."""
+    # 1. Sync production dataset if requested
+    if dataset_name == "text2sql_production":
+        prod_tables = session.exec(
+            select(Table)
+            .where(Table.status == TableStatus.production)
+            .where(Table.owner_id != "spider2")
+        ).all()
+        all_production_questions: list[GoldenQuestion] = []
+        for table in prod_tables:
+            qs = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
+            ).all()
+            all_production_questions.extend(qs)
+
+        all_questions_payload = []
+        for table in prod_tables:
+            qs_for_table = [
+                q for q in all_production_questions if q.table_id == table.id
+            ]
+            all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
+
+        if all_questions_payload:
+            if langfuse_client.enabled:
+                try:
+                    langfuse_client.sync_dataset(
+                        "text2sql_production", all_questions_payload
+                    )
+                except Exception as e:
+                    logger.warning(f"[Eval] Production dataset sync failed: {e}")
+
+    total_q_count = 0
+    if dataset_name == "text2sql_production":
+        total_q_count = len(all_production_questions)
+    elif dataset_name == "spider2":
+        spider2_tables = session.exec(
+            select(Table).where(Table.owner_id == "spider2")
+        ).all()
+        s2_ids = [t.id for t in spider2_tables]
+        if s2_ids:
+            total_q_count = len(
+                session.exec(
+                    select(GoldenQuestion).where(GoldenQuestion.table_id.in_(s2_ids))
+                ).all()
+            )
+
+    # 2. Create the run record
+    run = EvalRun(
+        table_id=None, total_questions=total_q_count, triggered_by=dataset_name
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # 3. Queue the task
+    background_tasks.add_task(_run_dataset_pipeline, dataset_name, run.id)
+    return EvalRunRead.model_validate(
+        run, update={"table_name": f"Dataset: {dataset_name}"}
+    )
 
 
 @router.get("/runs", response_model=list[EvalRunRead])
@@ -286,7 +436,15 @@ def list_runs(
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
-        t_name = table_name if table_name else "All prod tables"
+        t_name = (
+            table_name
+            if table_name
+            else (
+                f"Dataset: {run.triggered_by}"
+                if run.table_id is None
+                else "All prod tables"
+            )
+        )
         read = EvalRunRead.model_validate(run, update={"table_name": t_name})
         runs.append(read)
     return runs
@@ -296,7 +454,7 @@ def list_runs(
 def get_run(run_id: str, session: Session = Depends(get_session)):
     result = session.exec(
         select(EvalRun, Table.name)
-        .join(Table, EvalRun.table_id == Table.id)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(EvalRun.id == run_id)
     ).first()
 
@@ -304,7 +462,15 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     run, table_name = result
-    t_name = table_name if table_name else "All prod tables"
+    t_name = (
+        table_name
+        if table_name
+        else (
+            f"Dataset: {run.triggered_by}"
+            if run.table_id is None
+            else "All prod tables"
+        )
+    )
     return EvalRunRead.model_validate(run, update={"table_name": t_name})
 
 
@@ -323,34 +489,64 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     ).all()
     question_map = {q.id: q.question for q in questions}
 
+    if not results and run.table_id:
+        table_questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
+        ).all()
+        is_running = run.status == EvalStatus.running
+        per_question = [
+            {
+                "question_id": q.id,
+                "question": q.question,
+                "score": None if is_running else 0.0,
+                "status": "pending" if is_running else "fail",
+                "failure_type": None
+                if is_running
+                else (
+                    "evaluation_failed" if run.status == EvalStatus.failed else "failed"
+                ),
+            }
+            for q in table_questions
+        ]
+    else:
+        per_question = [
+            {
+                "question_id": r.question_id,
+                "question": question_map.get(r.question_id, r.question_id),
+                "score": r.score,
+                "status": r.status,
+                "failure_type": r.error_type,
+            }
+            for r in results
+        ]
+
+    failure_breakdown = run.failure_breakdown or (
+        {"evaluation_failed": run.total_questions or len(per_question)}
+        if run.status == EvalStatus.failed
+        else {}
+    )
+
     return {
         "run_id": run_id,
         "table_id": run.table_id,
         "overall_score": run.score,
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
-        "total_questions": run.total_questions,
+        "total_questions": run.total_questions or len(per_question),
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
         "promotion_run_id": run.promotion_run_id,
-        "is_publishable": run.score > 0.00,
+        "is_publishable": run.score >= 0.50
+        if run.status == EvalStatus.completed
+        else False,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
-        "failure_breakdown": run.failure_breakdown or {},
+        "failure_breakdown": failure_breakdown,
         "dimension_averages": run.dimension_averages or {},
         "started_at": run.started_at.isoformat(),
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-        "per_question": [
-            {
-                "question_id": r.question_id,
-                "question": question_map.get(r.question_id),
-                "score": r.score,
-                "status": r.status,
-                "failure_type": r.error_type,
-            }
-            for r in results
-        ],
+        "per_question": per_question,
     }
 
 
