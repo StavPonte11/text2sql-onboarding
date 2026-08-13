@@ -58,6 +58,15 @@ async def run_query(agent, question: str):
         sql_blocks = re.findall(r'```(?:sql)?\n(.*?)\n?```', final_answer, re.DOTALL | re.IGNORECASE)
         final_sql = sql_blocks[-1].strip() if sql_blocks else None
         
+        # Fallback: If missing from final answer, search backward through history
+        if not final_sql:
+            for msg in reversed(messages):
+                if hasattr(msg, "content") and isinstance(msg.content, str):
+                    fallback_blocks = re.findall(r'```(?:sql)?\n(.*?)\n?```', msg.content, re.DOTALL | re.IGNORECASE)
+                    if fallback_blocks:
+                        final_sql = fallback_blocks[-1].strip()
+                        break
+        
         # 2. Strip <thought> blocks and ```sql``` blocks from the final answer so it's just text
         clean_answer = re.sub(r'<thought>.*?</thought>', '', final_answer, flags=re.DOTALL)
         clean_answer = re.sub(r'```(?:sql)?\n.*?\n?```', '', clean_answer, flags=re.DOTALL | re.IGNORECASE)
