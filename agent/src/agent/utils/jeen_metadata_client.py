@@ -275,6 +275,24 @@ class JeenMetadataClient:
             )
             return None
 
+    async def get_column_profile(self, table_name: str, column_name: str) -> dict[str, Any] | None:
+        """
+        Returns the latest stored statistics for a single column: role, null ratio, distinct count, min/max, and example values.
+        """
+        try:
+            profile = await self._call(
+                "get_column_profile",
+                {
+                    "connection_id": self._connection_id,
+                    "table_name": table_name,
+                    "column_name": column_name,
+                },
+            )
+            return profile if isinstance(profile, dict) else None
+        except Exception as exc:
+            logger.error("JeenMetadataClient.get_column_profile failed: %s", exc)
+            return None
+
     # ------------------------------------------------------------------
     # Full table listing (fallback when search returns nothing)
     # ------------------------------------------------------------------
@@ -312,6 +330,45 @@ class JeenMetadataClient:
                 "JeenMetadataClient.list_tables_rich failed: %s", exc, exc_info=True
             )
             return []
+
+    # ------------------------------------------------------------------
+    # MCP Search Tools
+    # ------------------------------------------------------------------
+
+    async def search(self, query: str, limit: int = 10) -> Any:
+        """Search metadata for a connection across tables, columns, etc."""
+        try:
+            return await self._call("search", {"connection_id": self._connection_id, "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search failed: %s", exc)
+            return {"error": str(exc)}
+
+    async def search_business_terms(self, query: str, limit: int = 10) -> Any:
+        """Finds business glossary terms relevant to a question."""
+        try:
+            return await self._call("search_business_terms", {"connection_id": self._connection_id, "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search_business_terms failed: %s", exc)
+            return {"error": str(exc)}
+
+    async def search_knowledge_pairs(self, query: str, limit: int = 10) -> Any:
+        """Finds saved question-and-query examples."""
+        try:
+            return await self._call("search_knowledge_pairs", {"connection_id": self._connection_id, "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search_knowledge_pairs failed: %s", exc)
+            return {"error": str(exc)}
+
+    async def search_column_values(self, query: str, table: str = None, column: str = None, limit: int = 10) -> Any:
+        """Looks up the real values a column contains (large categorical resolver)."""
+        args = {"connection_id": self._connection_id, "query": query, "limit": limit}
+        if table: args["table"] = table
+        if column: args["column"] = column
+        try:
+            return await self._call("search_column_values", args)
+        except Exception as exc:
+            logger.error("search_column_values failed: %s", exc)
+            return {"error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
