@@ -299,7 +299,7 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             "last_result_row_count": len(inline_result_rows)
             if inline_result_rows
             else 0,
-            "last_result_data": str([inline_result_columns] + inline_result_rows[:15])
+            "last_result_data": str([inline_result_columns] + inline_result_rows[:settings.PREVIEW_ROWS_COUNT])
             if inline_result_rows
             else "[]",
         }
