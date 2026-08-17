@@ -15,6 +15,7 @@ mcp = FastMCP("Text2SQL Agent")
 @mcp.tool()
 @observe()
 async def chat_with_agent(
+    connection_id: int,
     query: str | None = None,
     thread_id: str | None = None,
     resume_value: str | dict | None = None,
@@ -139,6 +140,7 @@ async def chat_with_agent(
                 "active_skills": active_skills,
                 "execution_mode": execution_mode,
                 "non_interactive": not hitl_enabled,
+                "connection_id": connection_id,
             },
             config=config,
         )

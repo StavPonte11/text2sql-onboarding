@@ -11,6 +11,7 @@ class AgentSettings(BaseSettings):
     ESCA_API_KEY: str = ""
     ESCA_URL: str = "http://localhost:7010"
     ESCA_WRITE_ENABLED: bool = False
+    PREVIEW_ROWS_COUNT: int | None = None
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "gemma4:e4b"
