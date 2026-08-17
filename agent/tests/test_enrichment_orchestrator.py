@@ -1,3 +1,5 @@
+from agent.config import settings
+d = settings.CACHE_KEY_DELIMITER
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from agent.services.enrichment_models import TransformationPlan, FilterTransformation, AgentSQLTable
@@ -8,7 +10,7 @@ async def test_orchestrator_flow(mocker):
     # Mock HybridSearcher.search to return stubbed candidates
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "order_status#@#active": ["ACTIVE", "COMPLETED"]
+        f"order_status{d}active": ["ACTIVE", "COMPLETED"]
     }
     
     # Mock LLM response plan
@@ -69,6 +71,10 @@ async def test_orchestrator_fast_path_skips_llm(mocker):
     mock_llm_instance = MagicMock()
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm_instance)
     
+    # Mock search to return empty, exercising the fast path
+    mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
+    mock_search.return_value = {}
+    
     schema = {"dataverse.orders": {"order_id": "int"}}
     tables = [
         AgentSQLTable(
@@ -92,12 +98,13 @@ async def test_orchestrator_fast_path_skips_llm(mocker):
     assert plan is None
     # Crucial: prove we saved money by not calling the LLM!
     mock_llm_instance.with_structured_output.assert_not_called()
+    mock_search.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_orchestrator_partial_enrichment(mocker):
     # Mock search to ONLY return results for the category column
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
-    mock_search.return_value = {"region#@#na": ["NORTH_AMERICA"]}
+    mock_search.return_value = {f"region{d}na": ["NORTH_AMERICA"]}
     
     # Plan only changes the region, ignores the amount
     mock_plan = TransformationPlan(
@@ -114,7 +121,7 @@ async def test_orchestrator_partial_enrichment(mocker):
         ]
     )
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     schema = {
@@ -139,11 +146,17 @@ async def test_orchestrator_partial_enrichment(mocker):
 @pytest.mark.asyncio
 async def test_orchestrator_llm_failure_fallback(mocker):
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
-    mock_search.return_value = {"status#@#act": ["ACTIVE"]}
+    mock_search.return_value = {f"status{d}act": ["ACTIVE"]}
     
     # Force the LLM to throw an API Exception!
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(side_effect=Exception("OpenAI API Timeout"))
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(side_effect=Exception("OpenAI API Timeout"))
+    
+    # Configure the raw fallback ainvoke to avoid TypeError
+    mock_response = MagicMock()
+    mock_response.content = "invalid json triggering fallback failure"
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     schema = {"dataverse.orders": {"status": "string"}}
@@ -166,8 +179,8 @@ async def test_orchestrator_double_expansion(mocker):
     # 1. Arrange: Search returns multiple candidates for BOTH columns
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "priority#@#high": ["P1_CRITICAL", "P2_HIGH"],
-        "category#@#network": ["NET_INFRA", "NET_SECURITY"]
+        f"priority{d}high": ["P1_CRITICAL", "P2_HIGH"],
+        f"category{d}network": ["NET_INFRA", "NET_SECURITY"]
     }
     
     # 2. Arrange: LLM maps both draft values to multiple canonical values
@@ -195,7 +208,7 @@ async def test_orchestrator_double_expansion(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
@@ -237,8 +250,8 @@ async def test_orchestrator_partial_llm_rejection(mocker):
     # 1. Arrange: Search returns multiple candidates for BOTH columns
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "department#@#eng": ["ENGINEERING", "DATA_ENG", "PLATFORM_ENG"],
-        "location#@#remote": ["REMOTE_US", "REMOTE_EU"]
+        f"department{d}eng": ["ENGINEERING", "DATA_ENG", "PLATFORM_ENG"],
+        f"location{d}remote": ["REMOTE_US", "REMOTE_EU"]
     }
     
     # 2. Arrange: LLM updates 'department', but REJECTS the 'location' candidates
@@ -266,7 +279,7 @@ async def test_orchestrator_partial_llm_rejection(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
@@ -309,12 +322,12 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
     # 1. Arrange: The massive hybrid search return dictionary
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "region#@#na": ["NORTH_AMERICA"],
-        "region#@#eur": ["EMEA", "EUROPE"],
-        "customer_tier#@#vip_level": ["PLATINUM", "DIAMOND"],
-        "product_category#@#elec": ["ELECTRONICS", "SMART_DEVICES"],
-        "delivery_state#@#late": ["DELAYED", "MISSING"],
-        "shipping_speed#@#fast": ["URGENT", "NEXT_DAY"]
+        f"region{d}na": ["NORTH_AMERICA"],
+        f"region{d}eur": ["EMEA", "EUROPE"],
+        f"customer_tier{d}vip_level": ["PLATINUM", "DIAMOND"],
+        f"product_category{d}elec": ["ELECTRONICS", "SMART_DEVICES"],
+        f"delivery_state{d}late": ["DELAYED", "MISSING"],
+        f"shipping_speed{d}fast": ["URGENT", "NEXT_DAY"]
     }
     
     # 2. Arrange: The LLM Transformation Plan tackling all 6 fuzzy values
@@ -378,7 +391,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Complex Schema and Table Definitions
@@ -458,11 +471,11 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     # 1. Arrange: Mock the search engine with the provided dict
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "car_type#@#italian": ["italian jeep", "italian sports", "italian mini", "italian 4x4"],
-        "place#@#17": [], 
-        "place#@#52": ["st 52", "offices 52", "warehouse521"],
-        "place#@#444": ["store 444"],
-        "manufacturer#@#sonic": ["toyota", "sonic blue", "sonic black"]
+        f"car_type{d}italian": ["italian jeep", "italian sports", "italian mini", "italian 4x4"],
+        f"place{d}17": [], 
+        f"place{d}52": ["st 52", "offices 52", "warehouse521"],
+        f"place{d}444": ["store 444"],
+        f"manufacturer{d}sonic": ["toyota", "sonic blue", "sonic black"]
     }
     
     # 2. Arrange: Mock the LLM's structured output based on the provided plan
@@ -499,12 +512,12 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
     schema = {
-        "dataverse.registered_cars": {
+        "registered_cars": {
             "id": "int",
             "car_type": "string",
             "place": "string",
@@ -513,7 +526,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     }
     tables = [
         AgentSQLTable(
-            name="dataverse.registered_cars", 
+            name="registered_cars", 
             columns={
                 "car_type": {"column_type": "large_category"},
                 "place": {"column_type": "large_category"},

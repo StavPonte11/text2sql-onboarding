@@ -128,41 +128,29 @@ class LocationExtractorAgent(BaseExtractor):
                 langfuse_prompt = langfuse_client.get_prompt(
                     settings.LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION
                 )
-                if langfuse_prompt:
-                    # Depending on prompt type, compile or use format
-                    if hasattr(langfuse_prompt, "compile"):
-                        instruction_text = langfuse_prompt.compile(
-                            locations_dict=locations_dict_str
-                        )
-                    else:
-                        template = ChatPromptTemplate.from_messages(
-                            langfuse_prompt.get_langchain_prompt()
-                        )
-                        instruction_text = template.format(
-                            locations_dict=locations_dict_str
-                        )
-                else:
-                    raise ValueError("Prompt not found")
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: {e}. Using fallback."
-                )
-                import os
-
-                fallback_path = os.path.join(
-                    os.path.dirname(__file__),
-                    "..",
-                    "utils",
-                    "location_wkt_instruction.txt",
-                )
-                if os.path.exists(fallback_path):
-                    with open(fallback_path, "r", encoding="utf-8") as f:
-                        template_text = f.read()
-                    instruction_text = template_text.replace(
-                        "{{locations_dict}}", locations_dict_str
+                if not langfuse_prompt:
+                    raise RuntimeError(f"Langfuse prompt '{settings.LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION}' not found.")
+                
+                # Depending on prompt type, compile or use format
+                prompt_type = getattr(langfuse_prompt, "type", "text")
+                if prompt_type == "chat":
+                    template = ChatPromptTemplate.from_messages(
+                        langfuse_prompt.get_langchain_prompt()
+                    )
+                    instruction_text = template.format(
+                        locations_dict=locations_dict_str
                     )
                 else:
-                    instruction_text = f"Locations available: {locations_dict_str}"
+                    instruction_text = langfuse_prompt.compile(
+                        locations_dict=locations_dict_str
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to fetch LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: {e}"
+                )
+                raise RuntimeError(
+                    f"Could not load location instruction prompt from Langfuse: {e}"
+                ) from e
         else:
             instruction_text = ""
 

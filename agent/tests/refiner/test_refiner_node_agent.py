@@ -208,6 +208,7 @@ async def test_agent_handles_satisfaction_check_failure(
         ],  # Came from Satisfaction Check
         satisfaction_failures=["[CHECK_C] Missing timestamp column"],
         trino_error=None,
+        last_result_row_count=10,
         refinement_count=1,
     )
 
@@ -219,7 +220,7 @@ async def test_agent_handles_satisfaction_check_failure(
     invoke_vars = mock_chain.ainvoke.call_args[0][0]
 
     # The LLM needs to know WHY it failed validation
-    assert invoke_vars["last_result_success"] == "True"  # Trino technically succeeded
+    assert invoke_vars["last_result_success"] == "False"  # Trino succeeded but satisfaction failed
     assert (
         "Satisfaction Check Failed: [CHECK_C] Missing timestamp column"
         in invoke_vars["last_result_error"]

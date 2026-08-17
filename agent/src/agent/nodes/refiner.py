@@ -141,14 +141,8 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         langfuse_prompt = langfuse_client.get_prompt(prompt_key)
         prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
     except Exception as e:
-        logger.warning(f"Could not fetch prompt '{prompt_key}' from Langfuse: {e}. Trying base refiner prompt.")
-        fallback_key = settings.LANGFUSE_PROMPT_REFINER
-        try:
-            langfuse_prompt = langfuse_client.get_prompt(fallback_key)
-            prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
-        except Exception as e2:
-            logger.error(f"Failed to load any refiner prompt from Langfuse: {e2}")
-            raise RuntimeError(f"Could not load refiner prompts from Langfuse: {e2}") from e2
+        logger.error(f"Failed to load refiner prompt '{prompt_key}' from Langfuse: {e}")
+        raise RuntimeError(f"Could not load refiner prompt '{prompt_key}' from Langfuse: {e}") from e
 
     _llm = get_llm("refiner", runtime_flags=runtime_flags)
     chain = prompt | _llm
@@ -168,12 +162,16 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         )
 
     if langfuse_client and langfuse_client.get_current_trace_id():
-        langfuse_client._create_trace_tags_via_ingestion(
-            trace_id=langfuse_client.get_current_trace_id(),
-            tags=["schema_context_injected=True", "step=refiner"],
-        )
+        try:
+            langfuse_client._create_trace_tags_via_ingestion(
+                trace_id=langfuse_client.get_current_trace_id(),
+                tags=["schema_context_injected=True", "step=refiner"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create Langfuse trace tags: {e}")
 
     # Prepare variables matching the new human prompts
+    has_executed = state.get("last_result_row_count") is not None or bool(trino_error)
     invoke_vars = {
         "schema": schema_context,
         "user_request": state.get("user_query") or "",
@@ -182,7 +180,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         "initial_query": state.get("sql_query") or "",
         "current_agent_query": state.get("sql_query") or "",
         "enriched_instruction": enriched_instruction,
-        "last_result_success": "True" if not trino_error else "False",
+        "last_result_success": "True" if has_executed and not error_msg else ("False" if has_executed else "No Previous Execution"),
         "last_result_error": error_msg,
         "last_result_row_count": state.get("last_result_row_count", ""),
         "last_result_data": state.get("last_result_data", ""),
@@ -203,6 +201,11 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         if match:
             sql_explanation = match.group(1).strip()
 
+    has_sql_block = bool(re.search(r"```(?:sql)?\s*(.*?)\s*```", response.content, re.IGNORECASE | re.DOTALL))
+    
+    if not has_sql_block:
+        new_sql = state.get("sql_query") or ""
+
     return {
         "sql_query": new_sql,
         "refinement_count": count + 1,
@@ -222,8 +225,7 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
     runtime_flags = state.get("runtime_flags") or {}
     import re
 
-    # ── Map WKT placeholders and short table names before Trino execution ──
-    # 1. WKT Polygons
+    # ── Map WKT placeholders and before Trino execution ──
     locations_dict = state.get("locations_dict")
     if locations_dict and "coords" in locations_dict:
         for placeholder, wkt_str in locations_dict["coords"].items():
@@ -231,55 +233,6 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             clean_wkt = wkt_str.strip("'")
             sql = re.sub(r"['\"]?@" + re.escape(placeholder) + r"@['\"]?", f"'{clean_wkt}'", sql)
 
-    # 2. Short Table Names -> Fully Qualified Names (derived from jeen_catalog)
-    table_mappings: dict[str, str] = {}
-    jeen_catalog = state.get("jeen_catalog") or ""
-    if jeen_catalog:
-        pattern = r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"'
-        for cat, sch, tbl in re.findall(pattern, jeen_catalog):
-            if cat.lower() != "catalog" and tbl.lower() != "table":
-                full_name = f'"{cat}"."{sch}"."{tbl}"'
-                table_mappings[tbl] = full_name
-
-    if table_mappings:
-        try:
-            import sqlglot
-            from sqlglot import exp
-            
-            ast = sqlglot.parse_one(sql, dialect="trino")
-            
-            cte_names = set()
-            for cte in ast.find_all(exp.CTE):
-                cte_names.add(cte.alias)
-                
-            for table in ast.find_all(exp.Table):
-                short_name = table.name
-                if short_name in cte_names:
-                    continue
-                    
-                # Check for table name match
-                full_name_sql = None
-                
-                # We need to handle when the LLM writes `schema.table` or `table`
-                if short_name in table_mappings:
-                    full_name_sql = table_mappings[short_name]
-                elif table.db and table.name:
-                    # sometimes sqlglot parses schema.table as table.db = schema, table.name = table
-                    # check if the table name is in mappings
-                    if short_name in table_mappings:
-                         full_name_sql = table_mappings[short_name]
-
-                if full_name_sql:
-                    match = re.match(r'\"([^\"]+)\"\.\"([^\"]+)\"\.\"([^\"]+)\"', full_name_sql)
-                    if match:
-                        cat, sch, tbl = match.groups()
-                        table.set("catalog", exp.Identifier(this=cat, quoted=True))
-                        table.set("db", exp.Identifier(this=sch, quoted=True))
-                        table.set("this", exp.Identifier(this=tbl, quoted=True))
-                        
-            sql = ast.sql(dialect="trino")
-        except Exception as e:
-            logger.warning(f"Failed to qualify table names with sqlglot: {e}")
 
     try:
         result = await asyncio.to_thread(execute_query_sync, sql)

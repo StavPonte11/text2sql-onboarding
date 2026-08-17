@@ -21,6 +21,7 @@ class AgentSettings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
     LANGFUSE_BASE_URL: str = Field(min_length=1)
+    CACHE_KEY_DELIMITER: str = "#@#"
 
     # ── Jeen Integration ──────────────────────────────────────────────────────
     JEEN_LLM_CORE_URL: str = "http://schema-modeler.dev161.internal/api/mcp"  # If empty, agent gracefully skips fetching
@@ -51,14 +52,14 @@ class AgentSettings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # Langfuse prompt names
-    LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
+    LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/enrichment_extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"
     LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder"
     LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
     LANGFUSE_PROMPT_FINALIZER: str = "text2sql/finalizer"
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
     LANGFUSE_PROMPT_CATEGORY_ENRICHMENT: str = "text2sql/category_enrichment"
-    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
+    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/loc_extractor"
     LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: str = (
         "text2sql/location_wkt_instruction"
     )

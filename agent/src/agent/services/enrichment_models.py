@@ -32,6 +32,10 @@ class SQLFilterParams(BaseModel):
         default=False, 
         description="True if this column was unnested from an array column using Trino UNNEST syntax."
     )
+    is_negated: bool = Field(
+        default=False,
+        description="True if this filter predicate is wrapped in an odd number of NOT operators."
+    )
     match_type: Literal["exact", "prefix", "suffix", "substring", "in_list", "null", "range", "inequality"] = Field(
         description="Categorization of the query's match filter behavior."
     )
@@ -43,6 +47,10 @@ class FilterTransformation(BaseModel):
     """
     column: str = Field(
         description="The target column name of the filter condition."
+    )
+    table: Optional[str] = Field(
+        default=None,
+        description="The resolved canonical table name the column belongs to, propagated from the extraction phase."
     )
     original_value: str = Field(
         description="The original user-supplied filter value string (e.g. '%italian%')."

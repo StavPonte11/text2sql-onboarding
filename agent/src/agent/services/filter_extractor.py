@@ -14,8 +14,93 @@ from sqlglot.optimizer.qualify_columns import qualify_columns
 from sqlglot.optimizer.scope import traverse_scope
 
 from agent.services.enrichment_models import SQLFilterParams
+from agent.services.sql_transformer import extract_literal_val
 
 logger = logging.getLogger(__name__)
+
+def get_leaf_comparisons(node: Optional[exp.Expression], is_negated: bool = False) -> List[Tuple[exp.Expression, bool]]:
+    """Flattens AND/OR trees to extract all comparison operators."""
+    if node is None:
+        return []
+    
+    # Unwrap parentheses to evaluate the expressions inside
+    if isinstance(node, exp.Paren):
+        return get_leaf_comparisons(node.this, is_negated)
+    
+    if isinstance(node, exp.Not):
+        return get_leaf_comparisons(node.this, not is_negated)
+        
+    if isinstance(node, (exp.And, exp.Or)):
+        return get_leaf_comparisons(node.left, is_negated) + get_leaf_comparisons(node.right, is_negated)
+    if isinstance(node, (exp.EQ, exp.NEQ, exp.GT, exp.LT, exp.GTE, exp.LTE, exp.Like, exp.ILike, exp.In, exp.Is, exp.Between)):
+        return [(node, is_negated)]
+    return []
+
+def get_unaliased_table_name(node: exp.Table) -> str:
+    unaliased = node.copy()
+    unaliased.set("alias", None)
+    return unaliased.sql(dialect="trino").lower()
+
+class ScopeContextHelper:
+    def __init__(self):
+        self.table_alias_map: Dict[Tuple[int, str], str] = {}
+        self.cte_select_map: Dict[Tuple[int, str], Tuple[str, str]] = {}
+        self.unnest_map: Dict[Tuple[int, str], Tuple[str, str]] = {}
+        
+    def resolve_col_ref(self, current_scope: Any, table_alias: str, col_name: str) -> Tuple[str, str, bool]:
+        """Traces alias mappings back to real database table and column names."""
+        curr_scope = current_scope
+        curr_table: str = table_alias.lower()
+        curr_col: str = col_name.lower()
+        is_unnest: bool = False
+        
+        # Fallback: if table alias is empty, resolve to the single table source in scope
+        if not curr_table and curr_scope:
+            scope_tables: List[str] = []
+            for alias, src in curr_scope.sources.items():
+                if isinstance(src, exp.Table) or (hasattr(src, "expression") and isinstance(src.expression, exp.Table)):
+                    scope_tables.append(alias)
+            if len(scope_tables) == 1:
+                curr_table = scope_tables[0]
+        
+        visited = set()
+        while curr_scope and (id(curr_scope), curr_table, curr_col) not in visited:
+            visited.add((id(curr_scope), curr_table, curr_col))
+            
+            # A. Check unnest_map
+            if (id(curr_scope), curr_table) in self.unnest_map:
+                p_table, p_col = self.unnest_map[(id(curr_scope), curr_table)]
+                curr_table = p_table
+                curr_col = p_col
+                is_unnest = True
+                continue
+
+            # B. Check cte_select_map / sources
+            source = curr_scope.sources.get(curr_table)
+            if source:
+                if isinstance(source, exp.Table) or (hasattr(source, "expression") and isinstance(source.expression, exp.Table)):
+                    target_node = source if isinstance(source, exp.Table) else source.expression
+                    real_table: str = get_unaliased_table_name(target_node)
+                    return real_table, curr_col, is_unnest 
+                else:
+                    # It's a CTE or subquery scope
+                    inner_scope = source
+                    mapping = self.cte_select_map.get((id(inner_scope), curr_col))
+                    if mapping:
+                        curr_table = mapping[0]
+                        curr_col = mapping[1]
+                        curr_scope = inner_scope
+                    else:
+                        break
+            else:
+                # C. Resolve from table_alias_map
+                real_table = self.table_alias_map.get((id(curr_scope), curr_table))
+                if real_table:
+                    return real_table, curr_col, is_unnest
+                break
+                
+        return curr_table, curr_col, is_unnest
+
 
 
 class FilterExtractor:
@@ -25,7 +110,7 @@ class FilterExtractor:
     """
 
     @staticmethod
-    def extract(sql: str, schema: Dict[str, Dict[str, str]]) -> List[SQLFilterParams]:
+    def extract(sql: str, schema: Dict[str, Dict[str, str]]) -> Optional[List[SQLFilterParams]]:
         """
         Parses draft SQL, resolves aliases/CTEs/UNNEST nodes, and extracts target filters.
 
@@ -35,7 +120,7 @@ class FilterExtractor:
                     e.g. {'dataverse.orders': {'order_status': 'string'}}.
 
         Returns:
-            A list of SQLFilterParams containing details on each leaf filter predicate.
+            A list of SQLFilterParams containing details on each leaf filter predicate, or None if extraction fails.
         """
         try:
             from agent.utils.sql import replace_unquoted_char
@@ -80,19 +165,10 @@ class FilterExtractor:
             qualified_expression: exp.Expression = qualify_columns(expression, schema=normalized_schema)
             
             # 3. Resolve Scope structures
-            table_alias_map: Dict[Tuple[int, str], str] = {}
-            cte_select_map: Dict[Tuple[int, str], Tuple[str, str]] = {}
-            unnest_map: Dict[Tuple[int, str], Tuple[str, str]] = {}
+            context_helper = ScopeContextHelper()
             
             scopes = list(traverse_scope(qualified_expression))
             
-
-            # Helper to get the table name without its alias
-            def get_unaliased_table_name(node: exp.Table) -> str:
-                unaliased = node.copy()
-                unaliased.set("alias", None)
-                return unaliased.sql(dialect="trino").lower()
-
             # First pass: map real tables, CTE names, and UNNEST aliases in each scope
             for scope in scopes:
                 scope_id: int = id(scope)
@@ -101,10 +177,9 @@ class FilterExtractor:
                 for alias, source in scope.sources.items():
                     alias_lower: str = alias.lower()
                     if isinstance(source, exp.Table):
-                        table_alias_map[(scope_id, alias_lower)] = get_unaliased_table_name(source)
+                        context_helper.table_alias_map[(scope_id, alias_lower)] = get_unaliased_table_name(source)
                     elif hasattr(source, "expression") and isinstance(source.expression, exp.Table):
-                        table_alias_map[(scope_id, alias_lower)] = get_unaliased_table_name(source.expression)
-
+                        context_helper.table_alias_map[(scope_id, alias_lower)] = get_unaliased_table_name(source.expression)
 
                 # Look for Unnest nodes in the scope
                 for unnest in scope.expression.find_all(exp.Unnest):
@@ -116,7 +191,7 @@ class FilterExtractor:
                         if cols:
                             parent_col: exp.Column = cols[0]
                             parent_table: str = parent_col.table.lower() if parent_col.table else ""
-                            unnest_map[(scope_id, alias_name)] = (parent_table, parent_col.name.lower())
+                            context_helper.unnest_map[(scope_id, alias_name)] = (parent_table, parent_col.name.lower())
             
             # Second pass: trace subqueries/CTEs to build cte_select_map
             for scope in scopes:
@@ -131,112 +206,14 @@ class FilterExtractor:
                                 if isinstance(expr.this, exp.Column):
                                     inner_table: str = expr.this.table.lower() if expr.this.table else ""
                                     inner_col: str = expr.this.name.lower()
-                                    cte_select_map[(id(inner_scope), col_alias)] = (inner_table, inner_col)
+                                    context_helper.cte_select_map[(id(inner_scope), col_alias)] = (inner_table, inner_col)
                             elif isinstance(expr, exp.Column):
                                 col_name: str = expr.name.lower()
                                 inner_table = expr.table.lower() if expr.table else ""
-                                cte_select_map[(id(inner_scope), col_name)] = (inner_table, col_name)
+                                context_helper.cte_select_map[(id(inner_scope), col_name)] = (inner_table, col_name)
 
             # 4. Extract Predicates and Resolve Columns
             filters: List[SQLFilterParams] = []
-            
-            def resolve_col_ref(current_scope: Any, table_alias: str, col_name: str) -> Tuple[str, str, bool]:
-                """Traces alias mappings back to real database table and column names."""
-                curr_scope = current_scope
-                curr_table: str = table_alias.lower()
-                curr_col: str = col_name.lower()
-                is_unnest: bool = False
-                
-                # Fallback: if table alias is empty, resolve to the single table source in scope
-                if not curr_table and curr_scope:
-                    scope_tables: List[str] = []
-                    for alias, src in curr_scope.sources.items():
-                        if isinstance(src, exp.Table) or (hasattr(src, "expression") and isinstance(src.expression, exp.Table)):
-                            scope_tables.append(alias)
-                    if len(scope_tables) == 1:
-                        curr_table = scope_tables[0]
-                
-                visited = set()
-                while curr_scope and (id(curr_scope), curr_table, curr_col) not in visited:
-                    visited.add((id(curr_scope), curr_table, curr_col))
-                    
-                    # A. Check unnest_map
-                    if (id(curr_scope), curr_table) in unnest_map:
-                        p_table, p_col = unnest_map[(id(curr_scope), curr_table)]
-                        curr_table = p_table
-                        curr_col = p_col
-                        is_unnest = True
-                        continue
-
-                    # B. Check cte_select_map / sources
-                    source = curr_scope.sources.get(curr_table)
-                    if source:
-                        if isinstance(source, exp.Table) or (hasattr(source, "expression") and isinstance(source.expression, exp.Table)):
-                            target_node = source if isinstance(source, exp.Table) else source.expression
-                            real_table: str = get_unaliased_table_name(target_node)
-                            return real_table, curr_col, is_unnest 
-                        else:
-                            # It's a CTE or subquery scope
-                            inner_scope = source
-                            found = False
-                            for expr in inner_scope.expression.expressions:
-                                if isinstance(expr, exp.Alias) and expr.alias.lower() == curr_col:
-                                    if isinstance(expr.this, exp.Column):
-                                        curr_table = expr.this.table.lower() if expr.this.table else ""
-                                        curr_col = expr.this.name.lower()
-                                        curr_scope = inner_scope
-                                        found = True
-                                        break
-                                elif isinstance(expr, exp.Column) and expr.name.lower() == curr_col:
-                                    curr_table = expr.table.lower() if expr.table else ""
-                                    curr_col = expr.name.lower()
-                                    curr_scope = inner_scope
-                                    found = True
-                                    break
-                            if not found:
-                                break
-                    else:
-                        # C. Resolve from table_alias_map
-                        real_table = table_alias_map.get((id(curr_scope), curr_table))
-                        if real_table:
-                            return real_table, curr_col, is_unnest
-                        break
-                        
-                return curr_table, curr_col, is_unnest
-
-            def extract_literal_val(node: Optional[exp.Expression]) -> Any:
-                """Translates sqlglot AST literal/boolean node values to Python primitives."""
-                if node is None:
-                    return None
-                if isinstance(node, exp.Literal):
-                    if node.is_string:
-                        return node.this
-                    try:
-                        if "." in node.this:
-                            return float(node.this)
-                        return int(node.this)
-                    except ValueError:
-                        return node.this
-                elif isinstance(node, exp.Null):
-                    return None
-                elif isinstance(node, exp.Boolean):
-                    return node.this
-                return node.sql()
-
-            def get_leaf_comparisons(node: Optional[exp.Expression]) -> List[exp.Expression]:
-                """Flattens AND/OR trees to extract all comparison operators."""
-                if node is None:
-                    return []
-                
-                # Unwrap parentheses to evaluate the expressions inside
-                if isinstance(node, exp.Paren):
-                    return get_leaf_comparisons(node.this)
-                    
-                if isinstance(node, (exp.And, exp.Or)):
-                    return get_leaf_comparisons(node.left) + get_leaf_comparisons(node.right)
-                if isinstance(node, (exp.EQ, exp.NEQ, exp.GT, exp.LT, exp.GTE, exp.LTE, exp.Like, exp.ILike, exp.In, exp.Is, exp.Between)):
-                    return [node]
-                return []
 
             for scope in scopes:
                 where_clause = scope.expression.args.get("where")
@@ -244,7 +221,7 @@ class FilterExtractor:
                     continue
                 
                 leaves = get_leaf_comparisons(where_clause.this)
-                for leaf in leaves:
+                for leaf, is_negated in leaves:
                     cols_in_lhs = list(leaf.this.find_all(exp.Column))
                     if not cols_in_lhs:
                         continue
@@ -305,7 +282,7 @@ class FilterExtractor:
                     col_alias: str = col_node.table.lower() if col_node.table else ""
                     col_name: str = col_node.name.lower()
                     
-                    source_table, source_column, is_unnest = resolve_col_ref(scope, col_alias, col_name)
+                    source_table, source_column, is_unnest = context_helper.resolve_col_ref(scope, col_alias, col_name)
                     source_table_original: str = source_table.replace("$", "@")
                     
                     # Determine match type mapping logic
@@ -339,6 +316,7 @@ class FilterExtractor:
                             value=value,
                             original_expression=replace_unquoted_char(leaf.sql(dialect="trino"), "$", "@"),
                             is_unnest=is_unnest,
+                            is_negated=is_negated,
                             match_type=match_type
                         )
                     )
@@ -346,4 +324,4 @@ class FilterExtractor:
             
         except Exception as e:
             logger.error(f"Error extracting filters from SQL: {e}", exc_info=True)
-            return []
+            return None

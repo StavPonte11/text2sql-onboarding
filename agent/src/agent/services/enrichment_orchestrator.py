@@ -108,9 +108,12 @@ class EnrichmentOrchestrator:
         """
         try:
             # 1. Extract comparison filters from query AST
-            filters: List[SQLFilterParams] = FilterExtractor.extract(
+            filters: Optional[List[SQLFilterParams]] = FilterExtractor.extract(
                 initial_sql, schema
             )
+            if filters is None:
+                logger.warning("Filter extraction failed. Query enrichment skipped.")
+                return initial_sql, None, False
             if not filters:
                 logger.info("No query filters extracted. Query enrichment skipped.")
                 return initial_sql, None, False
@@ -128,13 +131,16 @@ class EnrichmentOrchestrator:
             # Format candidate pools for prompt presentation
             search_results_formatted: str = ""
             for key, candidates in search_results.items():
-                col, val = key.split("#@#")
+                col, val = key.split(settings.CACHE_KEY_DELIMITER)
                 matching_filter = next(
                     (
                         f
                         for f in filters
                         if f.source_column.lower() == col.lower()
-                        and str(f.value) == val
+                        and (
+                            str(f.value) == val
+                            or (isinstance(f.value, (list, tuple, set)) and val in [str(v) for v in f.value])
+                        )
                     ),
                     None,
                 )
@@ -166,7 +172,7 @@ class EnrichmentOrchestrator:
             )
             messages = prompt_value.to_messages()
 
-            llm: ChatOpenAI = get_orchestrator_llm()
+            llm: BaseChatModel = get_orchestrator_llm()
 
             plan: Optional[TransformationPlan] = None
             try:
@@ -192,13 +198,23 @@ class EnrichmentOrchestrator:
 
             # Validate and check for ghost value mappings
             for tf in plan.enrichment_details:
+                # Propagate source_table from original filters to transformations
+                for param in filters:
+                    if param.source_column.lower() == tf.column.lower():
+                        val_str = "null" if param.value is None else str(param.value).replace("%", "").strip().lower()
+                        tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
+                        if val_str == tf_orig_clean:
+                            tf.table = param.source_table
+                            break
+
                 if tf.changed_filter:
-                    key: str = f"{tf.column.lower()}#@#{tf.original_value}"
+                    norm_col = tf.column.strip('"\'').lower()
+                    key: str = f"{norm_col}{settings.CACHE_KEY_DELIMITER}{tf.original_value}"
                     candidates: Optional[List[str]] = search_results.get(key)
                     if candidates is None:
                         for k, v in search_results.items():
-                            k_col, k_val = k.split("#@#")
-                            if k_col == tf.column.lower():
+                            k_col, k_val = k.split(settings.CACHE_KEY_DELIMITER)
+                            if k_col.strip('"\'').lower() == norm_col:
                                 candidates = v
                                 break
                     if candidates is not None:

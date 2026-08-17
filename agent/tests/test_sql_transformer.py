@@ -76,7 +76,7 @@ def test_transform_no_change():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "active" in refined
+    assert "order_status = 'active'" in refined
 
 def test_transform_multiple_columns():
     sql = "SELECT * FROM orders WHERE status = 'act' AND region LIKE 'na%'"
@@ -124,8 +124,7 @@ def test_transform_in_to_eq():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "status = 'ACTIVE'" in refined
-    assert "IN" not in refined
+    assert "status IN ('ACTIVE', 'fake_status')" in refined
 
 def test_transform_with_table_alias():
     sql = "SELECT * FROM dataverse.orders o WHERE o.order_status = 'active'"
@@ -163,7 +162,7 @@ def test_transform_numeric_value():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "order_id = 12345" in refined
+    assert "order_id = '12345'" in refined
 
 def test_transform_unrelated_plan():
     sql = "SELECT * FROM orders WHERE region = 'US'"
@@ -261,7 +260,7 @@ def test_transform_arbitrary_operators():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "amount >= 150" in refined
+    assert "amount >= '150'" in refined
 
 
 def test_transform_inequality_to_eq():
@@ -302,8 +301,7 @@ def test_transform_in_to_inequality():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "priority <= 3" in refined
-    assert "IN" not in refined
+    assert "priority IN ('3', '2', '3')" in refined
 
 def test_transform_flip_inequality_direction():
     sql = "SELECT * FROM orders WHERE start_date >= '2024-01-01'"
@@ -435,9 +433,9 @@ def test_transform_monster_complex_query():
     refined = SQLTransformer.apply(sql, plan)
     
     assert "status = 'ACTIVE'" in refined
-    assert "status = 'PENDING_VERIFICATION'" in refined
+    assert "status IN ('PENDING_VERIFICATION', 'new')" in refined
     assert "unverified" not in refined
-    assert "amount >= 5000" in refined
+    assert "amount >= '5000'" in refined
     assert "1000" not in refined
     assert "region IN ('US', 'CA')" in refined
     assert "na%" not in refined
@@ -445,6 +443,51 @@ def test_transform_monster_complex_query():
     assert "start_date >= '2025-01-01'" in refined
     assert "start_date <= '2024-12-31'" in refined
 
+def test_transform_joined_table_qualification():
+    sql = "SELECT * FROM db.users u JOIN db.admins a ON u.id = a.id WHERE u.status = 'active' AND a.status = 'active'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                column="status",
+                table="db.admins",
+                original_value="active",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["SUPER_ACTIVE"],
+                changed_filter=True,
+                reasoning="Transform admin status only"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    
+    # Verify ONLY the admin status changed
+    assert "a.status = 'SUPER_ACTIVE'" in refined
+    assert "u.status = 'active'" in refined
+
+
+
+def test_transform_preserve_numeric_string_literal():
+    sql = "SELECT * FROM dataverse.users WHERE zip_code = '444'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                column="zip_code",
+                original_value="444",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["00444"],
+                changed_filter=True,
+                reasoning="Preserve leading zeros in string literals"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    # The output MUST be a quoted string, not the number 444
+    assert "zip_code = '00444'" in refined
+    assert "zip_code = 444" not in refined
 
 def test_transform_real_world_car_registrations():
     sql = """

@@ -161,7 +161,7 @@ def test_extract_inequality():
     assert f.match_type in ["range", "inequality"]
 
 
-def test_extract_no_filters():
+def test_extract_no_filters(caplog):
     sql = "SELECT order_id, order_status FROM dataverse.orders LIMIT 100"
     schema = {
         "dataverse.orders": {
@@ -173,9 +173,10 @@ def test_extract_no_filters():
     filters = FilterExtractor.extract(sql, schema)
     assert isinstance(filters, list)
     assert len(filters) == 0
+    assert not any(r.levelname == 'ERROR' for r in caplog.records)
 
 
-def test_extract_ignore_column_to_column():
+def test_extract_ignore_column_to_column(caplog):
     sql = """
     SELECT * FROM dataverse.orders o
     JOIN dataverse.customers c ON o.customer_id = c.id
@@ -194,7 +195,9 @@ def test_extract_ignore_column_to_column():
     }
     
     filters = FilterExtractor.extract(sql, schema)
+    assert isinstance(filters, list)
     assert len(filters) == 0
+    assert not any(r.levelname == 'ERROR' for r in caplog.records)
 
 
 def test_extract_nested_and_or():
@@ -230,6 +233,7 @@ def test_extract_missing_schema():
     filters = FilterExtractor.extract(sql, schema)
     assert len(filters) == 1
     f = filters[0]
+    assert f.source_table == "dataverse.unknown_table"
     assert f.source_column == "mystery_column"
     assert f.operator == "="
     assert f.value == "X"

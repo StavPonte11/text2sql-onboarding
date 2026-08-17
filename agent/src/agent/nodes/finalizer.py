@@ -1,4 +1,7 @@
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from langchain_core.runnables.config import RunnableConfig
 from agent.utils.redis_publisher import publish_node_event
 from agent.state import AgentState
@@ -33,7 +36,8 @@ async def get_esca_preview(esca_id: str, limit: int = 10) -> str:
             }
             return json.dumps(preview_info, indent=2, default=str)
     except Exception as e:
-        return f"Error retrieving data preview from Esca: {e}"
+        logger.error(f"Error retrieving data preview from Esca: {e}")
+        return "Data preview is currently unavailable."
 
 
 async def finalizer_node(state: AgentState, config: RunnableConfig | None = None):
@@ -78,9 +82,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
     else:
         preview_str = await get_esca_preview(raw_data_ref, limit=10)
 
-    prompt_name = getattr(
-        settings, "LANGFUSE_PROMPT_FINALIZER", "text2sql/finalizer"
-    )
+    prompt_name = settings.LANGFUSE_PROMPT_FINALIZER
     langfuse_prompt = langfuse_client.get_prompt(prompt_name)
     prompt_finalizer = ChatPromptTemplate.from_messages(
         langfuse_prompt.get_langchain_prompt()

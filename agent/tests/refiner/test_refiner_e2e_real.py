@@ -63,7 +63,7 @@ async def test_e2e_real_trino_execution_happy_path():
         jeen_catalog=CUSTOMER_CATALOG,
         locations_dict={},
         runtime_flags={
-            "MAX_REFINER_ITERATIONS": 2,
+            "MAX_REFINER_ITERATIONS": 3,
             "ESCA_WRITE_ENABLED": False,  # Disable blob storage for basic tests
         },
     )
@@ -271,7 +271,7 @@ async def test_e2e_real_hallucinated_column_recovery():
     """
     state = AgentState(
         user_query="get the customer email",
-        sql_query="SELECT email FROM customer",
+        sql_query="SELECT email FROM tpch.tiny.customer",
         jeen_catalog=CUSTOMER_CATALOG,
         locations_dict={},
         runtime_flags={"MAX_REFINER_ITERATIONS": 3, "ESCA_WRITE_ENABLED": False},
@@ -282,6 +282,7 @@ async def test_e2e_real_hallucinated_column_recovery():
     if final_state.get("is_satisfied"):
         # It successfully substituted with phone or custkey or valid column
         assert "customer" in final_state["sql_query"].lower()
+        assert not final_state.get("trino_error")
     else:
         # It gracefully failed
         assert final_state.get("escalation_reason") is not None
@@ -403,7 +404,7 @@ async def test_e2e_real_logical_correction_wrong_aggregation():
     """
     state = AgentState(
         user_query="what is the total number of orders per customer?",
-        sql_query="SELECT custkey FROM orders",  # Fails to aggregate or group
+        sql_query="SELECT custkey FROM tpch.tiny.orders",  # Fails to aggregate or group
         jeen_catalog=CUSTOMER_ORDERS_NATION_CATALOG,
         locations_dict={},
         runtime_flags={"MAX_REFINER_ITERATIONS": 3, "ESCA_WRITE_ENABLED": False},

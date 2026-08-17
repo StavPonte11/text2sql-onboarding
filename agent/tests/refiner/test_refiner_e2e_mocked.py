@@ -3,26 +3,6 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from agent.nodes.refiner_graph import refiner_subgraph
 from agent.state import AgentState
 
-# ─── HELPER MOCKS FOR GRAPH E2E ──────────────────────────────────────────────
-
-
-def patch_graph_infrastructure():
-    """
-    Patches all external I/O (Redis, Langfuse, ESCA) across the entire subgraph
-    to prevent network crashes during E2E testing.
-    """
-    return (
-        patch("agent.nodes.refiner.publish_node_event", new_callable=AsyncMock),
-        patch(
-            "agent.nodes.enrichment_orchestrator.publish_node_event",
-            new_callable=AsyncMock,
-        ),
-        patch("agent.nodes.refiner.langfuse_client"),
-        patch("agent.services.enrichment_orchestrator.langfuse_client"),
-        patch("agent.nodes.refiner.get_esca_client", MagicMock()),
-    )
-
-
 # ─── UPGRADED BASE TEST ──────────────────────────────────────────────────────
 
 

@@ -152,7 +152,46 @@ class JeenMetadataClient:
         )
 
     # ------------------------------------------------------------------
-    # Full DB Schema (all columns)
+    # Search Column Values
+    # ------------------------------------------------------------------
+
+    async def search_column_values(
+        self, query: str, table_name: str | None = None, column_name: str | None = None
+    ) -> list[str]:
+        """
+        Looks up real values a column contains using semantic and keyword matching via MCP.
+        """
+        if not self.is_configured:
+            logger.warning("JeenMetadataClient is not configured. Returning empty search results.")
+            return []
+            
+        args: dict[str, Any] = {
+            "connection_id": self._connection_id,
+            "query": query,
+            "limit": self._search_limit,
+        }
+        if table_name:
+            args["table"] = table_name
+        if column_name:
+            args["column"] = column_name
+
+        try:
+            payload = await self._call("search_column_values", args)
+            if isinstance(payload, dict) and "values" in payload:
+                results = []
+                for v in payload["values"]:
+                    if isinstance(v, dict) and "value" in v:
+                        results.append(str(v["value"]))
+                    else:
+                        results.append(str(v))
+                return results
+            return []
+        except Exception as exc:
+            logger.error("JeenMetadataClient.search_column_values failed: %s", exc, exc_info=True)
+            return []
+
+    # ------------------------------------------------------------------
+    # Glossary / Context
     # ------------------------------------------------------------------
 
     async def get_catalog_prompt(self) -> str:

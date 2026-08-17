@@ -1,3 +1,5 @@
+from agent.config import settings
+d = settings.CACHE_KEY_DELIMITER
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from agent.nodes.refiner import enrich_context_node
@@ -52,7 +54,7 @@ async def test_enrich_success_legit(
     """
     # 1. Setup Data Extraction & DB Search Mocks
     mock_extract.return_value = mock_filters()
-    mock_search.return_value = {"category#@#fruit": ["apple", "orange"]}
+    mock_search.return_value = {f"category{d}fruit": ["apple", "orange"]}
     mock_langfuse.get_prompt.return_value = get_mock_langfuse_prompt()
 
     # 2. Setup LLM Mock (Simulate LLM returning a valid transformation plan)
@@ -168,7 +170,7 @@ async def test_enrich_llm_failure_graceful_degradation(
     the LangGraph state does not explode. It safely returns the original SQL.
     """
     mock_extract.return_value = mock_filters()
-    mock_search.return_value = {"category#@#fruit": ["apple", "orange"]}
+    mock_search.return_value = {f"category{d}fruit": ["apple", "orange"]}
     mock_langfuse.get_prompt.return_value = get_mock_langfuse_prompt()
 
     # Force the LLM to throw a catastrophic error
@@ -235,7 +237,7 @@ async def test_enrich_llm_decides_no_change(
     the node respects that and leaves the SQL alone.
     """
     mock_extract.return_value = mock_filters()
-    mock_search.return_value = {"category#@#fruit": ["fruit", "fruits"]}
+    mock_search.return_value = {f"category{d}fruit": ["fruit", "fruits"]}
     mock_langfuse.get_prompt.return_value = get_mock_langfuse_prompt()
 
     # Simulate LLM deciding NO transformation is needed
@@ -288,7 +290,7 @@ async def test_enrich_fallback_json_parsing(
     parser kicks in and successfully saves the transformation.
     """
     mock_extract.return_value = mock_filters()
-    mock_search.return_value = {"category#@#fruit": ["apple", "orange"]}
+    mock_search.return_value = {f"category{d}fruit": ["apple", "orange"]}
     mock_langfuse.get_prompt.return_value = get_mock_langfuse_prompt()
 
     mock_llm_instance = MagicMock()
