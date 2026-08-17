@@ -372,10 +372,10 @@ async def test_e2e_real_logical_correction_missing_filter():
     """
     state = AgentState(
         user_query="get customers whose phone number starts with 123",
-        sql_query="SELECT * FROM customer",  # Totally ignores the phone filter
+        sql_query="SELECT * FROM tpch.tiny.customer",  # Totally ignores the phone filter
         jeen_catalog=CUSTOMER_CATALOG,
         locations_dict={},
-        runtime_flags={"MAX_REFINER_ITERATIONS": 3, "ESCA_WRITE_ENABLED": False},
+        runtime_flags={"MAX_REFINER_ITERATIONS": 3, "ESCA_WRITE_ENABLED": False, "PREVIEW_ROWS_COUNT": 5},
     )
 
     final_state = await refiner_subgraph.ainvoke(state)

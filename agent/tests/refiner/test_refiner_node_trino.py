@@ -184,7 +184,7 @@ async def test_trino_exec_memory_shield_truncation(
 
     state = AgentState(
         sql_query="SELECT * FROM massive_table",
-        runtime_flags={"ESCA_WRITE_ENABLED": False},
+        runtime_flags={"ESCA_WRITE_ENABLED": False, "PREVIEW_ROWS_COUNT": 15},
     )
 
     result = await trino_exec_node(state)
