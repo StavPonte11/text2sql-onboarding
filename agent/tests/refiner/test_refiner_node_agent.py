@@ -44,7 +44,7 @@ async def test_agent_step1_baseline(
     and sets is_satisfied to False.
     """
     mock_chain = setup_mock_chain(
-        mock_from_messages, mock_get_llm, "TRINO\n```sql\nSELECT 1;\n```"
+        mock_from_messages, mock_get_llm, '{"reasoning": "mock", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 1"}'
     )
 
     state = AgentState(
@@ -80,7 +80,7 @@ async def test_agent_step2a_error_fixing(
     Agent switches to the Step 2 prompt to fix the error.
     """
     mock_chain = setup_mock_chain(
-        mock_from_messages, mock_get_llm, "TRINO\n```sql\nSELECT 2;\n```"
+        mock_from_messages, mock_get_llm, '{"reasoning": "mock", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 2"}'
     )
 
     state = AgentState(
@@ -111,7 +111,7 @@ async def test_agent_step2b_satisfied(
     BUSINESS LOGIC (SATISFIED): Proves the Agent can successfully declare a query
     satisfied and properly extract the human-readable TRANSLATION explanation using regex.
     """
-    llm_response = "QUERY_SATISFIED\n```sql\nSELECT 1;\n```\nTRANSLATION\nThis query fetches all active users."
+    llm_response = '{"reasoning": "looks good", "intent_match_checklist": {}, "status": "SATISFIED", "sql_query": "SELECT 1", "final_translation": "This query fetches all active users."}'
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, llm_response)
 
     state = AgentState(
@@ -162,7 +162,7 @@ async def test_agent_injects_enrichments_and_schema_cap(
     the prompt variables, and properly caps the number of table schemas passed
     to prevent TokenLimitExceeded crashes.
     """
-    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, "SELECT 1")
+    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, '{"reasoning": "mock", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 1"}')
 
     # Pass jeen_catalog in state
     enrichments_mock = [{"term": "status", "context": "active status"}]
@@ -199,7 +199,7 @@ async def test_agent_handles_satisfaction_check_failure(
     it must pass the Satisfaction failures as the `last_result_error` to the LLM,
     overriding any previous Trino errors.
     """
-    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, "SELECT 1")
+    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, '{"reasoning": "mock", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 1"}')
 
     state = AgentState(
         execution_path=[
@@ -241,7 +241,7 @@ async def test_agent_extracts_translation_without_query_satisfied(
     it should not prematurely set `sql_explanation` if `is_satisfied` is false.
     """
     # Notice: NO "QUERY_SATISFIED" marker
-    llm_response = "TRINO\n```sql\nSELECT 1;\n```\nTRANSLATION\nHere is a draft query."
+    llm_response = '{"reasoning": "draft query", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 1", "final_translation": "Here is a draft query."}'
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, llm_response)
 
     state = AgentState(execution_path=["enrich_context"], refinement_count=0)
@@ -267,7 +267,7 @@ async def test_agent_survives_conversational_llm_filler(
     filler (e.g., "Sure! Here is your query..."). This proves the agent node delegates
     cleaning to `clean_sql` and doesn't just blindly save the raw conversational text to state.
     """
-    raw_llm_output = "Sure! Here is your requested query:\n```sql\nSELECT * FROM users;\n```\nHope this helps!"
+    raw_llm_output = 'Sure! Here is your requested query:\n```json\n{"status": "REFINING", "sql_query": "SELECT * FROM users", "reasoning": "mock"}\n```\nHope this helps!'
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, raw_llm_output)
 
     # We mock clean_sql to return what it *should* extract, proving the node uses it.
@@ -277,8 +277,8 @@ async def test_agent_survives_conversational_llm_filler(
 
     result = await agent_node(state)
 
-    # Assert clean_sql was actually called with the raw content
-    mock_clean_sql.assert_called_once_with(raw_llm_output)
+    # Assert clean_sql was actually called with the extracted json query
+    mock_clean_sql.assert_called_once_with("SELECT * FROM users")
 
     # Assert the state was updated with the CLEANED sql, not the raw output
     assert result["sql_query"] == "SELECT * FROM users"
@@ -297,8 +297,8 @@ async def test_agent_satisfied_missing_translation_block(
     the `TRANSLATION` block, the regex search `re.search(...)` will return None.
     This test proves the node survives without throwing an AttributeError.
     """
-    # The LLM outputs the satisfaction marker, but omits TRANSLATION entirely.
-    llm_response = "QUERY_SATISFIED\n```sql\nSELECT 1;\n```"
+    # The LLM outputs the satisfaction marker, but omits final_translation entirely.
+    llm_response = '{"status": "SATISFIED", "sql_query": "SELECT 1"}'
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, llm_response)
 
     state = AgentState(
@@ -329,7 +329,7 @@ async def test_agent_null_state_variables_safe_formatting(
     (e.g., first run, missing variables), the prompt generation dictionary
     doesn't crash with KeyErrors or TypeErrors when building `invoke_vars`.
     """
-    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, "SELECT 1")
+    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, '{"status": "REFINING", "sql_query": "SELECT 1"}')
 
     # A completely minimal, almost empty state.
     state = AgentState()
@@ -361,7 +361,7 @@ async def test_agent_langfuse_trace_id_missing_bypass(
     or the trace ID wasn't properly initialized upstream), `get_current_trace_id()`
     returns None. The node must bypass `_create_trace_tags_via_ingestion` without crashing.
     """
-    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, "SELECT 1")
+    mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, '{"status": "REFINING", "sql_query": "SELECT 1"}')
 
     # Simulate Langfuse returning None for the active trace
     mock_langfuse.get_current_trace_id.return_value = None

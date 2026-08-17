@@ -10,6 +10,7 @@ from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from langchain_core.prompts import ChatPromptTemplate
 from agent.llm import get_llm
+from langchain_core.output_parsers import JsonOutputParser
 from agent.utils.sql import clean_sql
 from agent.utils.esca import get_esca_client
 from agent.services.enrichment_orchestrator import EnrichmentOrchestrator
@@ -187,24 +188,43 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     }
 
     response = await chain.ainvoke(invoke_vars)
-    new_sql = clean_sql(response.content)
-
-    import re
-
-    is_satisfied = "QUERY_SATISFIED" in response.content
-    sql_explanation = state.get("sql_explanation", "")
-
-    if is_satisfied:
-        match = re.search(
-            r"TRANSLATION\s*:?\s*\n*(.*)", response.content, re.IGNORECASE | re.DOTALL
-        )
-        if match:
-            sql_explanation = match.group(1).strip()
-
-    has_sql_block = bool(re.search(r"```(?:sql)?\s*(.*?)\s*```", response.content, re.IGNORECASE | re.DOTALL))
     
-    if not has_sql_block:
+    parser = JsonOutputParser()
+    try:
+        parsed_json = parser.parse(response.content)
+    except Exception as e:
+        logger.error(f"Failed to parse JSON from Refiner LLM: {e}\nContent: {response.content}")
+        return {
+            "satisfaction_failures": [f"Refiner failed to output valid JSON: {e}"],
+            "execution_path": ["agent"],
+            "refinement_count": count + 1,
+            "sql_query": state.get("sql_query") or "",
+        }
+
+    status = parsed_json.get("status", "")
+    is_satisfied = status == "SATISFIED"
+    
+    raw_sql = parsed_json.get("sql_query", "")
+    if raw_sql:
+        new_sql = clean_sql(raw_sql)
+    else:
         new_sql = state.get("sql_query") or ""
+        
+    if is_satisfied:
+        sql_explanation = parsed_json.get("final_translation") or state.get("sql_explanation", "")
+    else:
+        sql_explanation = state.get("sql_explanation", "")
+
+    if langfuse_client and langfuse_client.get_current_trace_id():
+        try:
+            langfuse_client.update_current_span(
+                metadata={
+                    "refiner_reasoning": parsed_json.get("reasoning"),
+                    "intent_checklist": parsed_json.get("intent_match_checklist"),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to append reasoning to span: {e}")
 
     return {
         "sql_query": new_sql,
