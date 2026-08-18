@@ -117,9 +117,15 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     trino_error = state.get("trino_error") or ""
     satisfaction_failures = state.get("satisfaction_failures")
 
-    error_msg = trino_error
+    current_error = trino_error
     if satisfaction_failures:
-        error_msg = "Satisfaction Check Failed: " + "; ".join(satisfaction_failures)
+        if current_error:
+            current_error += "\nSatisfaction Check Failed: " + "; ".join(satisfaction_failures)
+        else:
+            current_error = "Satisfaction Check Failed: " + "; ".join(satisfaction_failures)
+
+    error_msg = current_error
+    prompt_error_msg = current_error
 
     error_history = state.get("error_history") or []
     if error_history:
@@ -130,6 +136,8 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
             else:
                 history_str += f"{idx}. Error: {err_item}\n"
         error_msg += history_str
+        if current_error:
+            prompt_error_msg += history_str
 
     if count >= max_iterations:
         return {
@@ -181,8 +189,8 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         "initial_query": state.get("sql_query") or "",
         "current_agent_query": state.get("sql_query") or "",
         "enriched_instruction": enriched_instruction,
-        "last_result_success": "True" if has_executed and not error_msg else ("False" if has_executed else "No Previous Execution"),
-        "last_result_error": error_msg,
+        "last_result_success": "True" if has_executed and not current_error else ("False" if has_executed else "No Previous Execution"),
+        "last_result_error": prompt_error_msg,
         "last_result_row_count": state.get("last_result_row_count", ""),
         "last_result_data": state.get("last_result_data", ""),
     }
@@ -233,6 +241,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         "is_satisfied": is_satisfied,
         "sql_explanation": sql_explanation,
         "execution_path": ["agent"],
+        "refiner_reasoning": parsed_json.get("reasoning"),
     }
 
 
