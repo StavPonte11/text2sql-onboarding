@@ -93,7 +93,7 @@ def upgrade() -> None:
         ("QUERY_BUILDER_MODEL",         "gpt-4o",    "string", "LLM model for SQL generation",                  "DS team"),
         ("QUERY_BUILDER_TEMPERATURE",   0.0,         "float",  "Temperature for query builder",                  "DS team"),
         # Refiner
-        ("MAX_REFINER_ITERATIONS",      4,           "int",    "Max refiner retry attempts before fallback",     "DS team"),
+        ("MAX_REFINER_ITERATIONS",      20,          "int",    "Max refiner retry attempts before fallback",     "DS team"),
         ("REFINER_SCHEMA_CONTEXT_TABLES", 4,         "int",    "Max tables in schema context",                   "DS team"),
         ("MAX_SCHEMA_REPLAN_ITERATIONS",2,           "int",    "Max schema_explorer re-entries before HITL",     "DS team"),
         ("REFINER_MODEL",               "gpt-4o",    "string", "LLM model for refiner",                         "DS team"),
@@ -188,7 +188,7 @@ def upgrade() -> None:
                 "SATISFACTION_CHECK_SEMANTIC": True,
                 "SCHEMA_SUMMARIZATION": True,
                 "SCHEMA_SEMANTIC_TYPING": True,
-                "MAX_REFINER_ITERATIONS": 6,
+                "MAX_REFINER_ITERATIONS": 20,
             }),
             "is_active": True,
             "created_by": "system",
@@ -200,7 +200,7 @@ def upgrade() -> None:
             "description": "Disable HITL and satisfaction checks for uninterrupted eval runs.",
             "flag_overrides": _json.dumps({
                 "SATISFACTION_CHECK_ENABLED": False,
-                "MAX_REFINER_ITERATIONS": 2,
+                "MAX_REFINER_ITERATIONS": 20,
                 "SCHEMA_SUMMARIZATION": False,
             }),
             "is_active": True,

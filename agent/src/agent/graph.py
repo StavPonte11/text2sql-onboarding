@@ -61,7 +61,9 @@ class InvalidConfigurationException(ValueError):
 # ── G2-01: Config validator node ──────────────────────────────────────────────
 
 
-def validate_config_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
+def validate_config_node(
+    state: AgentState, config: RunnableConfig | None = None
+) -> dict:
     """
     First node after START.  Resolves scoping_mode from state (or falls back
     to the env default) and enforces strict-mode preconditions.
@@ -74,7 +76,9 @@ def validate_config_node(state: AgentState, config: RunnableConfig | None = None
     publish_node_event_sync(thread_id, "validate_config")
 
     runtime_flags = state.get("runtime_flags") or {}
-    mode: str = state.get("scoping_mode") or runtime_flags.get("DEFAULT_TABLE_SCOPING_MODE", settings.DEFAULT_TABLE_SCOPING_MODE)
+    mode: str = state.get("scoping_mode") or runtime_flags.get(
+        "DEFAULT_TABLE_SCOPING_MODE", settings.DEFAULT_TABLE_SCOPING_MODE
+    )
 
     if mode == "strict":
         allowed = state.get("allowed_tables")
@@ -90,10 +94,12 @@ def validate_config_node(state: AgentState, config: RunnableConfig | None = None
 # ── G2-02: HITL escalation node ───────────────────────────────────────────────
 
 
-def hitl_escalation_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
+def hitl_escalation_node(
+    state: AgentState, config: RunnableConfig | None = None
+) -> dict:
     """
     Execution pauses HERE via LangGraph interrupt_before before this node runs.
-    The API consumer then calls graph.update_state() to inject a corrected query 
+    The API consumer then calls graph.update_state() to inject a corrected query
     or provide explicit guidance, rather than just clearing the state.
     After update_state the graph resumes from this node, which immediately
     routes to extractor via its direct edge.
@@ -118,7 +124,18 @@ def hitl_escalation_node(state: AgentState, config: RunnableConfig | None = None
     except Exception:
         pass
 
-    return {"escalated": True, "execution_path": ["hitl_escalation"]}
+    return {
+        "escalated": True,
+        "execution_path": ["hitl_escalation"],
+        # Clear out error and escalation state so the resumed run starts fresh
+        "escalation_reason": None,
+        "rejection_category": None,
+        "satisfaction_failures": None,
+        "satisfaction_fail_count": 0,
+        "trino_error": None,
+        "error_history": [],
+        "refinement_count": 0,
+    }
 
 
 # ── Rejection router ──────────────────────────────────────────────────────────
@@ -157,13 +174,13 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
         response = chain.invoke({"feedback": feedback})
         route = response.route
     except Exception as e:
-        logger.error(f"Structured output parsing failed: {e}")
-        raise RuntimeError(f"Rejection router failed to parse structured output: {e}")
+        logger.error(f"Rejection router structured output failed: {e}")
+        raise RuntimeError(f"Failed to route user rejection feedback: {e}") from e
     return {
         "feedback_route": route,
         "raw_data_ref": None,
         "trino_error": None,
-        "execution_path": ["rejection_router"]
+        "execution_path": ["rejection_router"],
     }
 
 

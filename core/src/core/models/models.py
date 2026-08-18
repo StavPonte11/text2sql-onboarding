@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from sqlalchemy import JSON, Column, ForeignKey
+from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
 
@@ -579,6 +579,7 @@ class CrossTableProfileRead(SQLModel):
     match_strength: str
     common_columns: list[str] | None
     created_at: datetime
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

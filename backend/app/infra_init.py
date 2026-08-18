@@ -1227,6 +1227,8 @@ def _ensure_airlines_registered() -> None:
 
                 session.commit()
 
+
+
             logger.info(
                 "[InfraInit] Profiling complete for '%s.%s.%s': %d cols, %s rows",
                 catalog,

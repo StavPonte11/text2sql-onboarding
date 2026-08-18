@@ -3,77 +3,83 @@ from langgraph.graph import StateGraph, START, END
 
 from agent.state import AgentState
 from agent.config import settings
-from agent.nodes.refiner import refiner_node
-from agent.nodes.satisfaction_check import satisfaction_check_node
+from agent.nodes.refiner import enrich_context_node, agent_node, trino_exec_node
 
 logger = logging.getLogger(__name__)
 
-def route_refiner_subgraph(state: AgentState) -> str:
-    """G2-02: Route from refiner to satisfaction check or exit."""
-    runtime_flags = state.get("runtime_flags") or {}
-    max_iterations = int(runtime_flags.get("MAX_REFINER_ITERATIONS", settings.MAX_REFINER_ITERATIONS))
-    
-    if state.get("trino_error"):
-        if state.get("refinement_count", 0) >= max_iterations:
-            return END
-        return "refiner"
-            
-    # Issue 37: check SATISFACTION_CHECK_ENABLED in router
-    check_enabled = runtime_flags.get("SATISFACTION_CHECK_ENABLED", settings.SATISFACTION_CHECK_ENABLED)
-    # Convert check_enabled to boolean properly if it's a string
-    if isinstance(check_enabled, str):
-        check_enabled = check_enabled.lower() == "true"
-    if not check_enabled:
-        return END
 
-    return "satisfaction_check"
+def route_enrich(state: AgentState) -> str:
+    """Routes out of enrich_context directly to fail if query is escalated/rejected, otherwise to trino_exec."""
+    if state.get("escalation_reason") or state.get("rejection_category"):
+        return "fail"
+    return "execute"
 
 
-def route_satisfaction_subgraph(state: AgentState) -> str:
+def route(state: AgentState) -> str:
     """
-    G2-04: Route based on satisfaction check outcome.
-      - no failures  → exit (success)
-      - failures, under MAX → refiner (loop)
-      - failures, over MAX  → exit (escalation)
+    Routes from agent node based on state and execution history.
     """
-    failures = state.get("satisfaction_failures")
-    if not failures:
-        return END
+    if state.get("escalation_reason") or state.get("rejection_category"):
+        return "fail"
 
-    fail_count = state.get("satisfaction_fail_count") or 0
-    if fail_count >= settings.SATISFACTION_MAX_FAILURES:
-        return END
-        
-    return "refiner"
+    if state.get("is_satisfied"):
+        return "success"
+
+    return "execute"
+
+
+def end_success_node(state: AgentState):
+    """Terminal node representing a successfully refined and satisfied query."""
+    return {}
+
+
+def end_fail_node(state: AgentState):
+    """Terminal node representing a failed refinement (max iterations, unanswerable, or ambiguous)."""
+    reason = (
+        state.get("escalation_reason")
+        or state.get("rejection_category")
+        or "Refiner failed."
+    )
+    return {"escalation_reason": reason}
 
 
 # ── Build Subgraph ────────────────────────────────────────────────────────────
 
 workflow = StateGraph(AgentState)
 
-workflow.add_node("refiner", refiner_node)
-workflow.add_node("satisfaction_check", satisfaction_check_node)
+workflow.add_node("enrich_context", enrich_context_node)
+workflow.add_node("trino_exec", trino_exec_node)
+workflow.add_node("agent", agent_node)
+workflow.add_node("end_success", end_success_node)
+workflow.add_node("end_fail", end_fail_node)
 
-workflow.add_edge(START, "refiner")
-
+# enrich_context leads directly to initial Trino execution or early fail
+workflow.add_edge(START, "enrich_context")
 workflow.add_conditional_edges(
-    "refiner",
-    route_refiner_subgraph,
+    "enrich_context",
+    route_enrich,
     {
-        "satisfaction_check": "satisfaction_check",
-        "refiner": "refiner",
-        END: END,
+        "execute": "trino_exec",
+        "fail": "end_fail",
     },
 )
 
+# trino_exec sends results to the Refiner agent for evaluation & error correction
+workflow.add_edge("trino_exec", "agent")
+
 workflow.add_conditional_edges(
-    "satisfaction_check",
-    route_satisfaction_subgraph,
+    "agent",
+    route,
     {
-        "refiner": "refiner",
-        END: END,
+        "execute": "enrich_context",
+        "success": "end_success",
+        "fail": "end_fail",
     },
 )
+
+workflow.add_edge("end_success", END)
+workflow.add_edge("end_fail", END)
 
 # Compile without a checkpointer, the parent graph handles memory
 refiner_subgraph = workflow.compile()
+

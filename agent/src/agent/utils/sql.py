@@ -25,3 +25,18 @@ def clean_sql(query: str) -> str:
         cleaned = cleaned[:-1].strip()
 
     return cleaned
+
+
+def replace_unquoted_char(sql: str, old: str, new: str) -> str:
+    """
+    Replaces occurrences of `old` with `new` ONLY outside of single-quoted string literals.
+    Handles escaped quotes (which in SQL are `''`) naturally because splitting on `'` 
+    keeps odd/even parity correct.
+    """
+    if not sql:
+        return sql
+        
+    parts = sql.split("'")
+    for i in range(0, len(parts), 2):
+        parts[i] = parts[i].replace(old, new)
+    return "'".join(parts)

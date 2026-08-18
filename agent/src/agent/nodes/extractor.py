@@ -151,7 +151,6 @@ def extractor_node(state: AgentState, config: RunnableConfig | None = None) -> d
     # whole list and lose TimeExtractor / LLMExtractor results.
     _extractor_specs: list = [
         (TimeExtractor,    {"runtime_flags": runtime_flags}),
-        (LLMExtractor,     {"runtime_flags": runtime_flags}),
         (LocationExtractor, {"runtime_flags": runtime_flags}),
         *[
             (HTTPExtractor, {"url": e["url"], "name": e["name"], "runtime_flags": runtime_flags})

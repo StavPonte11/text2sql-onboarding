@@ -534,6 +534,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 300s
+    volumes:
+      - ./core:/app/core
+      - ./backend:/app/backend
+      - /app/backend/.venv
 
   agent:
     build:
@@ -545,7 +549,11 @@ services:
       - ./agent/.env
     ports:
       - "8001:8001"
-    environment:
+    volumes:
+      - ./core:/app/core
+      - ./agent:/app/agent
+      - /app/agent/.venv
+    environment: 
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
       - POSTGRES_HOST=db
       - POSTGRES_USER=postgres
@@ -554,12 +562,18 @@ services:
       - POSTGRES_DB=text2sql
       - REDIS_URL=redis://redis:6379
       - REDIS_SSL=false
-      - LLM_BASE_URL=http://host.docker.internal:11434/v1
-      - LLM_MODEL=gemma4:e4b
-      - LLM_API_KEY=ollama
+      # - LLM_BASE_URL=http://host.docker.internal:11434/v1
+      # - LLM_MODEL=gemma4:e4b
+      # - LLM_API_KEY=ollama
+      - LLM_API_KEY=sk-pj7x2rp8o2tli9
+      - LLM_BASE_URL=https://pj7x2rp8o2tli9-8000.proxy.runpod.net/v1
+      - LLM_MODEL=openai/gpt-oss-120b
+      - JEEN_LLM_CORE_URL=http://schema-modeler.dev161.internal/api/mcp
+      - JEEN_API_KEY=mcp_ecd023ab04f849b36aef5d797525365c4c095052e6e07577d065bfe82507ae67
       - EMBEDDER_URL=http://host.docker.internal:11434/v1/embeddings
       - EMBEDDER_MODEL=nomic-embed-text:latest
       - ESCA_URL=http://host.docker.internal:7010
+      - ESCA_WRITE_ENABLED=false
       - MAX_PROFILES_TO_FETCH=10
       - HYBRID_SEARCH_MAX_TABLES=15
       - TRINO_HOST=trino
@@ -589,7 +603,7 @@ services:
       - "3000:8080"
     environment:
       - BACKEND_URL=http://backend:8000
-      - AGENT_URL=http://host.docker.internal:8001
+      - AGENT_URL=http://agent:8001
     depends_on:
       backend:
         condition: service_healthy
