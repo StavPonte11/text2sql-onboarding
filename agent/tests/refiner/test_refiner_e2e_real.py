@@ -59,7 +59,7 @@ async def test_e2e_real_trino_execution_happy_path():
     """
     state = AgentState(
         user_query="get 3 rows from the customer table",
-        sql_query="SELECT * FROM customer LIMIT 3",
+        sql_query="SELECT * FROM tpch.tiny.customer LIMIT 3",
         jeen_catalog=CUSTOMER_CATALOG,
         locations_dict={},
         runtime_flags={

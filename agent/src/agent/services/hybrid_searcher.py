@@ -15,58 +15,6 @@ from agent.config import settings
 logger = logging.getLogger(__name__)
 
 
-async def search_workflow(table_id: str, col_name: str, value: str, use_rrf: bool = True) -> List[str]:
-    """
-    Executes an enterprise-grade retrieval pipeline for large_category columns.
-
-    Args:
-        table_id: Database table name or UUID.
-        col_name: Database column name.
-        value: Search string literal.
-        use_rrf: (Deprecated) Kept for compatibility.
-
-    Returns:
-        Deduplicated list of matching candidate strings.
-    """
-    try:
-        client = get_jeen_metadata_client()
-        # Jeen-Metadata MCP API expects fully qualified table name if we have it, 
-        # but the MCP tool accepts bare table names too. 
-        results = await client.search_column_values(query=value, table_name=table_id, column_name=col_name)
-        return results
-    except Exception as e:
-        logger.error(f"Search workflow failed for {col_name}={value}: {e}", exc_info=True)
-        return []
-
-
-async def unit_id_workflow(table_id: str, col_name: str, value: str, use_rrf: bool = True) -> List[str]:
-    """
-    Executes retrieval pipeline for large_unit_id numeric semantic columns.
-
-    Args:
-        table_id: Database table name or UUID.
-        col_name: Database column name.
-        value: Search string literal.
-
-    Returns:
-        A list of matching database values.
-    """
-    try:
-        # A. Regex digits extraction to find numeric parts
-        digits_match: List[str] = re.findall(r"\d+", value)
-        query = value
-        if digits_match:
-            # Maybe search specifically for the digits if that's what matters for an ID
-            # but usually the MCP search_column_values handles partial substrings well.
-            pass
-            
-        client = get_jeen_metadata_client()
-        results = await client.search_column_values(query=query, table_name=table_id, column_name=col_name)
-        return results
-    except Exception as e:
-        logger.error(f"Unit ID workflow failed for {col_name}={value}: {e}", exc_info=True)
-        return []
-
 
 class HybridSearcher:
     """
@@ -102,6 +50,7 @@ class HybridSearcher:
         task_keys = []
         
         delimiter = settings.CACHE_KEY_DELIMITER
+        client = get_jeen_metadata_client()
         
         for f in filters:
             col_lower = f.source_column.lower()
@@ -126,11 +75,17 @@ class HybridSearcher:
             for val in values_to_search:
                 if not val.strip():
                     continue
-                # Schedule tasks based on semantic type
-                if sem_type == "large_unit_id":
-                    task = unit_id_workflow(table_lower, col_lower, val)
-                else:
-                    task = search_workflow(table_lower, col_lower, val)
+                
+                # Strip wildcards before sending to Jeen MCP to ensure clean semantic matching
+                clean_val = val.replace("%", "")
+                
+                # Schedule search task directly via MCP client
+                # The MCP backend handles semantic_type routing automatically
+                task = client.search_column_values(
+                    query=clean_val, 
+                    table_name=table_lower or None, 
+                    column_name=col_lower or None
+                )
                     
                 tasks.append(task)
                 task_keys.append(f"{f.source_column}{delimiter}{val}")
@@ -146,7 +101,13 @@ class HybridSearcher:
                 logger.error(f"Search task failed for {key}: {res}")
                 continue
             if res:
-                # Deduplicate and sort
-                final_dict[key] = sorted(list(set(res)))
+                # Deduplicate while preserving the custom ranking order
+                seen = set()
+                deduped = []
+                for x in res:
+                    if x not in seen:
+                        seen.add(x)
+                        deduped.append(x)
+                final_dict[key] = deduped
                 
         return final_dict

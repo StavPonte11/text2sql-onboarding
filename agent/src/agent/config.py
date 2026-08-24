@@ -56,7 +56,6 @@ class AgentSettings(BaseSettings):
     LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/enrichment_extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"
     LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder"
-    LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
     LANGFUSE_PROMPT_FINALIZER: str = "text2sql/finalizer"
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
     LANGFUSE_PROMPT_CATEGORY_ENRICHMENT: str = "text2sql/category_enrichment"
@@ -64,7 +63,6 @@ class AgentSettings(BaseSettings):
     LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: str = (
         "text2sql/location_wkt_instruction"
     )
-    LANGFUSE_PROMPT_REFINER_STEP1: str = "text2sql/refiner_step1"
     LANGFUSE_PROMPT_REFINER_STEP2: str = "text2sql/refiner_step2"
     LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity"
 

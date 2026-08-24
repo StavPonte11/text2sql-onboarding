@@ -105,8 +105,7 @@ class SQLTransformer:
             return exp.LTE(this=lhs, expression=lit)
         elif op_clean == "LIKE":
             return exp.Like(this=lhs, expression=lit)
-        elif op_clean == "ILIKE":
-            return exp.ILike(this=lhs, expression=lit)
+
         
         return exp.EQ(this=lhs, expression=lit)
 

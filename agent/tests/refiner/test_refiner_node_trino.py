@@ -187,22 +187,23 @@ async def test_trino_exec_memory_shield_truncation(
         runtime_flags={"ESCA_WRITE_ENABLED": False, "PREVIEW_ROWS_COUNT": 15},
     )
 
-    result = await trino_exec_node(state)
-
-    # 1. Full data is preserved for state/ESCA
-    assert result["last_result_row_count"] == 100
-    assert len(result["inline_result_rows"]) == 100
-
-    # 2. LLM Context payload is strictly truncated!
-    import ast
-
-    # The node does: str([columns] + rows[:5])
-    llm_payload = ast.literal_eval(result["last_result_data"])
-
-    # 1 header row + 15 data rows = 16 total items
-    assert len(llm_payload) == 16
-    assert llm_payload[0] == ["id", "name"]  # Header
-    assert llm_payload[-1] == [14, "user_14"]  # 15th data row
+    with patch("agent.nodes.refiner.settings.PREVIEW_ROWS_COUNT", 15):
+        result = await trino_exec_node(state)
+    
+        # 1. Full data is preserved for state/ESCA
+        assert result["last_result_row_count"] == 100
+        assert len(result["inline_result_rows"]) == 100
+    
+        # 2. LLM Context payload is strictly truncated!
+        import ast
+    
+        # The node does: str([columns] + rows[:5])
+        llm_payload = ast.literal_eval(result["last_result_data"])
+    
+        # 1 header row + 15 data rows = 16 total items
+        assert len(llm_payload) == 16
+        assert llm_payload[0] == ["id", "name"]  # Header
+        assert llm_payload[-1] == [14, "user_14"]  # 15th data row
 
 
 @pytest.mark.asyncio

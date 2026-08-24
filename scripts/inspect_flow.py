@@ -209,7 +209,36 @@ async def run_flow(query: str, auto_approve: bool = True):
 
                     elif node_name == "enrich_context":
                         sql = updates.get("sql_query", "")
+                        enrichments = updates.get("filter_enrichments") or []
                         print_refiner_step_header("ENRICH CONTEXT", "Context & Category Enrichment")
+                        if enrichments:
+                            print(f"    {GREEN}✓ Active Filter Enrichments ({len(enrichments)} mapping(s)):{RESET}")
+                            for item in enrichments:
+                                col = item.get("column", item.get("column_name", "unknown"))
+                                orig = item.get("original_value", "")
+                                old_op = item.get("old_operator", "")
+                                
+                                res = item.get("refined_values", item.get("resolved_value", ""))
+                                if isinstance(res, list):
+                                    # If it's going to be an IN clause, format it with parentheses
+                                    if item.get("new_operator", "").upper() == "IN":
+                                        res = ", ".join(f"'{r}'" for r in res)
+                                    else:
+                                        res = ", ".join(res)
+                                
+                                new_op = item.get("new_operator", "")
+                                
+                                if old_op and new_op:
+                                    # Format old and new strings neatly
+                                    old_str = f"{old_op} ({orig})" if old_op.upper() == "IN" else f"{old_op} '{orig}'"
+                                    new_str = f"{new_op} ({res})" if new_op.upper() == "IN" else f"{new_op} '{res}'"
+                                    print(f"    • {CYAN}{col}{RESET}: [{old_str}] ➡️ [{new_str}]")
+                                else:
+                                    # Fallback for old traces
+                                    print(f"    • {CYAN}{col}{RESET}: '{orig}' ➡️ '{res}'")
+                        else:
+                            print(f"    {YELLOW}• No structural filter values needed enrichment.{RESET}")
+                            
                         if sql:
                             print(f"    {CYAN}Current Candidate SQL:{RESET}\n    {BOLD}{sql.replace(chr(10), chr(10) + '    ')}{RESET}")
 

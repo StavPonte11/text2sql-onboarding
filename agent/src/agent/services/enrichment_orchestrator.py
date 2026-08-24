@@ -166,8 +166,8 @@ class EnrichmentOrchestrator:
                 {
                     "schema": json.dumps(schema, indent=2),
                     "user_request": user_request,
-                    "initial_sql": initial_sql,
-                    "search_results_formatted": search_results_formatted,
+                    "current_agent_query": initial_sql,
+                    "columns_search_results": search_results_formatted,
                 }
             )
             messages = prompt_value.to_messages()
@@ -201,9 +201,16 @@ class EnrichmentOrchestrator:
                 # Propagate source_table from original filters to transformations
                 for param in filters:
                     if param.source_column.lower() == tf.column.lower():
-                        val_str = "null" if param.value is None else str(param.value).replace("%", "").strip().lower()
                         tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
-                        if val_str == tf_orig_clean:
+                        match = False
+                        if param.value is None:
+                            match = (tf_orig_clean == "null")
+                        elif isinstance(param.value, (list, tuple, set)):
+                            match = any(str(v).replace("%", "").strip().lower() == tf_orig_clean for v in param.value)
+                        else:
+                            match = (str(param.value).replace("%", "").strip().lower() == tf_orig_clean)
+                        
+                        if match:
                             tf.table = param.source_table
                             break
 
@@ -218,12 +225,14 @@ class EnrichmentOrchestrator:
                                 candidates = v
                                 break
                     if candidates is not None:
-                        for ref_val in tf.refined_values:
-                            if ref_val not in candidates:
-                                logger.warning(
-                                    f"[Validation Failure] Ghost value detected: refined value '{ref_val}' "
-                                    f"does not exist in candidates list {candidates} for column '{tf.column}'."
-                                )
+                        # If using a LIKE operator with wildcards, exact candidate matching doesn't apply
+                        if tf.new_operator.upper() != "LIKE":
+                            for ref_val in tf.refined_values:
+                                if ref_val not in candidates:
+                                    logger.warning(
+                                        f"[Validation Failure] Ghost value detected: refined value '{ref_val}' "
+                                        f"does not exist in candidates list {candidates} for column '{tf.column}'."
+                                    )
                     else:
                         logger.warning(
                             f"[Validation Failure] No candidate pool found for column '{tf.column}'."
