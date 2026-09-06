@@ -182,7 +182,7 @@ async def test_agent_injects_enrichments_and_schema_cap(
 
     # 2. Verify enrichments were injected
     enriched_instruction = invoke_vars["enriched_instruction"]
-    assert "[QUERY ENRICHMENTS]" in enriched_instruction
+    assert "[QUERY & FILTER ENRICHMENTS]" in enriched_instruction
     assert "active" in enriched_instruction
 
 

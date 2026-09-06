@@ -89,11 +89,15 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
         langfuse_prompt.get_langchain_prompt()
     )
 
+    import re
+    sql_query = state.get("sql_query") or ""
+    clean_sql_query = re.sub(r"@([a-zA-Z0-9_]+)_wkt@", r"'<Polygon for \1>'", sql_query)
+
     chain = prompt_finalizer | llm
     response = await chain.ainvoke(
         {
             "user_request": state.get("user_query") or "",
-            "sql_query": state.get("sql_query") or "",
+            "sql_query": clean_sql_query,
             "sql_translation": state.get("sql_explanation") or "",
             "sql_results": preview_str,
         }
@@ -101,6 +105,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
 
     return {
         "summary": response.content,
+        "sql_query": clean_sql_query,
         "sql_explanation": state.get("sql_explanation", ""),
         "execution_path": ["finalizer"],
     }

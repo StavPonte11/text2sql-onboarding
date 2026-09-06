@@ -60,12 +60,58 @@ def parse_jeen_catalog_tables(jeen_catalog: str) -> tuple[dict, list[AgentSQLTab
             col_match = re.match(col_pattern, line.strip())
             if col_match:
                 c_name, c_type, c_desc = col_match.groups()
+                
+                col_tags = {}
+                
+                # Split tags part and rest of description
+                colon_idx = c_desc.find(': ')
+                if colon_idx != -1:
+                    tags_part = c_desc[:colon_idx]
+                    rest_part = c_desc[colon_idx+2:]
+                else:
+                    tags_part = c_desc
+                    rest_part = ""
+                    if c_desc.endswith(':'):
+                        tags_part = c_desc[:-1]
+
+                # Parse tags
+                blocks = re.findall(r'\[(.*?)\]', tags_part)
+                for block in blocks:
+                    parts = block.split(',')
+                    for part in parts:
+                        if '=' in part:
+                            k, v = part.split('=', 1)
+                            col_tags[k.strip()] = v.strip()
+                            
+                # Parse description and profile
+                desc_str = rest_part.strip()
+                profile_str = ""
+                
+                profile_idx = rest_part.find('— profile:')
+                if profile_idx != -1:
+                    desc_str = rest_part[:profile_idx].strip()
+                    profile_str = rest_part[profile_idx + len('— profile:'):].strip()
+                
                 schema[current_tbl][c_name] = c_type.lower()
                 schema[current_tbl.split(".")[-1].strip('"')][c_name] = c_type.lower()
-                tables[-1].columns[c_name] = {
+                
+                semantic_type = col_tags.get("semantic_type", "")
+                null_ratio = col_tags.get("null_ratio", "")
+                cardinality_ratio = col_tags.get("cardinality_ratio", "")
+                distinct_count = col_tags.get("distinct_count", "")
+                
+                # Merge into the column dictionary
+                col_dict = {
                     "column_type": c_type.lower(),
-                    "description": c_desc.strip(),
+                    "semantic_type": semantic_type,
+                    "null_ratio": null_ratio,
+                    "cardinality_ratio": cardinality_ratio,
+                    "distinct_count": distinct_count,
+                    "description": desc_str,
+                    "profile": profile_str,
                 }
+                
+                tables[-1].columns[c_name] = col_dict
 
     return schema, tables
 
@@ -81,23 +127,32 @@ async def enrich_context_node(state: AgentState, config: RunnableConfig | None =
         try:
             schema, tables = parse_jeen_catalog_tables(jeen_catalog)
             if tables:
-                refined_sql, _, enriched = await EnrichmentOrchestrator.enrich_query(
+                refined_sql, plan, enriched = await EnrichmentOrchestrator.enrich_query(
                     user_request=state.get("user_query"),
                     initial_sql=sql,
                     schema=schema,
                     tables=tables,
                 )
+                
+                filter_enrichments = []
+                if plan and plan.enrichment_details:
+                    for tf in plan.enrichment_details:
+                        if tf.changed_filter:
+                            filter_enrichments.append(tf.model_dump())
+                
                 if enriched and refined_sql:
                     logger.info(
                         "Category Enrichment successfully refined query filters in refiner."
                     )
                     sql = refined_sql
+                    
+                return {"sql_query": sql, "execution_path": ["enrich_context"], "filter_enrichments": filter_enrichments}
         except Exception as e:
             logger.error(
                 f"Category Enrichment failed in enrich_context_node: {e}", exc_info=True
             )
 
-    return {"sql_query": sql, "execution_path": ["enrich_context"]}
+    return {"sql_query": sql, "execution_path": ["enrich_context"], "filter_enrichments": []}
 
 
 async def agent_node(state: AgentState, config: RunnableConfig | None = None):
@@ -163,13 +218,21 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Inject enrichments into the context instruction
-    enrichments = state.get("query_enrichments")
+    query_enrichments = state.get("query_enrichments") or []
+    filter_enrichments = state.get("filter_enrichments") or []
+    
+    all_enrichments = {
+        "query_enrichments": query_enrichments,
+        "filter_enrichments": filter_enrichments
+    }
+    
     enriched_instruction = ""
-    if enrichments:
+    if query_enrichments or filter_enrichments:
         enriched_instruction = (
-            f"[QUERY ENRICHMENTS]\n{json.dumps(enrichments, indent=2)}"
+            f"[QUERY & FILTER ENRICHMENTS]\n"
+            f"Note: Ensure you do NOT undo any structural filter mappings present in filter_enrichments.\n"
+            f"{json.dumps(all_enrichments, indent=2)}"
         )
-
     if langfuse_client and langfuse_client.get_current_trace_id():
         try:
             langfuse_client._create_trace_tags_via_ingestion(

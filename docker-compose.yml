@@ -500,7 +500,7 @@ services:
       OPENMETADATA_SERVICE_NAME: local_trino
       APP_ENV: production
       JWT_SECRET: dev-secret-change-in-production
-      AGENT_URL: http://agent:8001
+      AGENT_URL: http://host.docker.internal:8001
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}

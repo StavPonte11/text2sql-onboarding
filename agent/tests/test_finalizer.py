@@ -76,7 +76,7 @@ async def test_finalizer_node_with_top_10_preview(mock_langfuse, mock_llm):
         "inline_result_rows": rows,
         "inline_result_columns": columns,
         "raw_data_ref": None,
-        "runtime_flags": {"ESCA_WRITE_ENABLED": False},
+        "runtime_flags": {"ESCA_WRITE_ENABLED": False, "PREVIEW_ROWS_COUNT": 10},
         "summary": "",
         "execution_path": [],
         "messages": [],
@@ -137,7 +137,7 @@ async def test_finalizer_node_esca_enabled_with_ref(mock_langfuse, mock_llm):
     state: AgentState = {
         "user_query": "q", "sql_query": "s", "sql_explanation": "e",
         "inline_result_rows": None, "inline_result_columns": None,
-        "raw_data_ref": "ref-123", "runtime_flags": {"ESCA_WRITE_ENABLED": True},
+        "raw_data_ref": "ref-123", "runtime_flags": {"ESCA_WRITE_ENABLED": True, "PREVIEW_ROWS_COUNT": 10},
         "messages": [], "execution_path": [], "summary": "", "query_enrichments": [], "jeen_catalog": "", "trino_error": None, "refinement_count": 0, "allowed_tables": None, "allowed_statuses": None, "feedback": None, "rejection_category": None, "feedback_route": None, "non_interactive": False, "active_extractors": None, "active_skills": None, "loaded_skills": None, "last_error": None, "esca_write_failed": False, "error_history": None, "schema_explorer_retry_count": 0, "scoping_mode": "hybrid",
     }
     
