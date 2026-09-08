@@ -38,7 +38,9 @@ from pydantic import BaseModel
 from sqlmodel import Session, desc, select
 
 from app.config import settings
-from app.routers.orchestration import get_run_report as get_orchestration_report
+
+# NOTE: get_orchestration_report is imported locally inside get_run_report to avoid
+# a circular import with orchestration.py (which imports from this module).
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -968,6 +970,10 @@ def get_results(run_id: str, session: Session = Depends(get_session)):
 
 @router.get("/eval/{run_id}/report")
 def get_run_report(run_id: str, session: Session = Depends(get_session)):
+    from app.routers.orchestration import (
+        get_run_report as get_orchestration_report,  # local import to avoid circular dependency
+    )
+
     return get_orchestration_report(run_id, session)
 
 
