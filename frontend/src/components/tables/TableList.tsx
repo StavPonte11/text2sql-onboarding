@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -6,10 +6,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import dayjs from 'dayjs';
-import { Database, Plus, Search, Wand2 } from 'lucide-react';
+import { Database, Eye, EyeOff, Loader2, Plus, Search, Wand2 } from 'lucide-react';
 import { z } from 'zod';
 
 import { tablesApi } from '../../api/client';
+import { isSpider2Table } from '../../config/constants';
 import { ErrorState } from '../common/ErrorState';
 import { SkeletonTable } from '../common/Skeleton';
 import { StatusBadge } from '../common/StatusBadge';
@@ -42,6 +43,28 @@ export function TableList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<TableStatus | ''>('');
   const [showCreate, setShowCreate] = useState(false);
+  const [showSpider2, setShowSpider2] = useState(false);
+  const [spider2Pending, startSpider2Transition] = useTransition();
+  const [visibleCount, setVisibleCount] = useState(50);
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setVisibleCount(50);
+  }, [search, statusFilter, showSpider2]);
+
+  useEffect(() => {
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((prev) => prev + 50);
+        }
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [sentinel]);
 
   const {
     register,
@@ -56,7 +79,12 @@ export function TableList() {
     },
   });
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const {
+    data: rawData,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['tables', search, statusFilter],
     queryFn: () =>
       tablesApi.list({
@@ -64,6 +92,9 @@ export function TableList() {
         status: statusFilter || undefined,
       }),
   });
+
+  const data = rawData?.filter((t) => showSpider2 || !isSpider2Table(t)) || [];
+  const displayedData = data.slice(0, visibleCount);
 
   const createMutation = useMutation({
     mutationFn: tablesApi.create,
@@ -130,6 +161,25 @@ export function TableList() {
             </option>
           ))}
         </select>
+        <button
+          className={`btn btn--sm table-list__spider2-toggle${showSpider2 ? ' table-list__spider2-toggle--active' : ''}`}
+          onClick={() => {
+            startSpider2Transition(() => {
+              setShowSpider2((v) => !v);
+            });
+          }}
+          disabled={spider2Pending}
+          title={showSpider2 ? 'Hide Spider2 tables' : 'Show Spider2 tables'}
+        >
+          {spider2Pending ? (
+            <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} />
+          ) : showSpider2 ? (
+            <Eye size={13} />
+          ) : (
+            <EyeOff size={13} />
+          )}
+          Spider2
+        </button>
       </div>
 
       {/* Table */}
@@ -161,24 +211,36 @@ export function TableList() {
               </tr>
             </thead>
             <tbody>
-              {data.map((table) => (
+              {displayedData.map((table) => (
                 <tr key={table.id}>
                   <td>
-                    <span className="table-name-cell">{table.name}</span>
+                    <span className="table-name-cell" title={table.name}>
+                      {table.name}
+                    </span>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.service}</code>
+                    <code className="table-schema-code" title={table.service}>
+                      {table.service}
+                    </code>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.catalog}</code>
+                    <code className="table-schema-code" title={table.catalog}>
+                      {table.catalog}
+                    </code>
                   </td>
                   <td>
-                    <code className="table-schema-code">{table.schema_name}</code>
+                    <code className="table-schema-code" title={table.schema_name}>
+                      {table.schema_name}
+                    </code>
                   </td>
                   <td>
                     <StatusBadge status={table.status} />
                   </td>
-                  <td className="table-owner-cell">{table.owner_id}</td>
+                  <td>
+                    <span className="table-owner-cell" title={table.owner_id ?? ''}>
+                      {table.owner_id}
+                    </span>
+                  </td>
                   <td className="table-updated-cell">
                     {dayjs(table.updated_at).format('MMM D, YYYY HH:mm')}
                   </td>
@@ -194,6 +256,25 @@ export function TableList() {
               ))}
             </tbody>
           </table>
+          {data.length > visibleCount && (
+            <div
+              ref={setSentinel}
+              style={{
+                height: '50px',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                borderTop: '1px solid var(--border)',
+                background: 'var(--bg-secondary)',
+              }}
+            >
+              <Loader2
+                size={18}
+                style={{ animation: 'spin 0.8s linear infinite' }}
+                className="text-muted"
+              />
+            </div>
+          )}
         </div>
       )}
 

@@ -8,4 +8,12 @@ from app.routers import (
     tables,
 )
 
-__all__ = ["tables", "enrichment", "questions", "evaluation", "flags", "scopes", "audit"]
+__all__ = [
+    "audit",
+    "enrichment",
+    "evaluation",
+    "flags",
+    "questions",
+    "scopes",
+    "tables",
+]

@@ -10,7 +10,8 @@ from agent.config import settings
 from agent.langfuse_client import langfuse_client
 from agent.llm import get_llm
 from agent.utils.esca import get_esca_client
-
+from agent.utils.serialization import json_serial
+from agent.utils.esca import get_esca_client
 
 async def get_esca_preview(esca_id: str, limit: int | None = None) -> str:
     """Load data from Esca and return a preview of the columns and the rows."""
@@ -29,13 +30,14 @@ async def get_esca_preview(esca_id: str, limit: int | None = None) -> str:
             # Take a slice of the rows to avoid context overload if limit is provided
             preview_rows = rows[:limit] if limit is not None else rows
 
+
             preview_info = {
                 "columns": columns,
                 "preview_rows": preview_rows,
                 "preview_count": len(preview_rows),
-                "total_rows": total_rows,
+                "total_rows": total_rows
             }
-            return json.dumps(preview_info, indent=2, default=str)
+            return json.dumps(preview_info, default=json_serial, indent=2)
     except Exception as e:
         logger.error(f"Error retrieving data preview from Esca: {e}")
         return "Data preview is currently unavailable."

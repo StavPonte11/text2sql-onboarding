@@ -314,12 +314,26 @@ class LangfuseDatasetService:
         for item in existing_items:
             qid = (item.get("metadata") or {}).get("question_id")
             if qid:
+                exp_out = item.get("expectedOutput") or {}
+                if isinstance(exp_out, dict):
+                    exp_sql = exp_out.get("sql") or exp_out.get("response") or ""
+                elif isinstance(exp_out, str):
+                    exp_sql = exp_out
+                else:
+                    exp_sql = ""
+
+                inp_in = item.get("input") or {}
+                if isinstance(inp_in, dict):
+                    inp_q = inp_in.get("query") or inp_in.get("question") or ""
+                elif isinstance(inp_in, str):
+                    inp_q = inp_in
+                else:
+                    inp_q = ""
+
                 existing_by_qid[qid] = {
                     "langfuse_id": item["id"],
-                    "question_text": (item.get("input") or {}).get("query", ""),
-                    "expected_sql": (item.get("expectedOutput") or {}).get(
-                        "response", ""
-                    ),
+                    "question_text": inp_q.strip(),
+                    "expected_sql": exp_sql.strip(),
                 }
 
         # Build lookup for desired state: question_id → question dict
@@ -337,9 +351,11 @@ class LangfuseDatasetService:
         for qid in to_check:
             desired = desired_by_qid[qid]
             existing = existing_by_qid[qid]
+            desired_text = (desired.get("question_text") or "").strip()
+            desired_sql = (desired.get("expected_sql") or "").strip()
             if (
-                desired["question_text"] != existing["question_text"]
-                or desired["expected_sql"] != existing["expected_sql"]
+                desired_text != existing["question_text"]
+                or desired_sql != existing["expected_sql"]
             ):
                 to_update.add(qid)
 
@@ -378,6 +394,7 @@ class LangfuseDatasetService:
         for qid in items_to_create:
             q = desired_by_qid[qid]
             try:
+                sql_str = (q.get("expected_sql") or "").strip()
                 self._tracer.client.create_dataset_item(
                     dataset_name=dataset_name,
                     id=q["question_id"],
@@ -385,7 +402,7 @@ class LangfuseDatasetService:
                         "query": q["question_text"],
                         "databases": [q.get("schema_name", q["table_id"])],
                     },
-                    expected_output={"response": q["expected_sql"]},
+                    expected_output={"sql": sql_str, "response": sql_str},
                     metadata={
                         "split": q.get("split", ""),
                         "difficulty": str(q.get("difficulty", "")).lower().strip(),

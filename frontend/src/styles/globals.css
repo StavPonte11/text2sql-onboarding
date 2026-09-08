@@ -540,28 +540,41 @@ body,
 
 /* ── Score ring ── */
 .score-ring {
-  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
   border: 3px solid;
+  flex-shrink: 0;
 }
 
 .score-ring--high {
-  color: var(--status-production);
-  border-color: var(--status-production);
+  color: #10b981;
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
 }
+
 .score-ring--mid {
-  color: var(--status-sandbox);
-  border-color: var(--status-sandbox);
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
 }
+
 .score-ring--low {
-  color: var(--status-degraded);
-  border-color: var(--status-degraded);
+  color: #ef4444;
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.score-ring--running {
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 11px;
 }
 
 /* ── Wizard stepper ── */

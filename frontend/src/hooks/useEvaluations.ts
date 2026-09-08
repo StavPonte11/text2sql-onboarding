@@ -29,6 +29,17 @@ export function useTriggerOrchestrationRun() {
   });
 }
 
+// ── Trigger dataset evaluation run ───────────────────────────────────────────
+export function useTriggerDatasetRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (datasetName: string) => orchestrationApi.triggerDatasetRun(datasetName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+    },
+  });
+}
+
 // ── List all evaluation runs ───────────────────────────────────────────────────
 export function useAllEvalRuns() {
   return useQuery({

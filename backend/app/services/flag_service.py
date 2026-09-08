@@ -9,10 +9,10 @@ Resolution contract (highest → lowest priority):
   3. AgentSettings env-var defaults          (always-on fallback)
 
 Cache keys:
-  flag:all            – full dict of all DB flag values         TTL=30s
-  mode:{name}         – single mode's flag_overrides dict       TTL=30s
+  flag:all            - full dict of all DB flag values         TTL=30s
+  mode:{name}         - single mode's flag_overrides dict       TTL=30s
 
-A missing row in config.feature_flags means "no DB override" —
+A missing row in config.feature_flags means "no DB override" -
 callers must fall back to their env-var default.
 """
 
@@ -30,8 +30,9 @@ from core.models.models import (
     FeatureFlagAuditLog,
 )
 from fastapi import HTTPException
-from sqlmodel import Session, select
 from python_core_utils.redis import get_redis_client
+from sqlmodel import Session, select
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,9 @@ class FlagService:
         self._try_cache_set(cache_key, overrides, settings.MODE_CACHE_TTL)
         return overrides
 
-    def upsert_mode(self, name: str, data: ExecutionModeUpsert, actor: str) -> ExecutionMode:
+    def upsert_mode(
+        self, name: str, data: ExecutionModeUpsert, actor: str
+    ) -> ExecutionMode:
         with Session(engine) as session:
             mode = session.get(ExecutionMode, name)
             if mode is None:
@@ -241,7 +244,9 @@ class FlagService:
         with Session(engine) as session:
             mode = session.get(ExecutionMode, name)
             if mode is None:
-                raise HTTPException(status_code=404, detail=f"Execution mode '{name}' not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Execution mode '{name}' not found"
+                )
             session.delete(mode)
             session.commit()
 

@@ -149,7 +149,9 @@ class EvalRun(SQLModel, table=True):
     __tablename__ = "eval_runs"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(
+    table_id: str | None = Field(
+        default=None,
+        nullable=True,
         sa_column_args=[
             ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")
         ],

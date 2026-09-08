@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 
 import { TableList } from '../components/tables/TableList';
-import { EvaluationsPage } from '../pages/EvaluationsPage';
 import { highlightJson } from '../components/TraceTimeline';
+import { EvaluationsPage } from '../pages/EvaluationsPage';
 import { renderWithProviders } from './setup';
 
 // Mock useNavigate from react-router-dom
@@ -115,12 +115,16 @@ describe('EvaluationsPage Integration Tests', () => {
 
 describe('JSON Syntax Highlight Tests', () => {
   test('correctly highlights keys, strings, booleans, and nulls in JSON text', () => {
-    const rawJson = JSON.stringify({
-      key_str: "hello",
-      key_num: 42.5,
-      key_bool: true,
-      key_null: null
-    }, null, 2);
+    const rawJson = JSON.stringify(
+      {
+        key_str: 'hello',
+        key_num: 42.5,
+        key_bool: true,
+        key_null: null,
+      },
+      null,
+      2,
+    );
 
     const highlighted = highlightJson(rawJson);
 
@@ -136,9 +140,13 @@ describe('JSON Syntax Highlight Tests', () => {
   });
 
   test('escapes HTML entities safely', () => {
-    const rawJson = JSON.stringify({
-      malicious: "<script>alert('xss')</script>"
-    }, null, 2);
+    const rawJson = JSON.stringify(
+      {
+        malicious: "<script>alert('xss')</script>",
+      },
+      null,
+      2,
+    );
 
     const highlighted = highlightJson(rawJson);
 

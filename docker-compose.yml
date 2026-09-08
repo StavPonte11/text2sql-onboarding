@@ -576,15 +576,28 @@ services:
       - ESCA_WRITE_ENABLED=false
       - MAX_PROFILES_TO_FETCH=10
       - HYBRID_SEARCH_MAX_TABLES=15
-      - TRINO_HOST=trino
-      - TRINO_PORT=8080
-      - TRINO_USER=trino
+      - TRINO_HOST=trino.dev161.internal
+      - TRINO_PORT=443
+      - TRINO_USER=schema-modeler
       - TRINO_PASSWORD=
-      - TRINO_CATALOG=minio
-      - TRINO_SCHEMA=simple_retail
-      - TRINO_HTTP_SCHEME=http
+      - TRINO_CATALOG=postgres
+      - TRINO_SCHEMA=public
+      - TRINO_HTTP_SCHEME=https
       - TRINO_REQUEST_TIMEOUT=30.0
       - TRINO_ENABLED=true
+      - TRINO_CERT_PATH=/app/trino-certs/trino-client-crt
+      - TRINO_KEY_PATH=/app/trino-certs/trino-client-key
+      # - TRINO_HOST=trino
+      # - TRINO_PORT=8080
+      # - TRINO_USER=trino
+      # - TRINO_PASSWORD=
+      # - TRINO_CATALOG=minio
+      # - TRINO_SCHEMA=simple_retail
+      # - TRINO_HTTP_SCHEME=http
+      # - TRINO_REQUEST_TIMEOUT=30.0
+      # - TRINO_ENABLED=true
+    volumes:
+      - /Users/yodan/Documents/azure-trino-certs:/app/trino-certs:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -594,6 +607,9 @@ services:
         condition: service_healthy
       trino:
         condition: service_healthy
+    networks:
+      - default
+      - shared-net
 
   frontend:
     build:
@@ -620,3 +636,7 @@ volumes:
 secrets:
   deploy_key:
     file: ./deploy_key
+
+networks:
+  shared-net:
+    external: true

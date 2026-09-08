@@ -350,3 +350,17 @@ export function EmptySlate({
     </div>
   );
 }
+
+// ── ScoreRing ──────────────────────────────────────────────────────────────────
+export function ScoreRing({ score, status }: { score: number; status?: string }) {
+  if (status === 'running') {
+    return (
+      <div className="score-ring score-ring--running" title="Evaluation in progress…">
+        <Spinner size={14} color="#f59e0b" />
+      </div>
+    );
+  }
+  const pct = Math.round(score * 100);
+  const cls = pct >= 50 ? 'score-ring--high' : 'score-ring--low';
+  return <div className={`score-ring ${cls}`}>{pct}%</div>;
+}
