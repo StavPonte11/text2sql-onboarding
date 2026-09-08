@@ -317,13 +317,10 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
     runtime_flags = state.get("runtime_flags") or {}
     import re
 
+    from agent.utils.sql import resolve_wkt_polygons
     # ── Map WKT placeholders and before Trino execution ──
     locations_dict = state.get("locations_dict")
-    if locations_dict and "coords" in locations_dict:
-        for placeholder, wkt_str in locations_dict["coords"].items():
-            # Strip any existing quotes on wkt_str so we always produce standard 'POLYGON (...)'
-            clean_wkt = wkt_str.strip("'")
-            sql = re.sub(r"['\"]?@" + re.escape(placeholder) + r"@['\"]?", f"'{clean_wkt}'", sql)
+    sql = resolve_wkt_polygons(sql, locations_dict, mask=False)
 
 
     try:
@@ -331,16 +328,16 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
         success = result.success
         trino_error = result.error_message or "Unknown Trino error"
         if not success:
-            error_history.append({"sql": sql, "error": trino_error})
+            error_history.append({"sql": state.get("sql_query"), "error": trino_error})
     except Exception as e:
         success = False
         trino_error = str(e)
-        error_history.append({"sql": sql, "error": trino_error})
+        error_history.append({"sql": state.get("sql_query"), "error": trino_error})
         result = None
 
     if not success:
         return {
-            "sql_query": sql,
+            "sql_query": state.get("sql_query"),
             "trino_error": trino_error,
             "last_error": trino_error,
             "error_history": error_history,
@@ -379,7 +376,7 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
                 raise RuntimeError(f"Failed to write query result to ESCA: {e}")
 
         return {
-            "sql_query": sql,
+            "sql_query": state.get("sql_query"),
             "trino_error": None,
             "last_error": None,
             "raw_data_ref": raw_ref,
