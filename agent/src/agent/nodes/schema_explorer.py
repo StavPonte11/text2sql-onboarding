@@ -346,7 +346,7 @@ async def get_table_profile(table_id: str) -> str:
         return json.dumps(lightweight, indent=2)
 
 
-async def schema_explorer_node(state: AgentState, config: RunnableConfig | None = None):
+async def schema_explorer_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """Schema Explorer node — just fetches the full catalog prompt from MCP."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
 
@@ -360,7 +360,8 @@ async def schema_explorer_node(state: AgentState, config: RunnableConfig | None 
 
     logger.info("Fetching full catalog prompt from Jeen MCP.")
     try:
-        catalog_prompt = await _jeen.get_catalog_prompt()
+        connection_id = state.get("connection_id")
+        catalog_prompt = await _jeen.get_catalog_prompt(connection_id=connection_id)
         if not catalog_prompt:
             raise ValueError("Received empty catalog prompt from Jeen.")
     except Exception as exc:

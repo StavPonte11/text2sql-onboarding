@@ -354,13 +354,17 @@ const AgentTestingHeader = memo(
   ({
     hitlEnabled,
     setHitlEnabled,
-    allowedStatuses,
-    setAllowedStatuses,
+    connections,
+    selectedConnection,
+    setSelectedConnection,
+    loadingConnections,
   }: {
     hitlEnabled: boolean;
     setHitlEnabled: (v: boolean) => void;
-    allowedStatuses: string[];
-    setAllowedStatuses: (v: string[]) => void;
+    connections: any[];
+    selectedConnection: number | undefined;
+    setSelectedConnection: (v: number | undefined) => void;
+    loadingConnections: boolean;
   }) => (
     <div className={styles.header}>
       <div>
@@ -378,20 +382,17 @@ const AgentTestingHeader = memo(
           <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
         </div>
         <div className={styles.controlItem}>
-          <span>Table Status</span>
+          <span>Catalog</span>
           <Select
-            mode="multiple"
-            value={allowedStatuses}
-            onChange={setAllowedStatuses}
+            value={selectedConnection}
+            onChange={setSelectedConnection}
             style={{ minWidth: 200 }}
-            placeholder="Select allowed statuses"
-            options={[
-              { value: 'production', label: 'Production' },
-              { value: 'verified', label: 'Verified' },
-              { value: 'sandbox', label: 'Sandbox' },
-              { value: 'draft', label: 'Draft' },
-              { value: 'degraded', label: 'Degraded' },
-            ]}
+            placeholder="Select connection"
+            loading={loadingConnections}
+            options={connections.map((c: any) => ({
+              value: c.connection_id,
+              label: c.name,
+            }))}
           />
         </div>
       </div>
@@ -409,12 +410,14 @@ const AgentChatInput = ({
   onSubmit,
   disabled,
   loading,
+  submitDisabled,
 }: {
   query: string;
   setQuery: (q: string) => void;
   onSubmit: () => void;
   disabled: boolean;
   loading: boolean;
+  submitDisabled?: boolean;
 }) => (
   <div className={`${styles.glassCard} ${styles.animateIn}`}>
     <Space.Compact className={styles.chatInputWrapper}>
@@ -423,14 +426,16 @@ const AgentChatInput = ({
         placeholder="Ask the agent to query a table..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onPressEnter={onSubmit}
+        onPressEnter={() => {
+          if (!disabled && !submitDisabled) onSubmit();
+        }}
         disabled={disabled}
       />
       <Button
         className={styles.primaryButton}
         onClick={onSubmit}
         loading={loading}
-        disabled={disabled}
+        disabled={disabled || submitDisabled}
       >
         {!loading && <Play size={18} />}
         Run Agent
@@ -892,7 +897,23 @@ const AgentResultDisplay = ({
 export function AgentTestingPage() {
   const [query, setQuery] = useState('');
   const [hitlEnabled, setHitlEnabled] = useState(true);
-  const [allowedStatuses, setAllowedStatuses] = useState<string[]>(['production']);
+  const [connections, setConnections] = useState<any[]>([]);
+  const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
+  const [loadingConnections, setLoadingConnections] = useState(false);
+
+  useEffect(() => {
+    setLoadingConnections(true);
+    agentApi
+      .listConnections()
+      .then((res) => {
+        setConnections(res.connections || []);
+        setLoadingConnections(false);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch connections:', err);
+        setLoadingConnections(false);
+      });
+  }, []);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
@@ -1004,7 +1025,7 @@ export function AgentTestingPage() {
   const isInputDisabled = chatMutation.isPending || chatResponse?.status === 'interrupted';
 
   const handleSubmit = () => {
-    if (!query) return;
+    if (!query || !selectedConnection) return;
     setChatResponse(null);
     const newThreadId = uuidv4();
     setThreadId(newThreadId);
@@ -1019,7 +1040,7 @@ export function AgentTestingPage() {
         query,
         thread_id: newThreadId,
         hitl_enabled: hitlEnabled,
-        allowed_statuses: allowedStatuses.length > 0 ? allowedStatuses : undefined,
+        connection_id: selectedConnection,
       });
     }, 300);
   };
@@ -1030,6 +1051,7 @@ export function AgentTestingPage() {
       chatMutation.mutate({
         thread_id: threadId,
         resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
+        connection_id: selectedConnection,
       });
     }, 300);
   };
@@ -1041,6 +1063,7 @@ export function AgentTestingPage() {
         thread_id: threadId,
         resume_value: { approved: false, feedback, rejection_category: category },
         hitl_enabled: hitlEnabled,
+        connection_id: selectedConnection,
       });
     }, 300);
   };
@@ -1096,8 +1119,10 @@ export function AgentTestingPage() {
       <AgentTestingHeader
         hitlEnabled={hitlEnabled}
         setHitlEnabled={setHitlEnabled}
-        allowedStatuses={allowedStatuses}
-        setAllowedStatuses={setAllowedStatuses}
+        connections={connections}
+        selectedConnection={selectedConnection}
+        setSelectedConnection={setSelectedConnection}
+        loadingConnections={loadingConnections}
       />
 
       <AgentChatInput
@@ -1106,6 +1131,7 @@ export function AgentTestingPage() {
         onSubmit={handleSubmit}
         disabled={isInputDisabled}
         loading={isPendingInitial}
+        submitDisabled={!selectedConnection || !query.trim()}
       />
 
       {chatMutation.isError && (

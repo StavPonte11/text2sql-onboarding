@@ -22,6 +22,7 @@ dependencies = [
     "json-repair>=0.25.0",
     "shapely>=2.0.0",
     "sqlglot>=25.0.0",
+    "urllib3>=2.7.0",
 ]
 
 [tool.uv.sources]
@@ -57,3 +58,7 @@ select = ["TID"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_llm: tests that make live LLM calls",
+    "real_e2e: real end-to-end tests requiring external services",
+]

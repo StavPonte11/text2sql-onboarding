@@ -56,20 +56,23 @@ def test_http_extractor_failure(mock_post):
     mock_post.assert_called_once()
 
 @patch("agent.nodes.extractor.TimeExtractor")
-@patch("agent.nodes.extractor.LLMExtractor")
+@patch("agent.nodes.extractor.LocationExtractor")
 @patch("agent.nodes.extractor.HTTPExtractor")
-def test_extractor_node(MockHTTPExtractor, MockLLMExtractor, MockTimeExtractor):
+def test_extractor_node(MockHTTPExtractor, MockLocationExtractor, MockTimeExtractor):
     # Setup mocks
     mock_time_ext = MagicMock()
     mock_time_ext.extract.return_value = [ContextEntry(term="time", context="time context")]
+    mock_time_ext.state_update.return_value = {}
     MockTimeExtractor.return_value = mock_time_ext
     
-    mock_llm_ext = MagicMock()
-    mock_llm_ext.extract.return_value = [ContextEntry(term="llm", context="llm context")]
-    MockLLMExtractor.return_value = mock_llm_ext
+    mock_loc_ext = MagicMock()
+    mock_loc_ext.extract.return_value = [ContextEntry(term="location", context="location context")]
+    mock_loc_ext.state_update.return_value = {"location_wkt_instruction": "test_instruction"}
+    MockLocationExtractor.return_value = mock_loc_ext
     
     mock_http_ext = MagicMock()
     mock_http_ext.extract.return_value = [ContextEntry(term="http", context="http context")]
+    mock_http_ext.state_update.return_value = {}
     MockHTTPExtractor.return_value = mock_http_ext
     
     state = {
@@ -97,5 +100,6 @@ def test_extractor_node(MockHTTPExtractor, MockLLMExtractor, MockTimeExtractor):
     assert len(enrichments) == 3
     terms = [e["term"] for e in enrichments]
     assert "time" in terms
-    assert "llm" in terms
+    assert "location" in terms
     assert "http" in terms
+    assert result.get("location_wkt_instruction") == "test_instruction"

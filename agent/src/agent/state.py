@@ -25,12 +25,14 @@ class AgentState(TypedDict):
     active_extractors: list[dict[str, str]] | None
     active_skills: list[str] | None
     loaded_skills: list[dict] | None
+    connection_id: int
     last_error: str | None
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None
     inline_result_columns: list[str] | None
-    error_history: list[str] | None
+    error_history: list[dict[str, str]] | None
     schema_explorer_retry_count: int | None
+    refiner_reasoning: str | None
     # G2-01: table scoping
     scoping_mode: Literal["strict", "hybrid"] | None  # controlled via config / runtime_flags
     # G2-02: HITL escalation
@@ -45,6 +47,9 @@ class AgentState(TypedDict):
     # ── Map related state ─────────────────────────────────────────────────────
     locations_dict: dict[str, dict[str, str]] | None
     location_wkt_instruction: str | None
+    is_satisfied: bool | None
+    last_result_row_count: int | None
+    last_result_data: str | None
     # ── Ambiguity Detection (detect_ambiguity node) ───────────────────────────
     # Raw parsed JSON output from the detect_ambiguity LLM call.
     ambiguity_result: Optional[dict] | None

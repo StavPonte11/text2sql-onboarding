@@ -152,20 +152,60 @@ class JeenMetadataClient:
         )
 
     # ------------------------------------------------------------------
-    # Full DB Schema (all columns)
+    # Search Column Values
     # ------------------------------------------------------------------
 
-    async def get_catalog_prompt(self) -> str:
+    async def search_column_values(
+        self, query: str, table_name: str | None = None, column_name: str | None = None
+    ) -> list[str]:
+        """
+        Looks up real values a column contains using semantic and keyword matching via MCP.
+        """
+        if not self.is_configured:
+            logger.warning("JeenMetadataClient is not configured. Returning empty search results.")
+            return []
+            
+        args: dict[str, Any] = {
+            "connection_id": self._connection_id,
+            "query": query,
+            "limit": self._search_limit,
+        }
+        if table_name:
+            args["table"] = table_name
+        if column_name:
+            args["column"] = column_name
+
+        try:
+            payload = await self._call("search_column_values", args)
+            if isinstance(payload, dict) and "values" in payload:
+                results = []
+                for v in payload["values"]:
+                    if isinstance(v, dict) and "value" in v:
+                        results.append(str(v["value"]))
+                    else:
+                        results.append(str(v))
+                return results
+            return []
+        except Exception as exc:
+            logger.error("JeenMetadataClient.search_column_values failed: %s", exc, exc_info=True)
+            return []
+
+    # ------------------------------------------------------------------
+    # Glossary / Context
+    # ------------------------------------------------------------------
+
+    async def get_catalog_prompt(self, connection_id: int | None = None) -> str:
         """
         Fetch the entire catalog context prompt for the connection using the
         MCP `get_catalog_prompt` tool. This returns a large markdown string
         describing all tables, columns, relationships, and business terms.
         """
         try:
+            cid = connection_id if connection_id is not None else self._connection_id
             payload = await self._call(
                 "get_catalog_prompt",
                 {
-                    "connection_id": self._connection_id,
+                    "connection_id": cid,
                 },
             )
             # The MCP tool returns { "content": [{ "type": "text", "text": "..." }] }
@@ -186,13 +226,15 @@ class JeenMetadataClient:
             logger.error(
                 "JeenMetadataClient.get_catalog_prompt failed: %s", exc, exc_info=True
             )
-            return ""
+            raise RuntimeError(
+                f"Failed to connect to Jeen MCP at {self._mcp_url} (Connection ID: {self._connection_id}): {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Table profile (columns + stats)
     # ------------------------------------------------------------------
 
-    async def get_table_profile(self, table_name: str) -> dict[str, Any] | None:
+    async def get_table_profile(self, table_name: str, connection_id: int | None = None) -> dict[str, Any] | None:
         """
         Fetch the latest stored column stats for *table_name* from jeen-metadata.
 
@@ -213,10 +255,11 @@ class JeenMetadataClient:
             }
         """
         try:
+            cid = connection_id if connection_id is not None else self._connection_id
             payload = await self._call(
                 "get_table_profile",
                 {
-                    "connection_id": self._connection_id,
+                    "connection_id": cid,
                     "table_name": table_name,
                 },
             )
@@ -277,15 +320,16 @@ class JeenMetadataClient:
     # Full table listing (fallback when search returns nothing)
     # ------------------------------------------------------------------
 
-    async def list_tables_rich(self) -> list[dict[str, Any]]:
+    async def list_tables_rich(self, connection_id: int | None = None) -> list[dict[str, Any]]:
         """
         Return ALL tables for the configured connection via ``list_tables_rich``.
         Used as a fallback when the search tool returns no results.
         """
         try:
+            cid = connection_id if connection_id is not None else self._connection_id
             rows = await self._call(
                 "list_tables_rich",
-                {"connection_id": self._connection_id},
+                {"connection_id": cid},
             )
             if not isinstance(rows, list):
                 rows = []

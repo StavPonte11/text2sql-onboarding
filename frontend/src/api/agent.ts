@@ -32,6 +32,7 @@ export interface ChatRequest {
   allowed_statuses?: string[];
   extractors?: string[];
   hitl_enabled?: boolean;
+  connection_id?: number;
 }
 
 export interface ChatResponse {
@@ -52,6 +53,10 @@ export const agentApi = {
     api.post<ChatResponse>('/chat', payload).then((r) => r.data),
   suggestFixes: async (threadId: string, category: string): Promise<string[]> => {
     const response = await api.post<string[]>('/suggest_fixes', { thread_id: threadId, category });
+    return response.data;
+  },
+  listConnections: async (): Promise<any> => {
+    const response = await api.get<any>('/connections');
     return response.data;
   },
 };
