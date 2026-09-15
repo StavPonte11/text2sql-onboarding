@@ -48,6 +48,7 @@ class AgentState(TypedDict):
     # ── Map related state ─────────────────────────────────────────────────────
     locations_dict: dict[str, dict[str, str]] | None
     location_wkt_instruction: str | None
+    locations_analysis: str | None
     is_satisfied: bool | None
     last_result_row_count: int | None
     last_result_data: str | None

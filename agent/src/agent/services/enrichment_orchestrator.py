@@ -199,9 +199,9 @@ class EnrichmentOrchestrator:
             # Validate and check for ghost value mappings
             for tf in plan.enrichment_details:
                 # Propagate source_table from original filters to transformations
+                tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
                 for param in filters:
                     if param.source_column.lower() == tf.column.lower():
-                        tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
                         match = False
                         if param.value is None:
                             match = (tf_orig_clean == "null")
@@ -211,8 +211,12 @@ class EnrichmentOrchestrator:
                             match = (str(param.value).replace("%", "").strip().lower() == tf_orig_clean)
                         
                         if match:
-                            tf.table = param.source_table
-                            break
+                            if tf.table and param.source_table.lower() == tf.table.lower():
+                                tf.table = param.source_table
+                                break
+                            elif not tf.table:
+                                tf.table = param.source_table
+                                break
 
                 if tf.changed_filter:
                     norm_col = tf.column.strip('"\'').lower()

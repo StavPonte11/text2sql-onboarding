@@ -40,11 +40,20 @@ class HybridSearcher:
             t_name = table.name.lower()
             for col_name, col_meta in table.columns.items():
                 c_name = col_name.lower()
-                sem_type = col_meta.get("semantic_type", "categorical") if isinstance(col_meta, dict) else "categorical"
-                col_type_map[(t_name, c_name)] = sem_type
+                target_type = "categorical"
+                if isinstance(col_meta, dict):
+                    raw_st = str(col_meta.get("semantic_type") or col_meta.get("column_type") or col_meta.get("type") or "").lower().strip()
+                    if "large_unit_id" in raw_st:
+                        target_type = "large_unit_id"
+                    elif "large_categor" in raw_st or "large_category" in raw_st:
+                        target_type = "large_categorical"
+                    elif raw_st in ("large_categorical", "large_unit_id"):
+                        target_type = raw_st
+
+                col_type_map[(t_name, c_name)] = target_type
                 # also store without table prefix
                 if c_name not in col_type_map:
-                    col_type_map[c_name] = sem_type
+                    col_type_map[c_name] = target_type
                     
         tasks = []
         task_keys = []

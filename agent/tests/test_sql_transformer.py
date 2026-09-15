@@ -542,3 +542,23 @@ def test_transform_real_world_car_registrations():
     assert "= 'sonic'" not in refined
     assert "SELECT COUNT(DISTINCT id)" in refined
     assert "GROUP BY place" in refined
+
+
+def test_transform_ilike_operator():
+    sql = "SELECT * FROM dataverse.orders WHERE order_status ILIKE '%active%'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(table="dataverse.orders", 
+                column="order_status",
+                original_value="%active%",
+                old_operator="ILIKE",
+                new_operator="ILIKE",
+                refined_values=["%ACTIVE%"],
+                changed_filter=True,
+                reasoning="ILIKE refinement"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    assert "LOWER(order_status) LIKE" in refined

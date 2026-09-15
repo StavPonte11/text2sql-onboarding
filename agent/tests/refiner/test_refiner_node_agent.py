@@ -56,7 +56,7 @@ async def test_agent_step1_baseline(
     result = await agent_node(state)
 
     # Verifies Step 2 Prompt was requested
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
     assert (
         result["sql_query"] == "SELECT 1"
@@ -93,7 +93,7 @@ async def test_agent_step2a_error_fixing(
     result = await agent_node(state)
 
     # Verifies Step 2 Prompt was requested
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
     assert result["sql_query"] == "SELECT 2"
     assert result["is_satisfied"] is False
     assert result["refinement_count"] == 2
@@ -215,7 +215,7 @@ async def test_agent_handles_satisfaction_check_failure(
     await agent_node(state)
 
     # Verify Step 2 prompt is used to fix the logic error
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
     invoke_vars = mock_chain.ainvoke.call_args[0][0]
 
@@ -345,7 +345,7 @@ async def test_agent_null_state_variables_safe_formatting(
     assert invoke_vars["initial_query"] == ""
     assert invoke_vars["last_result_error"] == ""
     # Make sure we defaulted to step 2 logic
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
 
 @pytest.mark.asyncio

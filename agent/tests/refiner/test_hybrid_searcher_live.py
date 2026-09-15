@@ -3,9 +3,6 @@ from typing import List, Dict
 import os
 import sys
 
-# Add agent directory to sys.path
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../src'))
-
 from agent.services.hybrid_searcher import HybridSearcher
 from agent.services.enrichment_models import SQLFilterParams, AgentSQLTable
 def is_integration_ready():
@@ -14,6 +11,9 @@ def is_integration_ready():
             os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY"),
             os.getenv("TRINO_HOST"),
             os.getenv("REDIS_URL"),
+            os.getenv("JEEN_METADATA_MCP_URL"),
+            os.getenv("JEEN_METADATA_MCP_KEY"),
+            os.getenv("JEEN_METADATA_CONNECTION_ID"),
         ]
     )
 

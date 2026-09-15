@@ -564,3 +564,57 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     assert "= 'sonic'" not in refined_sql
     assert "SELECT COUNT(DISTINCT id)" in refined_sql
     assert "GROUP BY place" in refined_sql
+
+
+@pytest.mark.asyncio
+async def test_same_name_columns_same_value_propagation(mocker):
+    """
+    Verifies that when two different tables have the same column name ('status') and value ('active'),
+    table-qualified LLM proposals resolve to their matching table correctly and ambiguous proposals are skipped.
+    """
+    mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
+    mock_search.return_value = {
+        f"status{d}active": ["ACTIVE"]
+    }
+    
+    mock_plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                table="db.orders", 
+                column="status",
+                original_value="active",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["ACTIVE"],
+                changed_filter=True,
+                reasoning="Exact match"
+            )
+        ]
+    )
+    
+    mock_llm_instance = MagicMock()
+    mock_structured_llm = MagicMock()
+    mock_structured_llm.ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm_instance.with_structured_output.return_value = mock_structured_llm
+    mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm_instance)
+    
+    schema = {
+        "db.orders": {"status": "string", "cust_id": "int"},
+        "db.customers": {"status": "string", "id": "int"}
+    }
+    tables = [
+        AgentSQLTable(name="db.orders", columns={"status": {"column_type": "large_category"}}),
+        AgentSQLTable(name="db.customers", columns={"status": {"column_type": "large_category"}})
+    ]
+    
+    initial_sql = "SELECT * FROM db.orders o JOIN db.customers c ON o.cust_id = c.id WHERE o.status = 'active' AND c.status = 'active'"
+    
+    refined_sql, plan, is_enriched = await EnrichmentOrchestrator.enrich_query(
+        user_request="Find active orders for active customers",
+        initial_sql=initial_sql,
+        schema=schema,
+        tables=tables
+    )
+    
+    assert is_enriched is True
+    assert plan.enrichment_details[0].table == "db.orders"

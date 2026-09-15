@@ -200,7 +200,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
             "execution_path": ["agent"],
         }
 
-    prompt_key = settings.LANGFUSE_PROMPT_REFINER_STEP2
+    prompt_key = settings.LANGFUSE_PROMPT_REFINER
     try:
         langfuse_prompt = langfuse_client.get_prompt(prompt_key)
         prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
