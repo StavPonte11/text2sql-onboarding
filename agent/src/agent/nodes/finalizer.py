@@ -93,14 +93,13 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
     sql_query = state.get("sql_query") or ""
     locations_dict = state.get("locations_dict")
     
-    clean_sql_query = resolve_wkt_polygons(sql_query, locations_dict, mask=True)
-    final_sql_query = resolve_wkt_polygons(sql_query, locations_dict, mask=False)
+    final_sql_query = resolve_wkt_polygons(sql_query, locations_dict)
 
     chain = prompt_finalizer | llm
     response = await chain.ainvoke(
         {
             "user_request": state.get("user_query") or "",
-            "sql_query": clean_sql_query,
+            "sql_query": sql_query,
             "sql_translation": state.get("sql_explanation") or "",
             "sql_results": preview_str,
         }

@@ -33,7 +33,7 @@ async def test_finalizer_node_with_inline_results(mock_langfuse, mock_llm):
         "loaded_skills": None,
         "last_error": None,
         "esca_write_failed": False,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "scoping_mode": "hybrid",
     }
@@ -95,7 +95,7 @@ async def test_finalizer_node_with_top_10_preview(mock_langfuse, mock_llm):
         "loaded_skills": None,
         "last_error": None,
         "esca_write_failed": False,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "scoping_mode": "hybrid",
     }
@@ -138,7 +138,7 @@ async def test_finalizer_node_esca_enabled_with_ref(mock_langfuse, mock_llm):
         "user_query": "q", "sql_query": "s", "sql_explanation": "e",
         "inline_result_rows": None, "inline_result_columns": None,
         "raw_data_ref": "ref-123", "runtime_flags": {"ESCA_WRITE_ENABLED": True, "PREVIEW_ROWS_COUNT": 10},
-        "messages": [], "execution_path": [], "summary": "", "query_enrichments": [], "jeen_catalog": "", "trino_error": None, "refinement_count": 0, "allowed_tables": None, "allowed_statuses": None, "feedback": None, "rejection_category": None, "feedback_route": None, "non_interactive": False, "active_extractors": None, "active_skills": None, "loaded_skills": None, "last_error": None, "esca_write_failed": False, "error_history": None, "schema_explorer_retry_count": 0, "scoping_mode": "hybrid",
+        "messages": [], "execution_path": [], "summary": "", "query_enrichments": [], "jeen_catalog": "", "trino_error": None, "refinement_count": 0, "allowed_tables": None, "allowed_statuses": None, "feedback": None, "rejection_category": None, "feedback_route": None, "non_interactive": False, "active_extractors": None, "active_skills": None, "loaded_skills": None, "last_error": None, "esca_write_failed": False, "attempt_history": None, "schema_explorer_retry_count": 0, "scoping_mode": "hybrid",
     }
     
     mock_response = MagicMock()
@@ -167,7 +167,7 @@ async def test_finalizer_node_esca_enabled_no_ref(mock_langfuse, mock_llm):
         "user_query": "q", "sql_query": "s", "sql_explanation": "e",
         "inline_result_rows": None, "inline_result_columns": None,
         "raw_data_ref": None, "runtime_flags": {"ESCA_WRITE_ENABLED": True},
-        "messages": [], "execution_path": [], "summary": "", "query_enrichments": [], "jeen_catalog": "", "trino_error": None, "refinement_count": 0, "allowed_tables": None, "allowed_statuses": None, "feedback": None, "rejection_category": None, "feedback_route": None, "non_interactive": False, "active_extractors": None, "active_skills": None, "loaded_skills": None, "last_error": None, "esca_write_failed": False, "error_history": None, "schema_explorer_retry_count": 0, "scoping_mode": "hybrid",
+        "messages": [], "execution_path": [], "summary": "", "query_enrichments": [], "jeen_catalog": "", "trino_error": None, "refinement_count": 0, "allowed_tables": None, "allowed_statuses": None, "feedback": None, "rejection_category": None, "feedback_route": None, "non_interactive": False, "active_extractors": None, "active_skills": None, "loaded_skills": None, "last_error": None, "esca_write_failed": False, "attempt_history": None, "schema_explorer_retry_count": 0, "scoping_mode": "hybrid",
     }
     
     mock_response = MagicMock()
@@ -182,3 +182,18 @@ async def test_finalizer_node_esca_enabled_no_ref(mock_langfuse, mock_llm):
         
         call_args = mock_chain.ainvoke.call_args[0][0]
         assert call_args["sql_results"] == "No data reference found."
+
+
+def test_resolve_wkt_polygons_unmasking():
+    from agent.utils.sql import resolve_wkt_polygons
+
+    sql = "SELECT * FROM events WHERE ST_Contains(ST_GeometryFromText(@khan_yunis_wkt@), ST_Point(lon, lat))"
+    locations_dict = {
+        "coords": {
+            "khan_yunis_wkt": "'POLYGON ((34.2 31.3, 34.3 31.3, 34.3 31.4, 34.2 31.3))'"
+        }
+    }
+
+    resolved = resolve_wkt_polygons(sql, locations_dict)
+    assert "@khan_yunis_wkt@" not in resolved
+    assert "'POLYGON ((34.2 31.3, 34.3 31.3, 34.3 31.4, 34.2 31.3))'" in resolved

@@ -179,20 +179,15 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         else:
             current_error = "Satisfaction Check Failed: " + "; ".join(satisfaction_failures)
 
+    # ── Build escalation error message (includes history for logging) ──
+    attempt_history = state.get("attempt_history") or []
     error_msg = current_error
-    prompt_error_msg = current_error
-
-    error_history = state.get("error_history") or []
-    if error_history:
-        history_str = "\n\n# *Recent Failed Attempts:*\n"
-        for idx, err_item in enumerate(error_history[-4:], 1):
-            if isinstance(err_item, dict):
-                history_str += f"{idx}. SQL: {err_item.get('sql', '')}\n   Error: {err_item.get('error', '')}\n"
-            else:
-                history_str += f"{idx}. Error: {err_item}\n"
-        error_msg += history_str
-        if current_error:
-            prompt_error_msg += history_str
+    if attempt_history:
+        history_lines = []
+        for entry in attempt_history[-4:]:
+            status = "Success" if entry.get("success") else "Failed"
+            history_lines.append(f"[{status}] SQL: {entry.get('sql', 'N/A')} | Error: {entry.get('error', 'None')} | Rows: {entry.get('row_count', 'N/A')}")
+        error_msg += "\n\nRecent attempts:\n" + "\n".join(history_lines)
 
     if count >= max_iterations:
         return {
@@ -242,8 +237,24 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         except Exception as e:
             logger.warning(f"Failed to create Langfuse trace tags: {e}")
 
-    # Prepare variables matching the new human prompts
-    has_executed = state.get("last_result_row_count") is not None or bool(trino_error)
+    # ── Build attempt_history string for the prompt (separate from current error) ──
+    attempt_history_str = "No previous attempts."
+    if attempt_history:
+        history_lines = []
+        for entry in attempt_history[-4:]:
+            iteration = entry.get("iteration", "?")
+            success = entry.get("success", False)
+            status_icon = "Success" if success else "Failed"
+            line = f"Attempt {iteration} [{status_icon}]: {entry.get('sql', 'N/A')}"
+            if entry.get("error"):
+                line += f"\n   Error: {entry['error']}"
+            if success:
+                line += f"\n   Rows returned: {entry.get('row_count', '?')}"
+            history_lines.append(line)
+        attempt_history_str = "\n\n".join(history_lines)
+
+    # Prepare variables matching the prompt template
+    has_executed = state.get("current_result_row_count") is not None or bool(trino_error)
     invoke_vars = {
         "schema": schema_context,
         "user_request": state.get("user_query") or "",
@@ -252,10 +263,11 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         "initial_query": state.get("sql_query") or "",
         "current_agent_query": state.get("sql_query") or "",
         "enriched_instruction": enriched_instruction,
-        "last_result_success": "True" if has_executed and not current_error else ("False" if has_executed else "No Previous Execution"),
-        "last_result_error": prompt_error_msg,
-        "last_result_row_count": state.get("last_result_row_count", ""),
-        "last_result_data": state.get("last_result_data", ""),
+        "current_result_success": "True" if has_executed and not current_error else ("False" if has_executed else "No Previous Execution"),
+        "current_result_error": current_error or "",
+        "current_result_row_count": state.get("current_result_row_count", ""),
+        "current_result_data": state.get("current_result_data", ""),
+        "attempt_history": attempt_history_str,
     }
 
     response = await chain.ainvoke(invoke_vars)
@@ -312,15 +324,16 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
     """Executes query against Trino."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     await publish_node_event(thread_id, "trino_exec")
-    error_history = state.get("error_history") or []
+    attempt_history = list(state.get("attempt_history") or [])
     sql = state.get("sql_query")
+    iteration = (state.get("refinement_count") or 0) + 1
     runtime_flags = state.get("runtime_flags") or {}
     import re
 
     from agent.utils.sql import resolve_wkt_polygons
     # ── Map WKT placeholders and before Trino execution ──
     locations_dict = state.get("locations_dict")
-    sql = resolve_wkt_polygons(sql, locations_dict, mask=False)
+    sql = resolve_wkt_polygons(sql, locations_dict)
 
 
     try:
@@ -328,11 +341,23 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
         success = result.success
         trino_error = result.error_message or "Unknown Trino error"
         if not success:
-            error_history.append({"sql": state.get("sql_query"), "error": trino_error})
+            attempt_history.append({
+                "iteration": iteration,
+                "sql": state.get("sql_query"),
+                "success": False,
+                "error": trino_error,
+                "row_count": None,
+            })
     except Exception as e:
         success = False
         trino_error = str(e)
-        error_history.append({"sql": state.get("sql_query"), "error": trino_error})
+        attempt_history.append({
+            "iteration": iteration,
+            "sql": state.get("sql_query"),
+            "success": False,
+            "error": trino_error,
+            "row_count": None,
+        })
         result = None
 
     if not success:
@@ -340,16 +365,26 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             "sql_query": state.get("sql_query"),
             "trino_error": trino_error,
             "last_error": trino_error,
-            "error_history": error_history,
+            "attempt_history": attempt_history,
             "execution_path": ["trino_exec"],
-            "last_result_row_count": None,
-            "last_result_data": None,
+            "current_result_row_count": None,
+            "current_result_data": None,
         }
     else:
         raw_ref = None
         esca_write_failed = False
         inline_result_rows = result.rows
         inline_result_columns = result.columns
+        row_count = len(inline_result_rows) if inline_result_rows else 0
+
+        # Log successful attempt to history
+        attempt_history.append({
+            "iteration": iteration,
+            "sql": state.get("sql_query"),
+            "success": True,
+            "error": None,
+            "row_count": row_count,
+        })
 
         esca_write_enabled = (
             str(
@@ -383,12 +418,10 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             "esca_write_failed": esca_write_failed,
             "inline_result_rows": inline_result_rows,
             "inline_result_columns": inline_result_columns,
-            "error_history": error_history,
+            "attempt_history": attempt_history,
             "execution_path": ["trino_exec"],
-            "last_result_row_count": len(inline_result_rows)
-            if inline_result_rows
-            else 0,
-            "last_result_data": str([inline_result_columns] + inline_result_rows[:settings.PREVIEW_ROWS_COUNT])
+            "current_result_row_count": row_count,
+            "current_result_data": str([inline_result_columns] + inline_result_rows[:settings.PREVIEW_ROWS_COUNT])
             if inline_result_rows
             else "[]",
         }

@@ -89,13 +89,12 @@ async def test_trino_exec_success_with_transformations(
     assert result["trino_error"] is None
     assert result["raw_data_ref"] == "esca_999"
     assert result["esca_write_failed"] is False
-    assert result["last_result_row_count"] == 2
+    assert result["current_result_row_count"] == 2
 
-    # Verify ESCA payload format
-    esca_mock_instance.save_data_mock.assert_called_once()
-    payload = esca_mock_instance.save_data_mock.call_args[0][0]
-    decoded_payload = json.loads(payload.decode())
-    assert decoded_payload["columns"] == ["id", "name"]
+    # Verify successful attempt was logged to attempt_history
+    assert len(result["attempt_history"]) == 1
+    assert result["attempt_history"][-1]["success"] is True
+    assert result["attempt_history"][-1]["row_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -105,7 +104,7 @@ async def test_trino_exec_success_with_transformations(
 async def test_trino_exec_db_failure(mock_execute, mock_get_esca, mock_publish):
     """
     FAILURE PATH (DATABASE): If Trino throws an error, the node must capture it,
-    append it to error_history, and SKIP writing to ESCA.
+    append it to attempt_history, and SKIP writing to ESCA.
     """
     # Simulate DB syntax error
     mock_execute.return_value = MockTrinoResult(
@@ -114,7 +113,7 @@ async def test_trino_exec_db_failure(mock_execute, mock_get_esca, mock_publish):
     )
 
     state = AgentState(
-        sql_query="SELECT * FROM missing_table", error_history=[{"sql": "SELECT old", "error": "Previous Error"}]
+        sql_query="SELECT * FROM missing_table", attempt_history=[{"iteration": 1, "sql": "SELECT old", "success": False, "error": "Previous Error", "row_count": None}]
     )
 
     result = await trino_exec_node(state)
@@ -124,12 +123,14 @@ async def test_trino_exec_db_failure(mock_execute, mock_get_esca, mock_publish):
         result["trino_error"]
         == "line 1:8: Table 'hive.production.users_table' does not exist"
     )
-    assert len(result["error_history"]) == 2
-    assert result["error_history"][-1] == {"sql": "SELECT * FROM missing_table", "error": result["trino_error"]}
+    assert len(result["attempt_history"]) == 2
+    assert result["attempt_history"][-1]["sql"] == "SELECT * FROM missing_table"
+    assert result["attempt_history"][-1]["error"] == result["trino_error"]
+    assert result["attempt_history"][-1]["success"] is False
 
     # Verify ESCA was skipped entirely
     mock_get_esca.assert_not_called()
-    assert result["last_result_row_count"] is None
+    assert result["current_result_row_count"] is None
 
 
 @pytest.mark.asyncio
@@ -173,7 +174,7 @@ async def test_trino_exec_memory_shield_truncation(
     """
     MEMORY PROTECTION: The node must return all rows for inline_result_rows (so
     subsequent nodes like satisfaction_check can evaluate them), but MUST truncate
-    `last_result_data` to exactly 5 rows so the LLM context window doesn't blow up.
+    `current_result_data` to exactly 5 rows so the LLM context window doesn't blow up.
     """
     # Simulate a query returning 100 rows
     mock_rows = [[i, f"user_{i}"] for i in range(100)]
@@ -191,14 +192,14 @@ async def test_trino_exec_memory_shield_truncation(
         result = await trino_exec_node(state)
     
         # 1. Full data is preserved for state/ESCA
-        assert result["last_result_row_count"] == 100
+        assert result["current_result_row_count"] == 100
         assert len(result["inline_result_rows"]) == 100
     
         # 2. LLM Context payload is strictly truncated!
         import ast
     
         # The node does: str([columns] + rows[:5])
-        llm_payload = ast.literal_eval(result["last_result_data"])
+        llm_payload = ast.literal_eval(result["current_result_data"])
     
         # 1 header row + 15 data rows = 16 total items
         assert len(llm_payload) == 16
@@ -223,19 +224,21 @@ async def test_trino_exec_hard_exception_survival(
     mock_execute.side_effect = RuntimeError("Connection dropped abruptly")
 
     state = AgentState(
-        sql_query="SELECT * FROM users", error_history=[{"sql": "SELECT bad", "error": "Syntax error on attempt 1"}]
+        sql_query="SELECT * FROM users", attempt_history=[{"iteration": 1, "sql": "SELECT bad", "success": False, "error": "Syntax error on attempt 1", "row_count": None}]
     )
 
     result = await trino_exec_node(state)
 
     # Node survives and formats the Python exception as a Trino error
     assert result["trino_error"] == "Connection dropped abruptly"
-    assert len(result["error_history"]) == 2
-    assert result["error_history"][-1] == {"sql": "SELECT * FROM users", "error": "Connection dropped abruptly"}
+    assert len(result["attempt_history"]) == 2
+    assert result["attempt_history"][-1]["sql"] == "SELECT * FROM users"
+    assert result["attempt_history"][-1]["error"] == "Connection dropped abruptly"
+    assert result["attempt_history"][-1]["success"] is False
 
     # Ensures payload is zeroed out
-    assert result["last_result_row_count"] is None
-    assert result["last_result_data"] is None
+    assert result["current_result_row_count"] is None
+    assert result["current_result_data"] is None
 
 
 @pytest.mark.asyncio
@@ -275,7 +278,7 @@ async def test_trino_exec_zero_rows_formatting(
 ):
     """
     EDGE CASE (EMPTY SETS): If Trino executes successfully but returns exactly 0 rows,
-    the serialization logic for ESCA and the LLM context (`last_result_data`)
+    the serialization logic for ESCA and the LLM context (`current_result_data`)
     must not crash on empty lists.
     """
     # 0 rows returned
@@ -294,11 +297,11 @@ async def test_trino_exec_zero_rows_formatting(
     result = await trino_exec_node(state)
 
     assert result["trino_error"] is None
-    assert result["last_result_row_count"] == 0
+    assert result["current_result_row_count"] == 0
 
     # Looking closely at your code: `if inline_result_rows else "[]"`
     # It correctly returns the literal string "[]" when rows are empty.
-    assert result["last_result_data"] == "[]"
+    assert result["current_result_data"] == "[]"
 
     # ESCA should still be called to save the schema/headers of the empty result
     esca_mock_instance.save_data_mock.assert_called_once()

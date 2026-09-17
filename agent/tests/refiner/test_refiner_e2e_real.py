@@ -81,7 +81,7 @@ async def test_e2e_real_trino_execution_happy_path():
     assert "tpch" in final_state["sql_query"] and "customer" in final_state["sql_query"]
 
     # Verify real data was retrieved and stored in state
-    assert final_state.get("last_result_row_count", 0) > 0
+    assert final_state.get("current_result_row_count", 0) > 0
     assert len(final_state["inline_result_rows"]) <= 3
 
 

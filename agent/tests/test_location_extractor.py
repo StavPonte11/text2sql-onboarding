@@ -179,13 +179,15 @@ async def test_location_extractor_agent_e2e(mocker):
     assert rafah_mapping.wkt_polygon is None
     assert rafah_mapping.error_message == "No geometry found from API"
     
-    # Verify formatted instruction parts
-    assert "gaza_wkt =" in result.location_wkt_instruction
+    # Verify formatted instruction parts - MUST contain placeholder token, MUST NOT contain raw POLYGON text
+    assert "gaza_wkt" in result.location_wkt_instruction
     assert "rafah_wkt" not in result.location_wkt_instruction
-    
+    assert "POLYGON" not in result.location_wkt_instruction
+
     # Verify serializable dicts
     assert result.raw_locations_dict == {"עזה": "gaza"}
     assert "gaza_wkt" in result.locations_coords_dict
+    assert "POLYGON" in result.locations_coords_dict["gaza_wkt"]
     assert result.analysis == "Detected עזה and רפיח as locations."
 
 
