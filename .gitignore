@@ -45,3 +45,6 @@ fix_langfuse.py
 playwright-report/
 test-results/
 junit.xml
+
+# Certs
+certs
