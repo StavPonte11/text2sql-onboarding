@@ -16,7 +16,7 @@ async def test_orchestrator_flow(mocker):
     # Mock LLM response plan
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -109,7 +109,7 @@ async def test_orchestrator_partial_enrichment(mocker):
     # Plan only changes the region, ignores the amount
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="na",
                 old_operator="=",
@@ -186,7 +186,7 @@ async def test_orchestrator_double_expansion(mocker):
     # 2. Arrange: LLM maps both draft values to multiple canonical values
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="priority",
                 original_value="high",
                 old_operator="=",
@@ -195,7 +195,7 @@ async def test_orchestrator_double_expansion(mocker):
                 changed_filter=True,
                 reasoning="Broad term 'high' encompasses both P1 and P2 priorities"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="category",
                 original_value="network",
                 old_operator="=",
@@ -257,7 +257,7 @@ async def test_orchestrator_partial_llm_rejection(mocker):
     # 2. Arrange: LLM updates 'department', but REJECTS the 'location' candidates
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="department",
                 original_value="eng",
                 old_operator="=",
@@ -266,7 +266,7 @@ async def test_orchestrator_partial_llm_rejection(mocker):
                 changed_filter=True,
                 reasoning="Mapped abbreviation to exact department"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="location",
                 original_value="remote",
                 old_operator="=",
@@ -333,7 +333,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
     # 2. Arrange: The LLM Transformation Plan tackling all 6 fuzzy values
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="na",
                 old_operator="IN",
@@ -342,7 +342,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Resolve abbreviation"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="eur",
                 old_operator="IN",
@@ -351,7 +351,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Resolve abbreviation to canonical EMEA"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="customer_tier",
                 original_value="vip_level",
                 old_operator="=",
@@ -360,7 +360,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Expand generic vip_level to specific database tiers"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="product_category",
                 original_value="elec",
                 old_operator="LIKE",
@@ -369,7 +369,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Exact mapping"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="delivery_state",
                 original_value="late",
                 old_operator="=",
@@ -378,7 +378,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Standardize status"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="shipping_speed",
                 original_value="fast",
                 old_operator="=",
@@ -481,7 +481,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     # 2. Arrange: Mock the LLM's structured output based on the provided plan
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="car_type",
                 original_value="italian",
                 old_operator="LIKE",
@@ -490,7 +490,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
                 changed_filter=False,
                 reasoning="LIKE '%italian%' already captures all relevant Italian car types."
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="place",
                 original_value="52",
                 old_operator="LIKE",
@@ -499,7 +499,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
                 changed_filter=True,
                 reasoning="LIKE '%52%' catches irrelevant values. 'st 52' is the only relevant store."
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="manufacturer",
                 original_value="sonic",
                 old_operator="=",
@@ -564,3 +564,57 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     assert "= 'sonic'" not in refined_sql
     assert "SELECT COUNT(DISTINCT id)" in refined_sql
     assert "GROUP BY place" in refined_sql
+
+
+@pytest.mark.asyncio
+async def test_same_name_columns_same_value_propagation(mocker):
+    """
+    Verifies that when two different tables have the same column name ('status') and value ('active'),
+    table-qualified LLM proposals resolve to their matching table correctly and ambiguous proposals are skipped.
+    """
+    mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
+    mock_search.return_value = {
+        f"status{d}active": ["ACTIVE"]
+    }
+    
+    mock_plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                table="db.orders", 
+                column="status",
+                original_value="active",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["ACTIVE"],
+                changed_filter=True,
+                reasoning="Exact match"
+            )
+        ]
+    )
+    
+    mock_llm_instance = MagicMock()
+    mock_structured_llm = MagicMock()
+    mock_structured_llm.ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm_instance.with_structured_output.return_value = mock_structured_llm
+    mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm_instance)
+    
+    schema = {
+        "db.orders": {"status": "string", "cust_id": "int"},
+        "db.customers": {"status": "string", "id": "int"}
+    }
+    tables = [
+        AgentSQLTable(name="db.orders", columns={"status": {"column_type": "large_category"}}),
+        AgentSQLTable(name="db.customers", columns={"status": {"column_type": "large_category"}})
+    ]
+    
+    initial_sql = "SELECT * FROM db.orders o JOIN db.customers c ON o.cust_id = c.id WHERE o.status = 'active' AND c.status = 'active'"
+    
+    refined_sql, plan, is_enriched = await EnrichmentOrchestrator.enrich_query(
+        user_request="Find active orders for active customers",
+        initial_sql=initial_sql,
+        schema=schema,
+        tables=tables
+    )
+    
+    assert is_enriched is True
+    assert plan.enrichment_details[0].table == "db.orders"

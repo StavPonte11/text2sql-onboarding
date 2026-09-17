@@ -56,7 +56,7 @@ async def test_agent_step1_baseline(
     result = await agent_node(state)
 
     # Verifies Step 2 Prompt was requested
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
     assert (
         result["sql_query"] == "SELECT 1"
@@ -93,7 +93,7 @@ async def test_agent_step2a_error_fixing(
     result = await agent_node(state)
 
     # Verifies Step 2 Prompt was requested
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
     assert result["sql_query"] == "SELECT 2"
     assert result["is_satisfied"] is False
     assert result["refinement_count"] == 2
@@ -182,7 +182,7 @@ async def test_agent_injects_enrichments_and_schema_cap(
 
     # 2. Verify enrichments were injected
     enriched_instruction = invoke_vars["enriched_instruction"]
-    assert "[QUERY ENRICHMENTS]" in enriched_instruction
+    assert "[QUERY & FILTER ENRICHMENTS]" in enriched_instruction
     assert "active" in enriched_instruction
 
 
@@ -196,7 +196,7 @@ async def test_agent_handles_satisfaction_check_failure(
 ):
     """
     ROUTING LOGIC: If the agent is invoked after a `satisfaction_check` node fails,
-    it must pass the Satisfaction failures as the `last_result_error` to the LLM,
+    it must pass the Satisfaction failures as the `current_result_error` to the LLM,
     overriding any previous Trino errors.
     """
     mock_chain = setup_mock_chain(mock_from_messages, mock_get_llm, '{"reasoning": "mock", "intent_match_checklist": {}, "status": "REFINING", "sql_query": "SELECT 1"}')
@@ -208,22 +208,22 @@ async def test_agent_handles_satisfaction_check_failure(
         ],  # Came from Satisfaction Check
         satisfaction_failures=["[CHECK_C] Missing timestamp column"],
         trino_error=None,
-        last_result_row_count=10,
+        current_result_row_count=10,
         refinement_count=1,
     )
 
     await agent_node(state)
 
     # Verify Step 2 prompt is used to fix the logic error
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
     invoke_vars = mock_chain.ainvoke.call_args[0][0]
 
     # The LLM needs to know WHY it failed validation
-    assert invoke_vars["last_result_success"] == "False"  # Trino succeeded but satisfaction failed
+    assert invoke_vars["current_result_success"] == "False"  # Trino succeeded but satisfaction failed
     assert (
         "Satisfaction Check Failed: [CHECK_C] Missing timestamp column"
-        in invoke_vars["last_result_error"]
+        in invoke_vars["current_result_error"]
     )
 
 
@@ -343,9 +343,10 @@ async def test_agent_null_state_variables_safe_formatting(
     assert invoke_vars["user_request"] == ""
     assert invoke_vars["location_wkt_instruction"] == ""
     assert invoke_vars["initial_query"] == ""
-    assert invoke_vars["last_result_error"] == ""
+    assert invoke_vars["current_result_error"] == ""
+    assert invoke_vars["attempt_history"] == "No previous attempts."
     # Make sure we defaulted to step 2 logic
-    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER_STEP2)
+    mock_langfuse.get_prompt.assert_called_with(settings.LANGFUSE_PROMPT_REFINER)
 
 
 @pytest.mark.asyncio

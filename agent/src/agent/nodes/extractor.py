@@ -103,6 +103,7 @@ class LocationExtractor(BaseExtractor):
                 "coords": result.locations_coords_dict,
             },
             "location_wkt_instruction": result.location_wkt_instruction,
+            "locations_analysis": result.analysis,
         }
 
 
