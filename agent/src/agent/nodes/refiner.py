@@ -60,12 +60,58 @@ def parse_jeen_catalog_tables(jeen_catalog: str) -> tuple[dict, list[AgentSQLTab
             col_match = re.match(col_pattern, line.strip())
             if col_match:
                 c_name, c_type, c_desc = col_match.groups()
+                
+                col_tags = {}
+                
+                # Split tags part and rest of description
+                colon_idx = c_desc.find(': ')
+                if colon_idx != -1:
+                    tags_part = c_desc[:colon_idx]
+                    rest_part = c_desc[colon_idx+2:]
+                else:
+                    tags_part = c_desc
+                    rest_part = ""
+                    if c_desc.endswith(':'):
+                        tags_part = c_desc[:-1]
+
+                # Parse tags
+                blocks = re.findall(r'\[(.*?)\]', tags_part)
+                for block in blocks:
+                    parts = block.split(',')
+                    for part in parts:
+                        if '=' in part:
+                            k, v = part.split('=', 1)
+                            col_tags[k.strip()] = v.strip()
+                            
+                # Parse description and profile
+                desc_str = rest_part.strip()
+                profile_str = ""
+                
+                profile_idx = rest_part.find('— profile:')
+                if profile_idx != -1:
+                    desc_str = rest_part[:profile_idx].strip()
+                    profile_str = rest_part[profile_idx + len('— profile:'):].strip()
+                
                 schema[current_tbl][c_name] = c_type.lower()
                 schema[current_tbl.split(".")[-1].strip('"')][c_name] = c_type.lower()
-                tables[-1].columns[c_name] = {
+                
+                semantic_type = col_tags.get("semantic_type", "")
+                null_ratio = col_tags.get("null_ratio", "")
+                cardinality_ratio = col_tags.get("cardinality_ratio", "")
+                distinct_count = col_tags.get("distinct_count", "")
+                
+                # Merge into the column dictionary
+                col_dict = {
                     "column_type": c_type.lower(),
-                    "description": c_desc.strip(),
+                    "semantic_type": semantic_type,
+                    "null_ratio": null_ratio,
+                    "cardinality_ratio": cardinality_ratio,
+                    "distinct_count": distinct_count,
+                    "description": desc_str,
+                    "profile": profile_str,
                 }
+                
+                tables[-1].columns[c_name] = col_dict
 
     return schema, tables
 
@@ -81,23 +127,33 @@ async def enrich_context_node(state: AgentState, config: RunnableConfig | None =
         try:
             schema, tables = parse_jeen_catalog_tables(jeen_catalog)
             if tables:
-                refined_sql, _, enriched = await EnrichmentOrchestrator.enrich_query(
+                refined_sql, plan, enriched = await EnrichmentOrchestrator.enrich_query(
                     user_request=state.get("user_query"),
                     initial_sql=sql,
                     schema=schema,
                     tables=tables,
+                    config=config,
                 )
+                
+                filter_enrichments = []
+                if plan and plan.enrichment_details:
+                    for tf in plan.enrichment_details:
+                        if tf.changed_filter:
+                            filter_enrichments.append(tf.model_dump())
+                
                 if enriched and refined_sql:
                     logger.info(
                         "Category Enrichment successfully refined query filters in refiner."
                     )
                     sql = refined_sql
+                    
+                return {"sql_query": sql, "execution_path": ["enrich_context"], "filter_enrichments": filter_enrichments}
         except Exception as e:
             logger.error(
                 f"Category Enrichment failed in enrich_context_node: {e}", exc_info=True
             )
 
-    return {"sql_query": sql, "execution_path": ["enrich_context"]}
+    return {"sql_query": sql, "execution_path": ["enrich_context"], "filter_enrichments": []}
 
 
 async def agent_node(state: AgentState, config: RunnableConfig | None = None):
@@ -124,20 +180,15 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         else:
             current_error = "Satisfaction Check Failed: " + "; ".join(satisfaction_failures)
 
+    # ── Build escalation error message (includes history for logging) ──
+    attempt_history = state.get("attempt_history") or []
     error_msg = current_error
-    prompt_error_msg = current_error
-
-    error_history = state.get("error_history") or []
-    if error_history:
-        history_str = "\n\n# *Recent Failed Attempts:*\n"
-        for idx, err_item in enumerate(error_history[-4:], 1):
-            if isinstance(err_item, dict):
-                history_str += f"{idx}. SQL: {err_item.get('sql', '')}\n   Error: {err_item.get('error', '')}\n"
-            else:
-                history_str += f"{idx}. Error: {err_item}\n"
-        error_msg += history_str
-        if current_error:
-            prompt_error_msg += history_str
+    if attempt_history:
+        history_lines = []
+        for entry in attempt_history[-4:]:
+            status = "Success" if entry.get("success") else "Failed"
+            history_lines.append(f"[{status}] SQL: {entry.get('sql', 'N/A')} | Error: {entry.get('error', 'None')} | Rows: {entry.get('row_count', 'N/A')}")
+        error_msg += "\n\nRecent attempts:\n" + "\n".join(history_lines)
 
     if count >= max_iterations:
         return {
@@ -145,7 +196,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
             "execution_path": ["agent"],
         }
 
-    prompt_key = settings.LANGFUSE_PROMPT_REFINER_STEP2
+    prompt_key = settings.LANGFUSE_PROMPT_REFINER
     try:
         langfuse_prompt = langfuse_client.get_prompt(prompt_key)
         prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
@@ -163,13 +214,21 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Inject enrichments into the context instruction
-    enrichments = state.get("query_enrichments")
+    query_enrichments = state.get("query_enrichments") or []
+    filter_enrichments = state.get("filter_enrichments") or []
+    
+    all_enrichments = {
+        "query_enrichments": query_enrichments,
+        "filter_enrichments": filter_enrichments
+    }
+    
     enriched_instruction = ""
-    if enrichments:
+    if query_enrichments or filter_enrichments:
         enriched_instruction = (
-            f"[QUERY ENRICHMENTS]\n{json.dumps(enrichments, indent=2)}"
+            f"[QUERY & FILTER ENRICHMENTS]\n"
+            f"Note: Ensure you do NOT undo any structural filter mappings present in filter_enrichments.\n"
+            f"{json.dumps(all_enrichments, indent=2)}"
         )
-
     if langfuse_client and langfuse_client.get_current_trace_id():
         try:
             langfuse_client._create_trace_tags_via_ingestion(
@@ -179,8 +238,24 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         except Exception as e:
             logger.warning(f"Failed to create Langfuse trace tags: {e}")
 
-    # Prepare variables matching the new human prompts
-    has_executed = state.get("last_result_row_count") is not None or bool(trino_error)
+    # ── Build attempt_history string for the prompt (separate from current error) ──
+    attempt_history_str = "No previous attempts."
+    if attempt_history:
+        history_lines = []
+        for entry in attempt_history[-4:]:
+            iteration = entry.get("iteration", "?")
+            success = entry.get("success", False)
+            status_icon = "Success" if success else "Failed"
+            line = f"Attempt {iteration} [{status_icon}]: {entry.get('sql', 'N/A')}"
+            if entry.get("error"):
+                line += f"\n   Error: {entry['error']}"
+            if success:
+                line += f"\n   Rows returned: {entry.get('row_count', '?')}"
+            history_lines.append(line)
+        attempt_history_str = "\n\n".join(history_lines)
+
+    # Prepare variables matching the prompt template
+    has_executed = state.get("current_result_row_count") is not None or bool(trino_error)
     invoke_vars = {
         "schema": schema_context,
         "user_request": state.get("user_query") or "",
@@ -189,10 +264,11 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None):
         "initial_query": state.get("sql_query") or "",
         "current_agent_query": state.get("sql_query") or "",
         "enriched_instruction": enriched_instruction,
-        "last_result_success": "True" if has_executed and not current_error else ("False" if has_executed else "No Previous Execution"),
-        "last_result_error": prompt_error_msg,
-        "last_result_row_count": state.get("last_result_row_count", ""),
-        "last_result_data": state.get("last_result_data", ""),
+        "current_result_success": "True" if has_executed and not current_error else ("False" if has_executed else "No Previous Execution"),
+        "current_result_error": current_error or "",
+        "current_result_row_count": state.get("current_result_row_count", ""),
+        "current_result_data": state.get("current_result_data", ""),
+        "attempt_history": attempt_history_str,
     }
 
     response = await chain.ainvoke(invoke_vars)
@@ -249,18 +325,16 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
     """Executes query against Trino."""
     thread_id = config.get("configurable", {}).get("thread_id", "") if config else ""
     await publish_node_event(thread_id, "trino_exec")
-    error_history = state.get("error_history") or []
+    attempt_history = list(state.get("attempt_history") or [])
     sql = state.get("sql_query")
+    iteration = (state.get("refinement_count") or 0) + 1
     runtime_flags = state.get("runtime_flags") or {}
     import re
 
+    from agent.utils.sql import resolve_wkt_polygons
     # ── Map WKT placeholders and before Trino execution ──
     locations_dict = state.get("locations_dict")
-    if locations_dict and "coords" in locations_dict:
-        for placeholder, wkt_str in locations_dict["coords"].items():
-            # Strip any existing quotes on wkt_str so we always produce standard 'POLYGON (...)'
-            clean_wkt = wkt_str.strip("'")
-            sql = re.sub(r"['\"]?@" + re.escape(placeholder) + r"@['\"]?", f"'{clean_wkt}'", sql)
+    sql = resolve_wkt_polygons(sql, locations_dict)
 
 
     try:
@@ -268,28 +342,50 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
         success = result.success
         trino_error = result.error_message or "Unknown Trino error"
         if not success:
-            error_history.append({"sql": sql, "error": trino_error})
+            attempt_history.append({
+                "iteration": iteration,
+                "sql": state.get("sql_query"),
+                "success": False,
+                "error": trino_error,
+                "row_count": None,
+            })
     except Exception as e:
         success = False
         trino_error = str(e)
-        error_history.append({"sql": sql, "error": trino_error})
+        attempt_history.append({
+            "iteration": iteration,
+            "sql": state.get("sql_query"),
+            "success": False,
+            "error": trino_error,
+            "row_count": None,
+        })
         result = None
 
     if not success:
         return {
-            "sql_query": sql,
+            "sql_query": state.get("sql_query"),
             "trino_error": trino_error,
             "last_error": trino_error,
-            "error_history": error_history,
+            "attempt_history": attempt_history,
             "execution_path": ["trino_exec"],
-            "last_result_row_count": None,
-            "last_result_data": None,
+            "current_result_row_count": None,
+            "current_result_data": None,
         }
     else:
         raw_ref = None
         esca_write_failed = False
         inline_result_rows = result.rows
         inline_result_columns = result.columns
+        row_count = len(inline_result_rows) if inline_result_rows else 0
+
+        # Log successful attempt to history
+        attempt_history.append({
+            "iteration": iteration,
+            "sql": state.get("sql_query"),
+            "success": True,
+            "error": None,
+            "row_count": row_count,
+        })
 
         esca_write_enabled = (
             str(
@@ -316,19 +412,17 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
                 raise RuntimeError(f"Failed to write query result to ESCA: {e}")
 
         return {
-            "sql_query": sql,
+            "sql_query": state.get("sql_query"),
             "trino_error": None,
             "last_error": None,
             "raw_data_ref": raw_ref,
             "esca_write_failed": esca_write_failed,
             "inline_result_rows": inline_result_rows,
             "inline_result_columns": inline_result_columns,
-            "error_history": error_history,
+            "attempt_history": attempt_history,
             "execution_path": ["trino_exec"],
-            "last_result_row_count": len(inline_result_rows)
-            if inline_result_rows
-            else 0,
-            "last_result_data": str([inline_result_columns] + inline_result_rows[:settings.PREVIEW_ROWS_COUNT])
+            "current_result_row_count": row_count,
+            "current_result_data": str([inline_result_columns] + inline_result_rows[:settings.PREVIEW_ROWS_COUNT])
             if inline_result_rows
             else "[]",
         }

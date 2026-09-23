@@ -167,7 +167,7 @@ class JeenMetadataClient:
             
         args: dict[str, Any] = {
             "connection_id": self._connection_id,
-            "query": query,
+            "search_term": query,
             "limit": self._search_limit,
         }
         if table_name:

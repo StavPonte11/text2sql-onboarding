@@ -25,19 +25,27 @@ def test_llm_json_parsing():
     # Instantiate with None LLM since we only call the helper _parse_llm_json
     agent = LocationExtractorAgent(llm_client=None)
 
-    # A. Valid JSON
+    # A. Valid JSON (Flat)
     valid_json = '{"עזה": "gaza", "רפיח": "rafah"}'
     assert agent._parse_llm_json(valid_json) == {"עזה": "gaza", "רפיח": "rafah"}
 
-    # B. JSON wrapped in Markdown code blocks
-    markdown_json = '```json\n{"עזה": "gaza", "חאן יונס": "khan_yunis"}\n```'
+    # B. Valid JSON with _analysis and locations structure
+    new_format_json = '{\n  "_analysis": "Detected \'חאן יונס\' and \'רפיח\' as populated cities.",\n  "locations": {\n    "חאן יונס": "khan_yunis",\n    "רפיח": "rafah"\n  }\n}'
+    assert agent._parse_llm_json(new_format_json) == {"חאן יונס": "khan_yunis", "רפיח": "rafah"}
+
+    # C. Structured format with empty locations
+    empty_locations_json = '{\n  "_analysis": "No locations found.",\n  "locations": {}\n}'
+    assert agent._parse_llm_json(empty_locations_json) == {}
+
+    # D. JSON wrapped in Markdown code blocks
+    markdown_json = '```json\n{"_analysis": "Reasoning...", "locations": {"עזה": "gaza", "חאן יונס": "khan_yunis"}}\n```'
     assert agent._parse_llm_json(markdown_json) == {"עזה": "gaza", "חאן יונס": "khan_yunis"}
 
-    # C. Invalid/broken JSON that can be repaired
-    broken_json = '{"עזה": "gaza", "רפיח": "rafah"'
+    # E. Invalid/broken JSON that can be repaired
+    broken_json = '{"_analysis": "reason", "locations": {"עזה": "gaza", "רפיח": "rafah"'
     assert agent._parse_llm_json(broken_json) == {"עזה": "gaza", "רפיח": "rafah"}
 
-    # D. Empty or non-JSON output
+    # F. Empty or non-JSON output
     empty_output = ""
     assert agent._parse_llm_json(empty_output) == {}
 
@@ -134,9 +142,9 @@ def test_geocoding_api_failure(mocker):
 # 4. End-to-End Agent execution mock
 @pytest.mark.asyncio
 async def test_location_extractor_agent_e2e(mocker):
-    # Mock LLM response
+    # Mock LLM response with new format
     mock_response = MagicMock()
-    mock_response.content = '```json\n{"עזה": "gaza", "רפיח": "rafah"}\n```'
+    mock_response.content = '```json\n{\n  "_analysis": "Detected עזה and רפיח as locations.",\n  "locations": {\n    "עזה": "gaza",\n    "רפיח": "rafah"\n  }\n}\n```'
     
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -171,13 +179,16 @@ async def test_location_extractor_agent_e2e(mocker):
     assert rafah_mapping.wkt_polygon is None
     assert rafah_mapping.error_message == "No geometry found from API"
     
-    # Verify formatted instruction parts
-    assert "gaza_wkt =" in result.location_wkt_instruction
+    # Verify formatted instruction parts - MUST contain placeholder token, MUST NOT contain raw POLYGON text
+    assert "gaza_wkt" in result.location_wkt_instruction
     assert "rafah_wkt" not in result.location_wkt_instruction
-    
+    assert "POLYGON" not in result.location_wkt_instruction
+
     # Verify serializable dicts
     assert result.raw_locations_dict == {"עזה": "gaza"}
     assert "gaza_wkt" in result.locations_coords_dict
+    assert "POLYGON" in result.locations_coords_dict["gaza_wkt"]
+    assert result.analysis == "Detected עזה and רפיח as locations."
 
 
 @pytest.mark.asyncio
@@ -186,7 +197,7 @@ async def test_location_extractor_class(mocker):
     from agent.nodes.extractor import LocationExtractor
 
     mock_response = MagicMock()
-    mock_response.content = '{"עזה": "gaza"}'
+    mock_response.content = '{\n  "_analysis": "Extracted gaza",\n  "locations": {"עזה": "gaza"}\n}'
 
     mock_llm = MagicMock()
     mock_llm.invoke = MagicMock(return_value=mock_response)
@@ -212,7 +223,7 @@ async def test_location_extractor_class(mocker):
 def test_location_extractor_agent_base_extractor_interface(mocker):
     # Mock LLM response
     mock_response = MagicMock()
-    mock_response.content = '{"עזה": "gaza"}'
+    mock_response.content = '{\n  "_analysis": "Extracted gaza",\n  "locations": {"עזה": "gaza"}\n}'
     
     mock_llm = MagicMock()
     mock_llm.invoke = MagicMock(return_value=mock_response)
@@ -238,9 +249,9 @@ def test_location_extractor_agent_base_extractor_interface(mocker):
 @pytest.mark.asyncio
 async def test_e2e_mixed_outcomes_with_fallback(mocker):
     """Test a scenario where one location succeeds, one triggers the bounding box fallback, and one fails completely."""
-    # Mock LLM response with 3 distinct locations
+    # Mock LLM response with 3 distinct locations using new schema
     mock_response = MagicMock()
-    mock_response.content = '{"תל אביב": "tel_aviv", "ירושלים": "jerusalem", "אטלנטיס": "atlantis"}'
+    mock_response.content = '{\n  "_analysis": "Extracted tel aviv, jerusalem, atlantis",\n  "locations": {"תל אביב": "tel_aviv", "ירושלים": "jerusalem", "אטלנטיס": "atlantis"}\n}'
     
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -288,7 +299,7 @@ async def test_e2e_mixed_outcomes_with_fallback(mocker):
 async def test_e2e_sync_async_parity(mocker):
     """Test that the Event Loop fix works: run (async) and extract (sync) must share exact underlying logic."""
     mock_response = MagicMock()
-    mock_response.content = '{"חיפה": "haifa"}'
+    mock_response.content = '{\n  "_analysis": "Extracted haifa",\n  "locations": {"חיפה": "haifa"}\n}'
     
     mock_llm = MagicMock()
     mock_llm.invoke = MagicMock(return_value=mock_response)
@@ -319,7 +330,7 @@ async def test_e2e_sync_async_parity(mocker):
 async def test_e2e_empty_llm_response(mocker):
     """Test the pipeline's robustness when the LLM detects zero locations in the text."""
     mock_response = MagicMock()
-    mock_response.content = '{}'  # LLM recognized no locations
+    mock_response.content = '{\n  "_analysis": "No locations found.",\n  "locations": {}\n}'  # LLM recognized no locations
     
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -332,3 +343,76 @@ async def test_e2e_empty_llm_response(mocker):
     assert result.raw_locations_dict == {}
     assert result.locations_coords_dict == {}
     assert result.location_wkt_instruction == ""
+
+
+# 5. Test all 9 challenging user prompt example scenarios
+@pytest.mark.parametrize(
+    "llm_output_json,expected_map",
+    [
+        # Scenario 1: Date & populated cities
+        (
+            '{\n  "_analysis": "Detected חאן יונס and רפיח as populated cities. מאי 2025 is a date, ignored.",\n  "locations": {\n    "חאן יונס": "khan_yunis",\n    "רפיח": "rafah"\n  }\n}',
+            {"חאן יונס": "khan_yunis", "רפיח": "rafah"}
+        ),
+        # Scenario 2: Directional modifiers dropped & Acronym expansion
+        (
+            '{\n  "_analysis": "Detected ת״א (expanded to תל אביב), dropped מזרח. Detected איו״ש (expanded to יהודה ושומרון).",\n  "locations": {\n    "תל אביב": "tel_aviv",\n    "יהודה ושומרון": "judea_and_samaria"\n  }\n}',
+            {"תל אביב": "tel_aviv", "יהודה ושומרון": "judea_and_samaria"}
+        ),
+        # Scenario 3: Sports teams ignored
+        (
+            '{\n  "_analysis": "Ignored מכבי חיפה and הפועל ירושלים as sports teams. Detected final חיפה.",\n  "locations": {\n    "חיפה": "haifa"\n  }\n}',
+            {"חיפה": "haifa"}
+        ),
+        # Scenario 4: Personal & restaurant names ignored
+        (
+            '{\n  "_analysis": "Ignored גולן and שרון as personal names, and אוסלו as restaurant name. No locations found.",\n  "locations": {}\n}',
+            {}
+        ),
+        # Scenario 5: Foreign/Arabic villages & formal directional modifier
+        (
+            '{\n  "_analysis": "Detected בינת ג\'בייל, מארון א-ראס, אל-ח\'יאם, and דרום לבנון as valid location entities.",\n  "locations": {\n    "בינת ג\'בייל": "bint_jbeil",\n    "מארון א-ראס": "maroun_al_ras",\n    "אל-ח\'יאם": "al_khiam",\n    "דרום לבנון": "south_lebanon"\n  }\n}',
+            {"בינת ג'בייל": "bint_jbeil", "מארון א-ראס": "maroun_al_ras", "אל-ח'יאם": "al_khiam", "דרום לבנון": "south_lebanon"}
+        ),
+        # Scenario 6: Structural prefixes retained (כפר, ואדי, נחל)
+        (
+            '{\n  "_analysis": "Detected כפר קאסם, כפר כנא, ואדי עארה, נחל קישון, retaining structural prefixes.",\n  "locations": {\n    "כפר קאסם": "kafr_qasim",\n    "כפר כנא": "kafr_kanna",\n    "ואדי עארה": "wadi_ara",\n    "נחל קישון": "kishon_river"\n  }\n}',
+            {"כפר קאסם": "kafr_qasim", "כפר כנא": "kafr_kanna", "ואדי עארה": "wadi_ara", "נחל קישון": "kishon_river"}
+        ),
+        # Scenario 7: Refugee camps & military base
+        (
+            '{\n  "_analysis": "Detected מחנה הפליטים ג\'נין, corrected בלטא to מחנה בלאטה, detected שכם and מחנה נחשונים.",\n  "locations": {\n    "מחנה הפליטים ג\'נין": "jenin_refugee_camp",\n    "מחנה בלאטה": "balata_refugee_camp",\n    "שכם": "nablus",\n    "מחנה נחשונים": "nahshonim_camp"\n  }\n}',
+            {"מחנה הפליטים ג'נין": "jenin_refugee_camp", "מחנה בלאטה": "balata_refugee_camp", "שכם": "nablus", "מחנה נחשונים": "nahshonim_camp"}
+        ),
+        # Scenario 8: Landmarks & mountain standardization (ג'בל שייח' -> הר חרמון)
+        (
+            '{\n  "_analysis": "Detected נהר הליטני, הר דב, and standardized ג\'בל שייח\' to הר חרמון.",\n  "locations": {\n    "נהר הליטני": "litani_river",\n    "הר דב": "har_dov",\n    "הר חרמון": "mount_hermon"\n  }\n}',
+            {"נהר הליטני": "litani_river", "הר דב": "har_dov", "הר חרמון": "mount_hermon"}
+        ),
+        # Scenario 9: Operational sectors ignored
+        (
+            '{\n  "_analysis": "Ignored הגזרה הצפונית, extracted עוטף עזה.",\n  "locations": {\n    "עוטף עזה": "gaza_envelope"\n  }\n}',
+            {"עוטף עזה": "gaza_envelope"}
+        ),
+        # Scenario 10 (Unseen): Acronym expansions (ארה״ב, ב״ש, פ״ת)
+        (
+            '{\n  "_analysis": "Expanded לארה״ב to ארצות הברית, בב״ש to באר שבע, and בפ״ת to פפתח תקווה.",\n  "locations": {\n    "ארצות הברית": "united_states",\n    "באר שבע": "beersheba",\n    "פתח תקווה": "petah_tikva"\n  }\n}',
+            {"ארצות הברית": "united_states", "באר שבע": "beersheba", "פתח תקווה": "petah_tikva"}
+        ),
+        # Scenario 11 (Unseen): Generic directional vs Formal Country (צפון תל אביב vs צפון קוריאה / דרום אפריקה)
+        (
+            '{\n  "_analysis": "Dropped צפון from צפון תל אביב; kept formal country names קוריאה הצפונית and דרום אפריקה.",\n  "locations": {\n    "תל אביב": "tel_aviv",\n    "קוריאה הצפונית": "north_korea",\n    "דרום אפריקה": "south_africa"\n  }\n}',
+            {"תל אביב": "tel_aviv", "קוריאה הצפונית": "north_korea", "דרום אפריקה": "south_africa"}
+        ),
+        # Scenario 12 (Unseen): Military units & dates ignored vs Base
+        (
+            '{\n  "_analysis": "Ignored חטיבה 7 and אוגדה 98 as military units, ignored באוגוסט 2024 as date. Extracted מחנה עמוס.",\n  "locations": {\n    "מחנה עמוס": "amos_camp"\n  }\n}',
+            {"מחנה עמוס": "amos_camp"}
+        ),
+    ]
+)
+def test_challenging_query_examples_parsing(llm_output_json, expected_map):
+    """Test parsing of all 12 challenging scenario outputs from the prompt rules."""
+    agent = LocationExtractorAgent(llm_client=None)
+    result = agent._parse_llm_json(llm_output_json)
+    assert result == expected_map

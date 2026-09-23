@@ -34,6 +34,7 @@ class LocationExtractionResult(BaseModel):
     location_wkt_instruction: str = ""
     raw_locations_dict: Dict[str, str] = Field(default_factory=dict)
     locations_coords_dict: Dict[str, str] = Field(default_factory=dict)
+    analysis: str = ""
 
 
 def _make_var_name(english_name: str) -> str:
@@ -72,6 +73,7 @@ class LocationExtractorAgent(BaseExtractor):
         )
         self.prompt_template = self._build_prompt()
         self._last_result: LocationExtractionResult | None = None
+        self._last_analysis: str = ""
 
     def _process_locations(
         self, locations_map: Dict[str, str]
@@ -162,6 +164,7 @@ class LocationExtractorAgent(BaseExtractor):
             location_wkt_instruction=instruction_text,
             raw_locations_dict=names_dict,
             locations_coords_dict=coords_dict,
+            analysis=self._last_analysis,
         )
         self._last_result = result
         return result
@@ -203,28 +206,36 @@ class LocationExtractorAgent(BaseExtractor):
         clean_text = re.sub(r"```(?:json)?\s*([\s\S]*?)\s*```", r"\1", text)
         clean_text = clean_text.strip()
 
+        data = None
         try:
             data = json.loads(clean_text)
-            if not isinstance(data, dict):
-                return {}
-            return {
-                k: str(v)
-                for k, v in data.items()
-                if isinstance(k, str) and isinstance(v, str)
-            }
         except json.JSONDecodeError:
             try:
                 fixed = repair_json(clean_text)
                 data = json.loads(fixed)
-                if isinstance(data, dict):
-                    return {
-                        k: str(v)
-                        for k, v in data.items()
-                        if isinstance(k, str) and isinstance(v, str)
-                    }
             except Exception:
-                pass
+                self._last_analysis = ""
+                return {}
+
+        if not isinstance(data, dict):
+            self._last_analysis = ""
             return {}
+
+        analysis = str(data.get("_analysis") or "")
+        self._last_analysis = analysis
+        if analysis:
+            logger.info(f"Location extractor reasoning (_analysis): {analysis}")
+
+        if "locations" in data and isinstance(data["locations"], dict):
+            loc_dict = data["locations"]
+        else:
+            loc_dict = {k: v for k, v in data.items() if k != "_analysis"}
+
+        return {
+            k: str(v)
+            for k, v in loc_dict.items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
 
     async def run(self, user_request: str) -> LocationExtractionResult:
         # Step 1: LLM Call

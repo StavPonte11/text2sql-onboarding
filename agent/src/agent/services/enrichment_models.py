@@ -48,8 +48,7 @@ class FilterTransformation(BaseModel):
     column: str = Field(
         description="The target column name of the filter condition."
     )
-    table: Optional[str] = Field(
-        default=None,
+    table: str = Field(
         description="The resolved canonical table name the column belongs to, propagated from the extraction phase."
     )
     original_value: str = Field(

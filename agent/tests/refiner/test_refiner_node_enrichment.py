@@ -60,7 +60,7 @@ async def test_enrich_success_legit(
     # 2. Setup LLM Mock (Simulate LLM returning a valid transformation plan)
     fake_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="category",
                 original_value="fruit",
                 old_operator="=",
@@ -243,7 +243,7 @@ async def test_enrich_llm_decides_no_change(
     # Simulate LLM deciding NO transformation is needed
     fake_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="category",
                 original_value="fruit",
                 old_operator="=",
@@ -311,6 +311,7 @@ async def test_enrich_fallback_json_parsing(
       "enrichment_details": [
         {
           "column": "category",
+          "table": "products",
           "original_value": "fruit",
           "old_operator": "=",
           "new_operator": "IN",

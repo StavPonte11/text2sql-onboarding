@@ -37,7 +37,7 @@ async def test_tts_g1_04_error_and_feedback_loop_routing(mock_langfuse, mock_llm
         "hallucinated_tables": None,
         "esca_write_failed": None,
         "inline_result_rows": None,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "escalated": None,
         "escalation_reason": None,
@@ -60,7 +60,7 @@ async def test_tts_g1_08_refiner_context_accumulation(
         "sql_query": "SELECT bad",
         "schema_plan": "plan",
         "trino_error": None,
-        "error_history": [{"sql": "SELECT bad1", "error": "Error 1"}, {"sql": "SELECT bad2", "error": "Error 2"}],  # Accumulated previous errors
+        "attempt_history": [{"iteration": 1, "sql": "SELECT bad1", "success": False, "error": "Error 1", "row_count": None}, {"iteration": 2, "sql": "SELECT bad2", "success": False, "error": "Error 2", "row_count": None}],  # Accumulated previous attempts
         "refinement_count": 2,
         "messages": [],
         "query_enrichments": [],
@@ -97,14 +97,15 @@ async def test_tts_g1_08_refiner_context_accumulation(
         with patch("agent.nodes.refiner.get_esca_client"):
             result = await trino_exec_node(state)
 
-            # Verify error history accumulation
-            assert "error_history" in result
-            assert len(result["error_history"]) == 3
-            assert result["error_history"] == [
-                {"sql": "SELECT bad1", "error": "Error 1"},
-                {"sql": "SELECT bad2", "error": "Error 2"},
-                {"sql": "SELECT bad", "error": "Error 3"},
-            ]
+            # Verify attempt history accumulation
+            assert "attempt_history" in result
+            assert len(result["attempt_history"]) == 3
+            # First two entries are the original history, third is the new failure
+            assert result["attempt_history"][0] == {"iteration": 1, "sql": "SELECT bad1", "success": False, "error": "Error 1", "row_count": None}
+            assert result["attempt_history"][1] == {"iteration": 2, "sql": "SELECT bad2", "success": False, "error": "Error 2", "row_count": None}
+            assert result["attempt_history"][2]["sql"] == "SELECT bad"
+            assert result["attempt_history"][2]["error"] == "Error 3"
+            assert result["attempt_history"][2]["success"] is False
 
 
 def test_tts_g2_01_scoping_modes_strict_vs_hybrid():
@@ -131,7 +132,7 @@ def test_tts_g2_01_scoping_modes_strict_vs_hybrid():
         "hallucinated_tables": None,
         "esca_write_failed": None,
         "inline_result_rows": None,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "escalated": None,
         "escalation_reason": None,
@@ -170,7 +171,7 @@ def test_tts_g2_02_max_loop_and_hitl_breakpointer():
         "hallucinated_tables": None,
         "esca_write_failed": None,
         "inline_result_rows": None,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "escalated": None,
         "escalation_reason": None,

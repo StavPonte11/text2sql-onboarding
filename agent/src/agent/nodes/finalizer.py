@@ -89,11 +89,17 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
         langfuse_prompt.get_langchain_prompt()
     )
 
+    from agent.utils.sql import resolve_wkt_polygons
+    sql_query = state.get("sql_query") or ""
+    locations_dict = state.get("locations_dict")
+    
+    final_sql_query = resolve_wkt_polygons(sql_query, locations_dict)
+
     chain = prompt_finalizer | llm
     response = await chain.ainvoke(
         {
             "user_request": state.get("user_query") or "",
-            "sql_query": state.get("sql_query") or "",
+            "sql_query": sql_query,
             "sql_translation": state.get("sql_explanation") or "",
             "sql_results": preview_str,
         }
@@ -101,6 +107,7 @@ async def finalizer_node(state: AgentState, config: RunnableConfig | None = None
 
     return {
         "summary": response.content,
+        "sql_query": final_sql_query,
         "sql_explanation": state.get("sql_explanation", ""),
         "execution_path": ["finalizer"],
     }
