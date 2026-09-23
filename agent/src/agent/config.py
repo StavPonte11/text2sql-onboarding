@@ -30,6 +30,7 @@ class AgentSettings(BaseSettings):
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
     NOMINATIM_USER_AGENT: str = "text2sql-agent/1.0"  # Nominatim acceptable-use identifier
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
+    NOMINATIM_API_KEY: str | None = None
     NOMINATIM_TIMEOUT: int = Field(default=10, gt=0)  # seconds
     NOMINATIM_RATE_LIMIT_SECONDS: float = Field(default=1.0, gt=0)  # min gap between requests
     NOMINATIM_SIMPLIFY_ITERATIONS: int = Field(default=25, gt=0)  # binary-search WKT simplify steps
