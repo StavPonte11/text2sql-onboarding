@@ -538,8 +538,7 @@ services:
       - ./core:/app/core
       - ./backend:/app/backend
       - /app/backend/.venv
-      - /Users/benben/Downloads/azure-trino-certs:/Users/benben/Downloads/azure-trino-certs:ro
-
+      - ./certs/azure-trino-certs:/app/azure-trino-certs:ro
   agent:
     build:
       context: .
@@ -554,7 +553,7 @@ services:
       - ./core:/app/core
       - ./agent:/app/agent
       - /app/agent/.venv
-      - /Users/benben/Downloads/azure-trino-certs:/Users/benben/Downloads/azure-trino-certs:ro
+      - ./certs/azure-trino-certs:/app/azure-trino-certs:ro
     environment: 
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/text2sql
       - POSTGRES_HOST=db
@@ -587,8 +586,8 @@ services:
       - TRINO_HTTP_SCHEME=https
       - TRINO_REQUEST_TIMEOUT=30.0
       - TRINO_ENABLED=true
-      - TRINO_CERT_PATH=/Users/benben/Downloads/azure-trino-certs/trino-client-crt
-      - TRINO_KEY_PATH=/Users/benben/Downloads/azure-trino-certs/trino-client-key    
+      - TRINO_CERT_PATH=/app/azure-trino-certs/trino-client-crt
+      - TRINO_KEY_PATH=/app/azure-trino-certs/trino-client-key    
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
