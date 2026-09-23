@@ -132,6 +132,7 @@ async def enrich_context_node(state: AgentState, config: RunnableConfig | None =
                     initial_sql=sql,
                     schema=schema,
                     tables=tables,
+                    config=config,
                 )
                 
                 filter_enrichments = []

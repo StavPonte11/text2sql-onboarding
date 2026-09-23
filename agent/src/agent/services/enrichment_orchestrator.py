@@ -23,6 +23,8 @@ from agent.services.hybrid_searcher import HybridSearcher
 from agent.services.sql_transformer import SQLTransformer
 from agent.llm import get_llm
 
+from langchain_core.runnables import RunnableConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +94,7 @@ class EnrichmentOrchestrator:
         initial_sql: str,
         schema: Dict[str, Dict[str, str]],
         tables: List[AgentSQLTable],
+        config: Optional[RunnableConfig] = None,
     ) -> Tuple[str, Optional[TransformationPlan], bool]:
         """
         Coordinates the pipeline execution:
@@ -102,6 +105,7 @@ class EnrichmentOrchestrator:
             initial_sql: The draft SQL statement to enrich.
             schema: Database schema metadata dictionary.
             tables: List of AgentSQLTable schemas.
+            config: Optional RunnableConfig for LangChain/Langfuse callbacks.
 
         Returns:
             A tuple of (refined_sql, transformation_plan, is_enriched).
@@ -130,22 +134,12 @@ class EnrichmentOrchestrator:
 
             # Format candidate pools for prompt presentation
             search_results_formatted: str = ""
-            for key, candidates in search_results.items():
+            for idx, (key, candidates) in enumerate(search_results.items(), 1):
                 col, val = key.split(settings.CACHE_KEY_DELIMITER)
-                matching_filter = next(
-                    (
-                        f
-                        for f in filters
-                        if f.source_column.lower() == col.lower()
-                        and (
-                            str(f.value) == val
-                            or (isinstance(f.value, (list, tuple, set)) and val in [str(v) for v in f.value])
-                        )
-                    ),
-                    None,
+                search_results_formatted += (
+                    f"{idx}. column - '{col}',\n value - '{val}',\n"
+                    f"canonical values: {json.dumps(candidates)}\n\n"
                 )
-                orig_op = matching_filter.operator if matching_filter else "="
-                search_results_formatted += f"Column: {col}\nOriginal Operator: {orig_op}\nOriginal Value: {val}\nCandidates: {json.dumps(candidates)}\n\n"
 
             # 3. Request keeping/replacing decisions from LLM
             from agent.langfuse_client import langfuse_client
@@ -168,7 +162,8 @@ class EnrichmentOrchestrator:
                     "user_request": user_request,
                     "current_agent_query": initial_sql,
                     "columns_search_results": search_results_formatted,
-                }
+                },
+                config=config,
             )
             messages = prompt_value.to_messages()
 
@@ -179,12 +174,12 @@ class EnrichmentOrchestrator:
                 structured_llm = llm.with_structured_output(
                     TransformationPlan, method="json_schema"
                 )
-                plan = await structured_llm.ainvoke(messages)
+                plan = await structured_llm.ainvoke(messages, config=config)
             except Exception as e:
                 logger.warning(
                     f"LangChain structured output failed: {e}. Attempting fallback parsing."
                 )
-                raw_response = await llm.ainvoke(messages)
+                raw_response = await llm.ainvoke(messages, config=config)
                 plan = parse_transformation_plan(raw_response.content)
 
             if not plan or not plan.enrichment_details:
@@ -242,11 +237,14 @@ class EnrichmentOrchestrator:
                             f"[Validation Failure] No candidate pool found for column '{tf.column}'."
                         )
 
-            # 4. Transform predicates inside SQL AST
-            refined_sql: str = SQLTransformer.apply(initial_sql, plan)
-
-            logger.info(f"Enriched Refined SQL: {refined_sql}")
+            # 4. Transform predicates inside SQL AST (only if filters were actually changed)
             is_enriched: bool = any(tf.changed_filter for tf in plan.enrichment_details)
+            if is_enriched:
+                refined_sql: str = SQLTransformer.apply(initial_sql, plan)
+                logger.info(f"Enriched Refined SQL: {refined_sql}")
+            else:
+                refined_sql = initial_sql
+                logger.info("No filters changed during category enrichment.")
 
             return refined_sql, plan, is_enriched
 
