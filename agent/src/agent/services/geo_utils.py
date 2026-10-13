@@ -70,6 +70,8 @@ def _fetch_geojson_polygon(location_name: str) -> Optional[dict]:
         "format": "geojson",
     }
     headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
+    if settings.NOMINATIM_API_KEY:
+        headers["x-api-key"] = settings.NOMINATIM_API_KEY
 
     res = requests.get(url, params=params, headers=headers, timeout=settings.NOMINATIM_TIMEOUT)
     res.raise_for_status()          # raises RequestException on 4xx/5xx

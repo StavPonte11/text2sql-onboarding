@@ -580,39 +580,7 @@ class CrossTableProfileRead(SQLModel):
     common_columns: list[str] | None
     created_at: datetime
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Large Category Value Table
-# ─────────────────────────────────────────────────────────────────────────────
 
-
-class LargeCategoryValue(SQLModel, table=True):
-    __tablename__ = "large_category_values"
-    __table_args__ = (
-        UniqueConstraint("table_id", "column_name", "value_text", name="uq_large_category_val"),
-    )
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(
-        sa_column_args=[ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")],
-        index=True,
-    )
-    column_name: str = Field(index=True)
-    value_text: str = Field(index=True)
-    
-    # Nomic-embed-text outputs 768 dimensions
-    embedding: Any | None = Field(default=None, sa_column=Column(Vector(768))) 
-    embedder_model: str = Field(default="nomic-embed-text") 
-    
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
-
-class LargeCategoryValueRead(SQLModel):
-    id: str
-    table_id: str
-    column_name: str
-    value_text: str
-    embedder_model: str | None
-    updated_at: datetime
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FEEDBACK MODELS

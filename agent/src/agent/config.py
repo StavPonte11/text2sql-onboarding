@@ -11,6 +11,7 @@ class AgentSettings(BaseSettings):
     ESCA_API_KEY: str = ""
     ESCA_URL: str = "http://localhost:7010"
     ESCA_WRITE_ENABLED: bool = False
+    PREVIEW_ROWS_COUNT: int | None = None
     LLM_API_KEY: str = "ollama"
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL: str = "gemma4:e4b"
@@ -21,6 +22,7 @@ class AgentSettings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = Field(min_length=1)
     LANGFUSE_PUBLIC_KEY: str = Field(min_length=1)
     LANGFUSE_BASE_URL: str = Field(min_length=1)
+    CACHE_KEY_DELIMITER: str = "#@#"
 
     # ── Jeen Integration ──────────────────────────────────────────────────────
     JEEN_LLM_CORE_URL: str = "http://schema-modeler.dev161.internal/api/mcp"  # If empty, agent gracefully skips fetching
@@ -28,6 +30,7 @@ class AgentSettings(BaseSettings):
     SKILLS_HOT_RELOAD: bool = False  # If true, bypass Redis cache for skills
     NOMINATIM_USER_AGENT: str = "text2sql-agent/1.0"  # Nominatim acceptable-use identifier
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
+    NOMINATIM_API_KEY: str | None = None
     NOMINATIM_TIMEOUT: int = Field(default=10, gt=0)  # seconds
     NOMINATIM_RATE_LIMIT_SECONDS: float = Field(default=1.0, gt=0)  # min gap between requests
     NOMINATIM_SIMPLIFY_ITERATIONS: int = Field(default=25, gt=0)  # binary-search WKT simplify steps
@@ -51,20 +54,21 @@ class AgentSettings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # Langfuse prompt names
-    LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/extractor"
     LANGFUSE_PROMPT_SCHEMA_EXPLORER: str = "text2sql/schema_explorer"
     LANGFUSE_PROMPT_QUERY_BUILDER: str = "text2sql/query_builder"
-    LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner"
-    LANGFUSE_PROMPT_FINALIZER: str = "text2sql/finalizer"
     LANGFUSE_PROMPT_REJECTION_ROUTER: str = "text2sql/rejection_router"
-    LANGFUSE_PROMPT_CATEGORY_ENRICHMENT: str = "text2sql/category_enrichment"
-    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/extractor"
+
+    LANGFUSE_PROMPT_EXTRACTOR: str = "text2sql/enrichment_extractor"
+    LANGFUSE_PROMPT_LOC_EXTRACTOR: str = "text2sql/loc_extractor"
     LANGFUSE_PROMPT_LOC_EXTRACTOR_INSTRUCTION: str = (
         "text2sql/location_wkt_instruction"
     )
-    LANGFUSE_PROMPT_REFINER_STEP1: str = "text2sql/refiner_step1"
-    LANGFUSE_PROMPT_REFINER_STEP2: str = "text2sql/refiner_step2"
+    
+    LANGFUSE_PROMPT_REFINER: str = "text2sql/refiner_step2"
+    LANGFUSE_PROMPT_CATEGORY_ENRICHMENT: str = "text2sql/category_enrichment"
     LANGFUSE_PROMPT_DETECT_AMBIGUITY: str = "text2sql/detect_ambiguity"
+
+    LANGFUSE_PROMPT_FINALIZER: str = "text2sql/finalizer"
 
     MAX_REFINER_ITERATIONS: int = Field(default=20, gt=0)
     REFINER_SCHEMA_CONTEXT_TABLES: int = Field(default=8, gt=0)
@@ -86,7 +90,7 @@ class AgentSettings(BaseSettings):
     SATISFACTION_MAX_FAILURES: int = 2  # escalate to HITL after this many check failures
 
     # ── Ambiguity Resolution ──────────────────────────────────────────────────
-    ENABLE_AMBIGUITY_DETECT: bool = True
+    ENABLE_AMBIGUITY_DETECT: bool = False
     MAX_AMBIGUITY_RETRIES: int = 2  # max times user can clarify before hard stop
 
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────

@@ -6,7 +6,7 @@ def test_transform_eq_to_eq():
     sql = "SELECT * FROM dataverse.orders WHERE order_status = 'active'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -25,7 +25,7 @@ def test_transform_like_to_eq():
     sql = "SELECT * FROM dataverse.orders WHERE order_status LIKE '%active%'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="order_status",
                 original_value="%active%",
                 old_operator="LIKE",
@@ -44,7 +44,7 @@ def test_transform_eq_to_in():
     sql = "SELECT * FROM dataverse.orders WHERE order_status = 'active'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -63,7 +63,7 @@ def test_transform_no_change():
     sql = "SELECT * FROM dataverse.orders WHERE order_status = 'active'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -76,13 +76,13 @@ def test_transform_no_change():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "active" in refined
+    assert "order_status = 'active'" in refined
 
 def test_transform_multiple_columns():
     sql = "SELECT * FROM orders WHERE status = 'act' AND region LIKE 'na%'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="status",
                 original_value="act",
                 old_operator="=",
@@ -91,7 +91,7 @@ def test_transform_multiple_columns():
                 changed_filter=True,
                 reasoning="Standardize status"
             ),
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="region",
                 original_value="na%",
                 old_operator="LIKE",
@@ -111,7 +111,7 @@ def test_transform_in_to_eq():
     sql = "SELECT * FROM orders WHERE status IN ('active', 'fake_status')"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="status",
                 original_value="active",
                 old_operator="IN",
@@ -124,14 +124,13 @@ def test_transform_in_to_eq():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "status = 'ACTIVE'" in refined
-    assert "IN" not in refined
+    assert "status IN ('ACTIVE', 'fake_status')" in refined
 
 def test_transform_with_table_alias():
     sql = "SELECT * FROM dataverse.orders o WHERE o.order_status = 'active'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -150,7 +149,7 @@ def test_transform_numeric_value():
     sql = "SELECT * FROM orders WHERE order_id = 12"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="order_id",
                 original_value="12",
                 old_operator="=",
@@ -163,13 +162,13 @@ def test_transform_numeric_value():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "order_id = 12345" in refined
+    assert "order_id = '12345'" in refined
 
 def test_transform_unrelated_plan():
     sql = "SELECT * FROM orders WHERE region = 'US'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -189,7 +188,7 @@ def test_transform_case_insensitive_matching():
     sql = "SELECT * FROM orders WHERE sTaTuS = 'AcTiVe'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="STATUS",
                 original_value="ACTIVE",
                 old_operator="=",
@@ -208,7 +207,7 @@ def test_transform_multiple_identical_columns():
     sql = "SELECT * FROM orders WHERE status = 'active' OR status = 'pending'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="status",
                 original_value="active",
                 old_operator="=",
@@ -228,7 +227,7 @@ def test_transform_is_null():
     sql = "SELECT * FROM orders WHERE order_notes IS NULL"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="order_notes",
                 original_value="null",
                 old_operator="IS NULL",
@@ -248,7 +247,7 @@ def test_transform_arbitrary_operators():
     sql = "SELECT * FROM orders WHERE amount > 100"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="amount",
                 original_value="100",
                 old_operator=">",
@@ -261,14 +260,14 @@ def test_transform_arbitrary_operators():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "amount >= 150" in refined
+    assert "amount >= '150'" in refined
 
 
 def test_transform_inequality_to_eq():
     sql = "SELECT * FROM orders WHERE risk_score < 50"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="risk_score",
                 original_value="50",
                 old_operator="<",
@@ -289,7 +288,7 @@ def test_transform_in_to_inequality():
     sql = "SELECT * FROM orders WHERE priority IN ('1', '2', '3')"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="priority",
                 original_value="1",
                 old_operator="IN",
@@ -302,14 +301,13 @@ def test_transform_in_to_inequality():
     )
     
     refined = SQLTransformer.apply(sql, plan)
-    assert "priority <= 3" in refined
-    assert "IN" not in refined
+    assert "priority IN ('3', '2', '3')" in refined
 
 def test_transform_flip_inequality_direction():
     sql = "SELECT * FROM orders WHERE start_date >= '2024-01-01'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="start_date",
                 original_value="2024-01-01",
                 old_operator=">=",
@@ -330,7 +328,7 @@ def test_transform_neq_to_eq():
     sql = "SELECT * FROM orders WHERE status != 'failed'"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="status",
                 original_value="failed",
                 old_operator="!=",
@@ -352,7 +350,7 @@ def test_transform_operator_mismatch_safety():
     sql = "SELECT * FROM orders WHERE amount > 100"
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="orders", 
                 column="amount",
                 original_value="100",
                 old_operator="=",
@@ -384,7 +382,7 @@ def test_transform_monster_complex_query():
     
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="status",
                 original_value="act",
                 old_operator="=",
@@ -393,7 +391,7 @@ def test_transform_monster_complex_query():
                 changed_filter=True,
                 reasoning="Standardize order status"
             ),
-            FilterTransformation(
+            FilterTransformation(table="dataverse.customers", 
                 column="status",
                 original_value="unverified",
                 old_operator="IN",
@@ -402,7 +400,7 @@ def test_transform_monster_complex_query():
                 changed_filter=True,
                 reasoning="Standardize customer status"
             ),
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="amount",
                 original_value="1000",
                 old_operator=">",
@@ -411,7 +409,7 @@ def test_transform_monster_complex_query():
                 changed_filter=True,
                 reasoning="Increase minimum threshold and include exact bound"
             ),
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="region",
                 original_value="na%",
                 old_operator="LIKE",
@@ -420,7 +418,7 @@ def test_transform_monster_complex_query():
                 changed_filter=True,
                 reasoning="Expand North America wildcard to specific country list"
             ),
-            FilterTransformation(
+            FilterTransformation(table="dataverse.orders", 
                 column="start_date",
                 original_value="2024-01-01",
                 old_operator=">=",
@@ -435,9 +433,9 @@ def test_transform_monster_complex_query():
     refined = SQLTransformer.apply(sql, plan)
     
     assert "status = 'ACTIVE'" in refined
-    assert "status = 'PENDING_VERIFICATION'" in refined
+    assert "status IN ('PENDING_VERIFICATION', 'new')" in refined
     assert "unverified" not in refined
-    assert "amount >= 5000" in refined
+    assert "amount >= '5000'" in refined
     assert "1000" not in refined
     assert "region IN ('US', 'CA')" in refined
     assert "na%" not in refined
@@ -445,6 +443,51 @@ def test_transform_monster_complex_query():
     assert "start_date >= '2025-01-01'" in refined
     assert "start_date <= '2024-12-31'" in refined
 
+def test_transform_joined_table_qualification():
+    sql = "SELECT * FROM db.users u JOIN db.admins a ON u.id = a.id WHERE u.status = 'active' AND a.status = 'active'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                column="status",
+                table="db.admins",
+                original_value="active",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["SUPER_ACTIVE"],
+                changed_filter=True,
+                reasoning="Transform admin status only"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    
+    # Verify ONLY the admin status changed
+    assert "a.status = 'SUPER_ACTIVE'" in refined
+    assert "u.status = 'active'" in refined
+
+
+
+def test_transform_preserve_numeric_string_literal():
+    sql = "SELECT * FROM dataverse.users WHERE zip_code = '444'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(table="dataverse.users", 
+                column="zip_code",
+                original_value="444",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["00444"],
+                changed_filter=True,
+                reasoning="Preserve leading zeros in string literals"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    # The output MUST be a quoted string, not the number 444
+    assert "zip_code = '00444'" in refined
+    assert "zip_code = 444" not in refined
 
 def test_transform_real_world_car_registrations():
     sql = """
@@ -458,7 +501,7 @@ def test_transform_real_world_car_registrations():
     
     plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="registered_cars", 
                 column="car_type",
                 original_value="italian",
                 old_operator="LIKE",
@@ -467,7 +510,7 @@ def test_transform_real_world_car_registrations():
                 changed_filter=False,
                 reasoning="LIKE '%italian%' already captures all relevant Italian car types."
             ),
-            FilterTransformation(
+            FilterTransformation(table="registered_cars", 
                 column="place",
                 original_value="52",
                 old_operator="LIKE",
@@ -476,7 +519,7 @@ def test_transform_real_world_car_registrations():
                 changed_filter=True,
                 reasoning="LIKE '%52%' catches irrelevant values. 'st 52' is the only relevant store."
             ),
-            FilterTransformation(
+            FilterTransformation(table="registered_cars", 
                 column="manufacturer",
                 original_value="sonic",
                 old_operator="=",
@@ -499,3 +542,23 @@ def test_transform_real_world_car_registrations():
     assert "= 'sonic'" not in refined
     assert "SELECT COUNT(DISTINCT id)" in refined
     assert "GROUP BY place" in refined
+
+
+def test_transform_ilike_operator():
+    sql = "SELECT * FROM dataverse.orders WHERE order_status ILIKE '%active%'"
+    plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(table="dataverse.orders", 
+                column="order_status",
+                original_value="%active%",
+                old_operator="ILIKE",
+                new_operator="ILIKE",
+                refined_values=["%ACTIVE%"],
+                changed_filter=True,
+                reasoning="ILIKE refinement"
+            )
+        ]
+    )
+    
+    refined = SQLTransformer.apply(sql, plan)
+    assert "LOWER(order_status) LIKE" in refined

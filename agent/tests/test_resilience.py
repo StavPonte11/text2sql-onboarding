@@ -49,7 +49,7 @@ async def test_tts_g1_07_esca_resilient_fallback_and_finalizer(mock_langfuse, mo
         "hallucinated_tables": None,
         "esca_write_failed": True, # The key indicator
         "inline_result_rows": [{"col1": "val1"}, {"col1": "val2"}], # Fallback rows
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "escalated": None,
         "escalation_reason": None,

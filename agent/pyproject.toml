@@ -23,6 +23,7 @@ dependencies = [
     "shapely>=2.0.0",
     "sqlglot>=25.0.0",
     "deepagents>=0.6.12",
+    "urllib3>=2.7.0",
 ]
 
 [tool.uv.sources]
@@ -57,6 +58,7 @@ select = ["TID"]
 "src/agent/utils/esca.py" = ["TID251"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "real_llm: tests that make live LLM calls",

@@ -9,11 +9,11 @@ from typing import Any
 import trino
 from pydantic import BaseModel
 import urllib3
-
-# Suppress unverified HTTPS warnings for dev internal endpoints
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 from core.config import settings
+
+if not settings.TRINO_VERIFY:
+    # Suppress unverified HTTPS warnings for dev internal endpoints
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 

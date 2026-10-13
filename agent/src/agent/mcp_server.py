@@ -15,6 +15,7 @@ mcp = FastMCP("Text2SQL Agent")
 @mcp.tool()
 @observe()
 async def chat_with_agent(
+    connection_id: int,
     query: str | None = None,
     thread_id: str | None = None,
     resume_value: str | dict | None = None,
@@ -139,6 +140,7 @@ async def chat_with_agent(
                 "active_skills": active_skills,
                 "execution_mode": execution_mode,
                 "non_interactive": not hitl_enabled,
+                "connection_id": connection_id,
             },
             config=config,
         )
@@ -152,17 +154,20 @@ async def chat_with_agent(
     from agent.langfuse_client import langfuse_client
     langfuse_client.flush()
 
+    from agent.utils.sql import resolve_wkt_polygons
     final_state = await agent_graph.aget_state(config)
+    locations = final_state.values.get("locations_dict")
     
     # Check if interrupted by `interrupt()` function
     if final_state.interrupts:
         interrupt_val = final_state.interrupts[-1].value
+        raw_sql = final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None)
         return json.dumps(
             {
                 "thread_id": thread_id,
                 "status": "interrupted",
                 "interrupt_details": interrupt_val,
-                "sql_query": final_state.values.get("sql_query") or (interrupt_val.get("sql_query") if isinstance(interrupt_val, dict) else None),
+                "sql_query": resolve_wkt_polygons(raw_sql, locations),
                 "sql_explanation": interrupt_val.get("sql_explanation") if isinstance(interrupt_val, dict) else None,
                 "trace_id": trace_id,
                 "execution_path": final_state.values.get("execution_path", []),
@@ -182,7 +187,7 @@ async def chat_with_agent(
                 "thread_id": thread_id,
                 "status": "interrupted",
                 "interrupt_details": interrupt_val,
-                "sql_query": final_state.values.get("sql_query"),
+                "sql_query": resolve_wkt_polygons(final_state.values.get("sql_query"), locations),
                 "trace_id": trace_id,
                 "execution_path": final_state.values.get("execution_path", []),
             }
@@ -198,7 +203,7 @@ async def chat_with_agent(
             "status": "completed",
             "summary": result.get("summary", ""),
             "raw_data_ref": result.get("raw_data_ref"),
-            "sql_query": result.get("sql_query"),
+            "sql_query": resolve_wkt_polygons(result.get("sql_query"), locations),
             "sql_explanation": result.get("sql_explanation"),
             "trace_id": trace_id,
             "execution_path": result.get("execution_path", []),

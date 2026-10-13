@@ -1,3 +1,5 @@
+from agent.config import settings
+d = settings.CACHE_KEY_DELIMITER
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from agent.services.enrichment_models import TransformationPlan, FilterTransformation, AgentSQLTable
@@ -8,13 +10,13 @@ async def test_orchestrator_flow(mocker):
     # Mock HybridSearcher.search to return stubbed candidates
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "order_status#@#active": ["ACTIVE", "COMPLETED"]
+        f"order_status{d}active": ["ACTIVE", "COMPLETED"]
     }
     
     # Mock LLM response plan
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="order_status",
                 original_value="active",
                 old_operator="=",
@@ -69,6 +71,10 @@ async def test_orchestrator_fast_path_skips_llm(mocker):
     mock_llm_instance = MagicMock()
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm_instance)
     
+    # Mock search to return empty, exercising the fast path
+    mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
+    mock_search.return_value = {}
+    
     schema = {"dataverse.orders": {"order_id": "int"}}
     tables = [
         AgentSQLTable(
@@ -92,17 +98,18 @@ async def test_orchestrator_fast_path_skips_llm(mocker):
     assert plan is None
     # Crucial: prove we saved money by not calling the LLM!
     mock_llm_instance.with_structured_output.assert_not_called()
+    mock_search.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_orchestrator_partial_enrichment(mocker):
     # Mock search to ONLY return results for the category column
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
-    mock_search.return_value = {"region#@#na": ["NORTH_AMERICA"]}
+    mock_search.return_value = {f"region{d}na": ["NORTH_AMERICA"]}
     
     # Plan only changes the region, ignores the amount
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="na",
                 old_operator="=",
@@ -114,7 +121,7 @@ async def test_orchestrator_partial_enrichment(mocker):
         ]
     )
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     schema = {
@@ -139,11 +146,17 @@ async def test_orchestrator_partial_enrichment(mocker):
 @pytest.mark.asyncio
 async def test_orchestrator_llm_failure_fallback(mocker):
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
-    mock_search.return_value = {"status#@#act": ["ACTIVE"]}
+    mock_search.return_value = {f"status{d}act": ["ACTIVE"]}
     
     # Force the LLM to throw an API Exception!
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(side_effect=Exception("OpenAI API Timeout"))
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(side_effect=Exception("OpenAI API Timeout"))
+    
+    # Configure the raw fallback ainvoke to avoid TypeError
+    mock_response = MagicMock()
+    mock_response.content = "invalid json triggering fallback failure"
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     schema = {"dataverse.orders": {"status": "string"}}
@@ -166,14 +179,14 @@ async def test_orchestrator_double_expansion(mocker):
     # 1. Arrange: Search returns multiple candidates for BOTH columns
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "priority#@#high": ["P1_CRITICAL", "P2_HIGH"],
-        "category#@#network": ["NET_INFRA", "NET_SECURITY"]
+        f"priority{d}high": ["P1_CRITICAL", "P2_HIGH"],
+        f"category{d}network": ["NET_INFRA", "NET_SECURITY"]
     }
     
     # 2. Arrange: LLM maps both draft values to multiple canonical values
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="priority",
                 original_value="high",
                 old_operator="=",
@@ -182,7 +195,7 @@ async def test_orchestrator_double_expansion(mocker):
                 changed_filter=True,
                 reasoning="Broad term 'high' encompasses both P1 and P2 priorities"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="category",
                 original_value="network",
                 old_operator="=",
@@ -195,7 +208,7 @@ async def test_orchestrator_double_expansion(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
@@ -237,14 +250,14 @@ async def test_orchestrator_partial_llm_rejection(mocker):
     # 1. Arrange: Search returns multiple candidates for BOTH columns
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "department#@#eng": ["ENGINEERING", "DATA_ENG", "PLATFORM_ENG"],
-        "location#@#remote": ["REMOTE_US", "REMOTE_EU"]
+        f"department{d}eng": ["ENGINEERING", "DATA_ENG", "PLATFORM_ENG"],
+        f"location{d}remote": ["REMOTE_US", "REMOTE_EU"]
     }
     
     # 2. Arrange: LLM updates 'department', but REJECTS the 'location' candidates
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="department",
                 original_value="eng",
                 old_operator="=",
@@ -253,7 +266,7 @@ async def test_orchestrator_partial_llm_rejection(mocker):
                 changed_filter=True,
                 reasoning="Mapped abbreviation to exact department"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="location",
                 original_value="remote",
                 old_operator="=",
@@ -266,7 +279,7 @@ async def test_orchestrator_partial_llm_rejection(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
@@ -309,18 +322,18 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
     # 1. Arrange: The massive hybrid search return dictionary
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "region#@#na": ["NORTH_AMERICA"],
-        "region#@#eur": ["EMEA", "EUROPE"],
-        "customer_tier#@#vip_level": ["PLATINUM", "DIAMOND"],
-        "product_category#@#elec": ["ELECTRONICS", "SMART_DEVICES"],
-        "delivery_state#@#late": ["DELAYED", "MISSING"],
-        "shipping_speed#@#fast": ["URGENT", "NEXT_DAY"]
+        f"region{d}na": ["NORTH_AMERICA"],
+        f"region{d}eur": ["EMEA", "EUROPE"],
+        f"customer_tier{d}vip_level": ["PLATINUM", "DIAMOND"],
+        f"product_category{d}elec": ["ELECTRONICS", "SMART_DEVICES"],
+        f"delivery_state{d}late": ["DELAYED", "MISSING"],
+        f"shipping_speed{d}fast": ["URGENT", "NEXT_DAY"]
     }
     
     # 2. Arrange: The LLM Transformation Plan tackling all 6 fuzzy values
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="na",
                 old_operator="IN",
@@ -329,7 +342,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Resolve abbreviation"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="region",
                 original_value="eur",
                 old_operator="IN",
@@ -338,7 +351,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Resolve abbreviation to canonical EMEA"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="customer_tier",
                 original_value="vip_level",
                 old_operator="=",
@@ -347,7 +360,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Expand generic vip_level to specific database tiers"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="product_category",
                 original_value="elec",
                 old_operator="LIKE",
@@ -356,7 +369,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Exact mapping"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="delivery_state",
                 original_value="late",
                 old_operator="=",
@@ -365,7 +378,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
                 changed_filter=True,
                 reasoning="Standardize status"
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="shipping_speed",
                 original_value="fast",
                 old_operator="=",
@@ -378,7 +391,7 @@ async def test_orchestrator_complex_multi_column_enrichment(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Complex Schema and Table Definitions
@@ -458,17 +471,17 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     # 1. Arrange: Mock the search engine with the provided dict
     mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
     mock_search.return_value = {
-        "car_type#@#italian": ["italian jeep", "italian sports", "italian mini", "italian 4x4"],
-        "place#@#17": [], 
-        "place#@#52": ["st 52", "offices 52", "warehouse521"],
-        "place#@#444": ["store 444"],
-        "manufacturer#@#sonic": ["toyota", "sonic blue", "sonic black"]
+        f"car_type{d}italian": ["italian jeep", "italian sports", "italian mini", "italian 4x4"],
+        f"place{d}17": [], 
+        f"place{d}52": ["st 52", "offices 52", "warehouse521"],
+        f"place{d}444": ["store 444"],
+        f"manufacturer{d}sonic": ["toyota", "sonic blue", "sonic black"]
     }
     
     # 2. Arrange: Mock the LLM's structured output based on the provided plan
     mock_plan = TransformationPlan(
         enrichment_details=[
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="car_type",
                 original_value="italian",
                 old_operator="LIKE",
@@ -477,7 +490,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
                 changed_filter=False,
                 reasoning="LIKE '%italian%' already captures all relevant Italian car types."
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="place",
                 original_value="52",
                 old_operator="LIKE",
@@ -486,7 +499,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
                 changed_filter=True,
                 reasoning="LIKE '%52%' catches irrelevant values. 'st 52' is the only relevant store."
             ),
-            FilterTransformation(
+            FilterTransformation(table="", 
                 column="manufacturer",
                 original_value="sonic",
                 old_operator="=",
@@ -499,12 +512,12 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     )
     
     mock_llm = MagicMock()
-    mock_llm.with_structured_output().ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_plan)
     mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm)
     
     # 3. Arrange: Schema and Tables
     schema = {
-        "dataverse.registered_cars": {
+        "registered_cars": {
             "id": "int",
             "car_type": "string",
             "place": "string",
@@ -513,7 +526,7 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     }
     tables = [
         AgentSQLTable(
-            name="dataverse.registered_cars", 
+            name="registered_cars", 
             columns={
                 "car_type": {"column_type": "large_category"},
                 "place": {"column_type": "large_category"},
@@ -551,3 +564,57 @@ async def test_orchestrator_real_world_car_registrations(mocker):
     assert "= 'sonic'" not in refined_sql
     assert "SELECT COUNT(DISTINCT id)" in refined_sql
     assert "GROUP BY place" in refined_sql
+
+
+@pytest.mark.asyncio
+async def test_same_name_columns_same_value_propagation(mocker):
+    """
+    Verifies that when two different tables have the same column name ('status') and value ('active'),
+    table-qualified LLM proposals resolve to their matching table correctly and ambiguous proposals are skipped.
+    """
+    mock_search = mocker.patch("agent.services.hybrid_searcher.HybridSearcher.search", new_callable=AsyncMock)
+    mock_search.return_value = {
+        f"status{d}active": ["ACTIVE"]
+    }
+    
+    mock_plan = TransformationPlan(
+        enrichment_details=[
+            FilterTransformation(
+                table="db.orders", 
+                column="status",
+                original_value="active",
+                old_operator="=",
+                new_operator="=",
+                refined_values=["ACTIVE"],
+                changed_filter=True,
+                reasoning="Exact match"
+            )
+        ]
+    )
+    
+    mock_llm_instance = MagicMock()
+    mock_structured_llm = MagicMock()
+    mock_structured_llm.ainvoke = AsyncMock(return_value=mock_plan)
+    mock_llm_instance.with_structured_output.return_value = mock_structured_llm
+    mocker.patch("agent.services.enrichment_orchestrator.get_orchestrator_llm", return_value=mock_llm_instance)
+    
+    schema = {
+        "db.orders": {"status": "string", "cust_id": "int"},
+        "db.customers": {"status": "string", "id": "int"}
+    }
+    tables = [
+        AgentSQLTable(name="db.orders", columns={"status": {"column_type": "large_category"}}),
+        AgentSQLTable(name="db.customers", columns={"status": {"column_type": "large_category"}})
+    ]
+    
+    initial_sql = "SELECT * FROM db.orders o JOIN db.customers c ON o.cust_id = c.id WHERE o.status = 'active' AND c.status = 'active'"
+    
+    refined_sql, plan, is_enriched = await EnrichmentOrchestrator.enrich_query(
+        user_request="Find active orders for active customers",
+        initial_sql=initial_sql,
+        schema=schema,
+        tables=tables
+    )
+    
+    assert is_enriched is True
+    assert plan.enrichment_details[0].table == "db.orders"

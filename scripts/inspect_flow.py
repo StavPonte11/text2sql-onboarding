@@ -141,6 +141,7 @@ async def run_flow(query: str, auto_approve: bool = True):
     last_trino_row_count = None
 
     try:
+        success = True
         async for chunk in agent_graph.astream(
             initial_state, config=config, stream_mode="updates", subgraphs=True
         ):
@@ -167,7 +168,8 @@ async def run_flow(query: str, auto_approve: bool = True):
                             print_refiner_step_header("VERIFICATION", f"Post-Execution Result Verification (Iteration #{count})")
 
                         if last_trino_error:
-                            first_line_err = str(last_trino_error).strip().splitlines()[0]
+                            lines = [line.strip() for line in str(last_trino_error).splitlines() if line.strip()]
+                            first_line_err = lines[0] if lines else "Unknown error"
                             print(f"    {YELLOW}• Trigger:{RESET} ❌ Self-correcting previous database error ({first_line_err})")
                         elif last_trino_row_count == 0:
                             print(f"    {YELLOW}• Trigger:{RESET} ⚠️ Previous query returned 0 rows — adjusting filters/clauses to match data")
@@ -207,7 +209,36 @@ async def run_flow(query: str, auto_approve: bool = True):
 
                     elif node_name == "enrich_context":
                         sql = updates.get("sql_query", "")
+                        enrichments = updates.get("filter_enrichments") or []
                         print_refiner_step_header("ENRICH CONTEXT", "Context & Category Enrichment")
+                        if enrichments:
+                            print(f"    {GREEN}✓ Active Filter Enrichments ({len(enrichments)} mapping(s)):{RESET}")
+                            for item in enrichments:
+                                col = item.get("column", item.get("column_name", "unknown"))
+                                orig = item.get("original_value", "")
+                                old_op = item.get("old_operator", "")
+                                
+                                res = item.get("refined_values", item.get("resolved_value", ""))
+                                if isinstance(res, list):
+                                    # If it's going to be an IN clause, format it with parentheses
+                                    if item.get("new_operator", "").upper() == "IN":
+                                        res = ", ".join(f"'{r}'" for r in res)
+                                    else:
+                                        res = ", ".join(res)
+                                
+                                new_op = item.get("new_operator", "")
+                                
+                                if old_op and new_op:
+                                    # Format old and new strings neatly
+                                    old_str = f"{old_op} ({orig})" if old_op.upper() == "IN" else f"{old_op} '{orig}'"
+                                    new_str = f"{new_op} ({res})" if new_op.upper() == "IN" else f"{new_op} '{res}'"
+                                    print(f"    • {CYAN}{col}{RESET}: [{old_str}] ➡️ [{new_str}]")
+                                else:
+                                    # Fallback for old traces
+                                    print(f"    • {CYAN}{col}{RESET}: '{orig}' ➡️ '{res}'")
+                        else:
+                            print(f"    {YELLOW}• No structural filter values needed enrichment.{RESET}")
+                            
                         if sql:
                             print(f"    {CYAN}Current Candidate SQL:{RESET}\n    {BOLD}{sql.replace(chr(10), chr(10) + '    ')}{RESET}")
 
@@ -286,7 +317,10 @@ async def run_flow(query: str, auto_approve: bool = True):
                         int_val = updates[0].value if isinstance(updates, (list, tuple)) and len(updates) > 0 and hasattr(updates[0], 'value') else updates
                         print(f"  {YELLOW}{BOLD}⚠️ HITL Pause / Escalation Interrupt:{RESET} {int_val}")
 
-                    elif node_name not in ("hitl_query_approval", "refiner_subagent", "extractor") and isinstance(updates, dict):
+                    elif not is_subgraph and node_name == "end_fail":
+                        success = False
+                        
+                    elif node_name not in ("hitl_query_approval", "refiner_subagent", "extractor", "end_fail") and isinstance(updates, dict):
                         # Generic summary of node updates
                         for k, v in updates.items():
                             if k not in ("execution_path", "messages") and v is not None:
@@ -295,12 +329,18 @@ async def run_flow(query: str, auto_approve: bool = True):
                                     val_str = val_str[:120] + "..."
                                 print(f"  • {k}: {val_str}")
 
-        print_banner("Execution Completed Successfully!", GREEN)
+        if success:
+            print_banner("Execution Completed Successfully!", GREEN)
+        else:
+            print_banner("Execution Completed with Failure (end_fail)", RED)
+            
+        return success
 
     except Exception as exc:
         print_banner(f"Execution Encountered Error: {exc}", RED)
         import traceback
         traceback.print_exc()
+        return False
 
 
 def main():
@@ -311,7 +351,10 @@ def main():
     args = parser.parse_args()
 
     if args.query:
-        asyncio.run(run_flow(args.query, auto_approve=not args.require_approval))
+        success = asyncio.run(run_flow(args.query, auto_approve=not args.require_approval))
+        if not success and not args.interactive:
+            import sys
+            sys.exit(1)
     elif args.interactive or not args.query:
         print_banner("Text2SQL Interactive Flow Inspector", CYAN)
         while True:

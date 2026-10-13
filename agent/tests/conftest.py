@@ -10,7 +10,9 @@ load_dotenv(env_path)
 
 if not os.environ.get("LANGFUSE_PUBLIC_KEY"):
     os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-lf-123"
+if not os.environ.get("LANGFUSE_SECRET_KEY"):
     os.environ["LANGFUSE_SECRET_KEY"] = "sk-lf-123"
+if not os.environ.get("LANGFUSE_BASE_URL"):
     os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3000"
 
 import json

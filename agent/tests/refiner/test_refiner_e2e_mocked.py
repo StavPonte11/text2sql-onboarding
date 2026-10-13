@@ -3,26 +3,6 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from agent.nodes.refiner_graph import refiner_subgraph
 from agent.state import AgentState
 
-# ─── HELPER MOCKS FOR GRAPH E2E ──────────────────────────────────────────────
-
-
-def patch_graph_infrastructure():
-    """
-    Patches all external I/O (Redis, Langfuse, ESCA) across the entire subgraph
-    to prevent network crashes during E2E testing.
-    """
-    return (
-        patch("agent.nodes.refiner.publish_node_event", new_callable=AsyncMock),
-        patch(
-            "agent.nodes.enrichment_orchestrator.publish_node_event",
-            new_callable=AsyncMock,
-        ),
-        patch("agent.nodes.refiner.langfuse_client"),
-        patch("agent.services.enrichment_orchestrator.langfuse_client"),
-        patch("agent.nodes.refiner.get_esca_client", MagicMock()),
-    )
-
-
 # ─── UPGRADED BASE TEST ──────────────────────────────────────────────────────
 
 
@@ -45,7 +25,7 @@ async def test_e2e_mocked_success_loop(
     # 1. Setup Agent LLM to declare the query satisfied upon inspecting execution results
     mock_llm = MagicMock()
     mock_response = MagicMock(
-        content="QUERY_SATISFIED\n```sql\nSELECT 1;\n```\nTRANSLATION\nDone."
+        content='{"status": "SATISFIED", "sql_query": "SELECT 1", "final_translation": "Done.", "reasoning": "mock"}'
     )
 
     mock_chain = AsyncMock()
@@ -106,7 +86,7 @@ async def test_e2e_max_iterations_exhausted(mock_extract, mock_get_llm, mock_exe
     mock_llm = MagicMock()
     mock_chain = AsyncMock()
     mock_chain.ainvoke.return_value = MagicMock(
-        content="TRINO\n```sql\nSELECT BROKEN;\n```"
+        content='{"status": "REFINING", "sql_query": "SELECT BROKEN", "reasoning": "mock"}'
     )
     mock_get_llm.return_value = mock_llm
 
@@ -206,9 +186,9 @@ async def test_e2e_data_inspection_loop_not_satisfied(
 
     mock_refiner_chain = AsyncMock()
     mock_refiner_chain.ainvoke.side_effect = [
-        MagicMock(content="TRINO\n```sql\nSELECT * FROM B;\n```"),
+        MagicMock(content='{"status": "REFINING", "sql_query": "SELECT * FROM B", "reasoning": "mock"}'),
         MagicMock(
-            content="QUERY_SATISFIED\n```sql\nSELECT * FROM B;\n```\nTRANSLATION\nDone."
+            content='{"status": "SATISFIED", "sql_query": "SELECT * FROM B", "final_translation": "Done.", "reasoning": "mock"}'
         ),
     ]
     mock_refiner_llm.return_value = MagicMock()

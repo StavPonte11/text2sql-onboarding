@@ -55,7 +55,7 @@ async def test_query_builder_node_sql_output(mock_langfuse, mock_llm):
         "active_skills": None,
         "last_error": None,
         "esca_write_failed": False,
-        "error_history": None,
+        "attempt_history": None,
         "schema_explorer_retry_count": 0,
         "scoping_mode": "hybrid",
         "raw_data_ref": None,
