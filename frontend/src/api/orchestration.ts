@@ -7,6 +7,7 @@ export interface EvalRunFull {
   table_id: string;
   table_name?: string;
   dataset_id: string | null;
+  connection_id: number | null;
   score: number;
   pass_rate: number;
   fail_rate: number;
@@ -158,9 +159,22 @@ export const orchestrationApi = {
       .post<EvalRunFull[]>('/evaluations/run', table_ids, { params: { triggered_by } })
       .then((r) => r.data),
 
-  triggerDatasetRun: (dataset_name: string) =>
+  triggerDatasetRun: (dataset_name: string, connection_id?: number) =>
     api
-      .post<EvalRunFull>('/evaluations/run-dataset', null, { params: { dataset_name } })
+      .post<EvalRunFull>('/evaluations/run-dataset', null, {
+        params: { dataset_name, ...(connection_id !== undefined ? { connection_id } : {}) },
+      })
+      .then((r) => r.data),
+
+  triggerTableRunWithConnection: (
+    table_ids: string[],
+    connection_id?: number,
+    triggered_by = 'user',
+  ) =>
+    api
+      .post<EvalRunFull[]>('/evaluations/run', table_ids, {
+        params: { triggered_by, ...(connection_id !== undefined ? { connection_id } : {}) },
+      })
       .then((r) => r.data),
 
   listRuns: (params?: { limit?: number; offset?: number; status?: string; table_id?: string }) =>

@@ -32,7 +32,7 @@ from core.models.models import (
     Table,
     TableStatus,
 )
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
 from pydantic import BaseModel
 from sqlmodel import Session, desc, select
@@ -243,14 +243,19 @@ def _map_and_save_run_metrics(
                 )
 
 
-def _call_run_single_dataset(req: dict) -> "RunDatasetResponse":
-    """POST to the evaluation service run-single-dataset endpoint.
+def _call_run_new_evaluation(req: dict) -> "RunDatasetResponse":
+    """POST to the evaluation service run-new-evaluation endpoint.
 
     Raises requests.HTTPError on a non-2xx response.
     Returns a parsed RunDatasetResponse.
     """
+    if "connection_id" not in req or req.get("connection_id") is None:
+        raise ValueError(
+            "connection_id is required to run evaluation and must be chosen by user."
+        )
+
     resp = requests.post(
-        f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+        f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-new-evaluation",
         json=req,
         timeout=600,
     )
@@ -258,8 +263,18 @@ def _call_run_single_dataset(req: dict) -> "RunDatasetResponse":
     return RunDatasetResponse(**resp.json())
 
 
+def _call_run_single_dataset(req: dict) -> "RunDatasetResponse":
+    """Backwards-compatible wrapper calling run-new-evaluation."""
+    return _call_run_new_evaluation(req)
+
+
 @observe(name="eval-single-table")
-def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> float:
+def execute_single_table_eval(
+    table_id: str,
+    run_id: str,
+    session: Session,
+    connection_id: int | None = None,
+) -> float:
     with propagate_attributes(
         metadata={"table_id": table_id, "run_id": run_id},
         tags=["eval-run", f"table:{table_id}"],
@@ -298,14 +313,27 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
                     f"[Eval] Langfuse dataset sync failed (eval will continue): {e}"
                 )
 
+        if connection_id is None and run and run.connection_id is not None:
+            connection_id = run.connection_id
+
+        if connection_id is None:
+            logger.error(
+                f"[Eval] Table {table_id} evaluation failed: connection_id is required and was not provided."
+            )
+            run.status = EvalStatus.failed
+            run.score = 0.0
+            if questions:
+                run.total_questions = len(questions)
+            session.add(run)
+            session.commit()
+            return 0.0
+
         try:
             req = {
                 "dataset_name": dataset_name,
-                "additional_tables": [
-                    f"{table.catalog}.{table.schema_name}.{table.name}"
-                ],
+                "connection_id": connection_id,
             }
-            eval_resp = _call_run_single_dataset(req)
+            eval_resp = _call_run_new_evaluation(req)
         except Exception as e:
             logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
             run.status = EvalStatus.failed
@@ -344,7 +372,10 @@ def execute_single_table_eval(table_id: str, run_id: str, session: Session) -> f
 
 
 def _run_production_dataset_eval(
-    session: Session, run_name_prefix: str, promotion_run_id: str
+    session: Session,
+    run_name_prefix: str,
+    promotion_run_id: str,
+    connection_id: int | None = None,
 ) -> float:
     prod_tables = session.exec(
         select(Table)
@@ -385,21 +416,29 @@ def _run_production_dataset_eval(
         status=EvalStatus.running,
         triggered_by="promotion-baseline",
         promotion_run_id=promotion_run_id,
+        connection_id=connection_id,
     )
     session.add(run)
     session.commit()
     session.refresh(run)
 
-    # Send schema.table format so the agent can validate tables without ambiguity
-    table_names = [
-        f"{t.schema_name}.{t.name}" if t.schema_name else t.name for t in prod_tables
-    ]
+    if connection_id is None:
+        logger.error(
+            "[Promotion/Phase-A] Baseline eval failed: connection_id is required."
+        )
+        run.status = EvalStatus.failed
+        run.score = 0.0
+        run.total_questions = len(all_production_questions)
+        session.add(run)
+        session.commit()
+        return 0.0
+
     try:
         req = {
             "dataset_name": PRODUCTION_DATASET_NAME,
-            "additional_tables": table_names,
+            "connection_id": connection_id,
         }
-        eval_resp = _call_run_single_dataset(req)
+        eval_resp = _call_run_new_evaluation(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-A] Baseline eval failed: {e}")
         run.status = EvalStatus.failed
@@ -430,6 +469,7 @@ def _run_candidate_eval(
     run_name_prefix: str,
     session: Session,
     promotion_run_id: str,
+    connection_id: int | None = None,
 ) -> float:
     run = EvalRun(
         table_id=table.id,
@@ -437,6 +477,7 @@ def _run_candidate_eval(
         status=EvalStatus.running,
         triggered_by="promotion-candidate",
         promotion_run_id=promotion_run_id,
+        connection_id=connection_id,
     )
     session.add(run)
     session.commit()
@@ -452,12 +493,23 @@ def _run_candidate_eval(
         except Exception as e:
             logger.error(f"[Promotion/Phase-B] Candidate eval prep failed: {e}")
 
+    if connection_id is None:
+        logger.error(
+            "[Promotion/Phase-B] Candidate eval failed: connection_id is required."
+        )
+        run.status = EvalStatus.failed
+        run.score = 0.0
+        run.total_questions = len(questions)
+        session.add(run)
+        session.commit()
+        return 0.0
+
     try:
         req = {
             "dataset_name": dataset_name,
-            "additional_tables": [f"{table.catalog}.{table.schema_name}.{table.name}"],
+            "connection_id": connection_id,
         }
-        eval_resp = _call_run_single_dataset(req)
+        eval_resp = _call_run_new_evaluation(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Candidate eval failed: {e}")
         run.status = EvalStatus.failed
@@ -482,7 +534,10 @@ def _run_candidate_eval(
 
 
 def _run_regression_eval(
-    run_name_prefix: str, session: Session, promotion_run_id: str
+    run_name_prefix: str,
+    session: Session,
+    promotion_run_id: str,
+    connection_id: int | None = None,
 ) -> float:
     prod_tables = session.exec(
         select(Table)
@@ -490,9 +545,7 @@ def _run_regression_eval(
         .where(Table.owner_id != "spider2")
     ).all()
     all_production_questions: list[GoldenQuestion] = []
-    table_names = []
     for table in prod_tables:
-        table_names.append(table.name)
         qs = session.exec(
             select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
         ).all()
@@ -504,21 +557,29 @@ def _run_regression_eval(
         status=EvalStatus.running,
         triggered_by="promotion-regression",
         promotion_run_id=promotion_run_id,
+        connection_id=connection_id,
     )
     session.add(run)
     session.commit()
     session.refresh(run)
 
-    # Send schema.table format so the agent can validate tables without ambiguity
-    table_names = [
-        f"{t.schema_name}.{t.name}" if t.schema_name else t.name for t in prod_tables
-    ]
+    if connection_id is None:
+        logger.error(
+            "[Promotion/Phase-B] Regression eval failed: connection_id is required."
+        )
+        run.status = EvalStatus.failed
+        run.score = 0.0
+        run.total_questions = len(all_production_questions)
+        session.add(run)
+        session.commit()
+        return 0.0
+
     try:
         req = {
             "dataset_name": PRODUCTION_DATASET_NAME,
-            "additional_tables": table_names,
+            "connection_id": connection_id,
         }
-        eval_resp = _call_run_single_dataset(req)
+        eval_resp = _call_run_new_evaluation(req)
     except Exception as e:
         logger.error(f"[Promotion/Phase-B] Regression eval failed: {e}")
         run.status = EvalStatus.failed
@@ -542,7 +603,9 @@ def _run_regression_eval(
 
 
 @observe(name="promotion-workflow")
-def promote_table_to_production_workflow(table_id: str, run_id: str):
+def promote_table_to_production_workflow(
+    table_id: str, run_id: str, connection_id: int | None = None
+):
     """
     Two-phase promotion workflow.
 
@@ -590,7 +653,10 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
         # ── Phase A: baseline ──────────────────────────────────────────────────
         logger.info(f"[Promotion] Phase A: measuring baseline score for run {run_id}")
         baseline_score = _run_production_dataset_eval(
-            session, run_name_prefix, promotion_run_id=run_id
+            session,
+            run_name_prefix,
+            promotion_run_id=run_id,
+            connection_id=connection_id,
         )
         threshold_min = round(baseline_score - 0.10, 3)
         logger.info(
@@ -602,13 +668,21 @@ def promote_table_to_production_workflow(table_id: str, run_id: str):
 
         # ── Phase B step 1: evaluate candidate's golden questions ──────────
         candidate_score = _run_candidate_eval(
-            table, questions, run_name_prefix, session, promotion_run_id=run_id
+            table,
+            questions,
+            run_name_prefix,
+            session,
+            promotion_run_id=run_id,
+            connection_id=connection_id,
         )
 
         # ── Phase B step 2: regression on production dataset ───────────────
         if candidate_score >= 0.50:
             regression_score = _run_regression_eval(
-                run_name_prefix, session, promotion_run_id=run_id
+                run_name_prefix,
+                session,
+                promotion_run_id=run_id,
+                connection_id=connection_id,
             )
         else:
             regression_score = baseline_score  # Skip regression, candidate failed
@@ -660,36 +734,19 @@ REGRESSION_WARNING_DELTA = 0.05
 LOW_SCORE_THRESHOLD = 0.70
 
 
-def _create_alert(
-    session: Session,
-    run_id: str | None,
-    table_id: str | None,
-    alert_type: str,
-    severity: AlertSeverity,
-    message: str,
-    details: dict | None = None,
-):
-    alert = EvaluationAlert(
-        run_id=run_id,
-        table_id=table_id,
-        alert_type=alert_type,
-        severity=severity,
-        message=message,
-        details=details,
-    )
-    session.add(alert)
-    session.commit()
-
-
 @observe(name="eval-run")
-def _run_evaluation_pipeline(table_id: str, run_id: str):
+def _run_evaluation_pipeline(
+    table_id: str, run_id: str, connection_id: int | None = None
+):
     with Session(engine) as session:
         run = session.get(EvalRun, run_id)
         if not run:
             return
 
         try:
-            score = execute_single_table_eval(table_id, run_id, session)
+            score = execute_single_table_eval(
+                table_id, run_id, session, connection_id=connection_id
+            )
 
             # Fetch updated run state
             session.refresh(run)
@@ -832,6 +889,7 @@ def get_readiness(session: Session = Depends(get_session)):
 def trigger_eval(
     table_id: str,
     background_tasks: BackgroundTasks,
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     table = session.get(Table, table_id)
@@ -861,16 +919,32 @@ def trigger_eval(
             detail=f"Cannot run evaluation. Missing: {'; '.join(missing)}.",
         )
 
+    if connection_id is None:
+        prev_run = session.exec(
+            select(EvalRun.connection_id)
+            .where(EvalRun.table_id == table_id, EvalRun.connection_id.is_not(None))
+            .order_by(EvalRun.created_at.desc())
+        ).first()
+        if prev_run:
+            connection_id = prev_run
+
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
+
     run = EvalRun(
         table_id=table_id,
         total_questions=len(questions),
         status=EvalStatus.running,
+        connection_id=connection_id,
     )
     session.add(run)
     session.commit()
     session.refresh(run)
 
-    background_tasks.add_task(_run_evaluation_pipeline, table_id, run.id)
+    background_tasks.add_task(_run_evaluation_pipeline, table_id, run.id, connection_id)
     return EvalRunRead.model_validate(run, update={"table_name": table.name})
 
 

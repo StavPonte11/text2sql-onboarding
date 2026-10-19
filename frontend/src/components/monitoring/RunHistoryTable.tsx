@@ -446,6 +446,7 @@ export function RunHistoryTable({
               {!compact && <th>Questions</th>}
               <th>Status</th>
               <th>Triggered By</th>
+              {!compact && <th>Catalog</th>}
               <th>Date</th>
               <th style={{ width: 36 }} />
             </tr>
@@ -528,6 +529,25 @@ export function RunHistoryTable({
                     {run.triggered_by}
                   </span>
                 </td>
+                {!compact && (
+                  <td>
+                    {(run as any).connection_id != null ? (
+                      <code
+                        style={{
+                          fontSize: 11,
+                          padding: '2px 6px',
+                          background: 'rgba(99,102,241,0.1)',
+                          borderRadius: 4,
+                          color: 'var(--accent)',
+                        }}
+                      >
+                        #{(run as any).connection_id}
+                      </code>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>default</span>
+                    )}
+                  </td>
+                )}
                 <td className="date-cell">{dayjs(run.created_at).format('MMM D, HH:mm')}</td>
                 <td>
                   <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />

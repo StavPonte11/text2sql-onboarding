@@ -194,11 +194,12 @@ def test_trigger_evaluation_run(mock_lf, client, db_session):
     db_session.add(q)
     db_session.commit()
 
-    response = client.post(f"/api/tables/{table.id}/eval/run")
+    response = client.post(f"/api/tables/{table.id}/eval/run?connection_id=89")
     assert response.status_code == 202
     run_data = response.json()
     assert run_data["status"] == EvalStatus.running
     assert run_data["table_name"] == "sales"
+    assert run_data["connection_id"] == 89
 
 
 # ── Audit API Tests ────────────────────────────────────────────────────────────

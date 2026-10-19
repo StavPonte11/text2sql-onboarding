@@ -158,6 +158,7 @@ class EvalRun(SQLModel, table=True):
         index=True,
     )
     dataset_id: str | None = Field(default=None, index=True)
+    connection_id: int | None = Field(default=None, nullable=True)  # catalog used for this run
     score: float = Field(default=0.0)
     pass_rate: float = Field(default=0.0)
     fail_rate: float = Field(default=0.0)
@@ -182,6 +183,7 @@ class EvalRunRead(SQLModel):
     table_id: str | None
     table_name: str
     dataset_id: str | None
+    connection_id: int | None = None
     score: float
     pass_rate: float
     fail_rate: float

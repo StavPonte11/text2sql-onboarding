@@ -425,4 +425,14 @@ export const handlers = [
     schedules = schedules.filter((s) => s.id !== id);
     return new HttpResponse(null, { status: 204 });
   }),
+
+  // ── Agent Connections API ──────────────────────────────────────────────────
+  http.get('/api/agent/connections', () => {
+    return HttpResponse.json({
+      connections: [
+        { connection_id: 89, name: 'minio' },
+        { connection_id: 90, name: 'dataverse' },
+      ],
+    });
+  }),
 ];

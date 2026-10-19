@@ -21,8 +21,15 @@ export function useTriggerEval() {
 export function useTriggerOrchestrationRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ tableIds, triggeredBy }: { tableIds: string[]; triggeredBy?: string }) =>
-      orchestrationApi.triggerRun(tableIds, triggeredBy),
+    mutationFn: ({
+      tableIds,
+      triggeredBy,
+      connectionId,
+    }: {
+      tableIds: string[];
+      triggeredBy?: string;
+      connectionId?: number;
+    }) => orchestrationApi.triggerTableRunWithConnection(tableIds, connectionId, triggeredBy),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },
@@ -33,7 +40,8 @@ export function useTriggerOrchestrationRun() {
 export function useTriggerDatasetRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (datasetName: string) => orchestrationApi.triggerDatasetRun(datasetName),
+    mutationFn: ({ datasetName, connectionId }: { datasetName: string; connectionId?: number }) =>
+      orchestrationApi.triggerDatasetRun(datasetName, connectionId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

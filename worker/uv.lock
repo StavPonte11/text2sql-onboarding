@@ -181,6 +181,7 @@ dependencies = [
     { name = "python-core-utils", extra = ["postgres", "redis"] },
     { name = "sqlmodel" },
     { name = "trino" },
+    { name = "urllib3" },
 ]
 
 [package.metadata]
@@ -195,6 +196,7 @@ requires-dist = [
     { name = "python-core-utils", extras = ["postgres", "redis"], git = "ssh://git@github.com/matzpen-agency/python-core-utils.git?rev=1.2.0" },
     { name = "sqlmodel", specifier = "==0.0.22" },
     { name = "trino", specifier = ">=0.328.0" },
+    { name = "urllib3", specifier = ">=2.0.0" },
 ]
 
 [[package]]

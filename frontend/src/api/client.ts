@@ -94,8 +94,12 @@ export const questionsApi = {
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
 export const evalApi = {
-  triggerRun: (tableId: string) =>
-    api.post<EvalRun>(`/tables/${tableId}/eval/run`).then((r) => r.data),
+  triggerRun: (tableId: string, connectionId?: number) =>
+    api
+      .post<EvalRun>(`/tables/${tableId}/eval/run`, null, {
+        params: connectionId !== undefined ? { connection_id: connectionId } : {},
+      })
+      .then((r) => r.data),
   listAllRuns: () => api.get<EvalRun[]>('/eval/runs/all').then((r) => r.data),
   listRuns: (tableId: string) =>
     api.get<EvalRun[]>(`/tables/${tableId}/eval/runs`).then((r) => r.data),

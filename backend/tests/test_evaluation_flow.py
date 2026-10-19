@@ -18,6 +18,7 @@ def test_execute_single_table_eval_success(mock_session):
     mock_run = MagicMock(spec=EvalRun)
     mock_run.total_questions = 0
     mock_run.id = run_id
+    mock_run.connection_id = 89
     
     mock_table = MagicMock(spec=Table)
     mock_table.id = table_id
@@ -67,14 +68,14 @@ def test_execute_single_table_eval_success(mock_session):
                     mock_eval_resp.failure_rate = 0.0
                     mock_response_class.return_value = mock_eval_resp
                     
-                    score = execute_single_table_eval(table_id, run_id, mock_session)
+                    score = execute_single_table_eval(table_id, run_id, mock_session, connection_id=89)
                     
                     # Verify requests.post was called with correct payload
                     mock_post.assert_called_once()
                     args, kwargs = mock_post.call_args
                     assert "json" in kwargs
                     assert kwargs["json"]["dataset_name"] == f"text2sql_sandbox_{table_id}"
-                    assert kwargs["json"]["additional_tables"] == ["minio.test_schema.test_table"]
+                    assert kwargs["json"]["connection_id"] == 89
                     
                     # Verify run mapping was called
                     mock_map.assert_called_once()

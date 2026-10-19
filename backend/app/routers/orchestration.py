@@ -64,14 +64,17 @@ LOW_SCORE_THRESHOLD = 0.70
 
 @observe(name="evaluation_pipeline")
 def _run_full_pipeline(
-    table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
+    table_ids: list[str],
+    run_ids: list[str],
+    triggered_by: str = "user",
+    connection_id: int | None = None,
 ):
     """Run evaluation for multiple tables (one run per table)."""
     with propagate_attributes(
         tags=["evaluation_run"],
         metadata={
-            "table_ids": table_ids,
-            "run_ids": run_ids,
+            "table_ids": ",".join(table_ids),
+            "run_ids": ",".join(run_ids),
             "triggered_by": triggered_by,
         },
     ):
@@ -83,7 +86,9 @@ def _run_full_pipeline(
 
                 try:
                     # ── Delegate to shared core logic ───────────────────────────
-                    score = execute_single_table_eval(table_id, run_id, session)
+                    score = execute_single_table_eval(
+                        table_id, run_id, session, connection_id=connection_id
+                    )
 
                     # Fetch updated run state
                     session.refresh(run)
@@ -222,9 +227,16 @@ def trigger_evaluation_run(
     table_ids: list[str],
     background_tasks: BackgroundTasks,
     triggered_by: str = Query(default="user"),
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """Trigger evaluation for one or more tables."""
+
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
 
     # ── Validate all tables before creating any run records ─────────────────
     validation_errors: list[str] = []
@@ -271,6 +283,7 @@ def trigger_evaluation_run(
             table_id=table_id,
             total_questions=len(questions),
             triggered_by=triggered_by,
+            connection_id=connection_id,
         )
         session.add(run)
         session.commit()
@@ -279,50 +292,50 @@ def trigger_evaluation_run(
 
     background_tasks.add_task(
         _run_full_pipeline,
-        [r.table_id for r in runs],
+        table_ids,
         [r.id for r in runs],
         triggered_by,
+        connection_id,
     )
     read_runs = []
     for r in runs:
-        t = session.get(Table, r.table_id)
+        t = session.get(Table, r.table_id) if r.table_id else None
         read_runs.append(
             EvalRunRead.model_validate(
-                r, update={"table_name": t.name if t else r.table_id}
+                r, update={"table_name": t.name if t else (r.table_id or "Unknown")}
             )
         )
     return read_runs
 
 
-def _run_dataset_pipeline(dataset_name: str, run_id: str):
+def _run_dataset_pipeline(
+    dataset_name: str, run_id: str, connection_id: int | None = None
+):
     with Session(engine) as session:
         run = session.get(EvalRun, run_id)
         if not run:
             return
 
-        try:
-            # Resolve all production table names from the DB to pass as additional_tables
-            if dataset_name == "spider2":
-                prod_tables = session.exec(
-                    select(Table).where(Table.owner_id == "spider2")
-                ).all()
-                table_names = [
-                    f"{t.catalog}.{t.schema_name}.{t.name}" for t in prod_tables
-                ]
-            else:
-                prod_tables = session.exec(
-                    select(Table)
-                    .where(Table.status == TableStatus.production)
-                    .where(Table.owner_id != "spider2")
-                ).all()
-                table_names = [t.name for t in prod_tables]
+        if connection_id is None and run.connection_id is not None:
+            connection_id = run.connection_id
 
+        if connection_id is None:
+            logger.error(
+                f"[Eval] Dataset {dataset_name} evaluation failed: connection_id is required."
+            )
+            run.status = EvalStatus.failed
+            run.score = 0.0
+            session.add(run)
+            session.commit()
+            return
+
+        try:
             req = {
                 "dataset_name": dataset_name,
-                "additional_tables": table_names,
+                "connection_id": connection_id,
             }
             resp = requests.post(
-                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-single-dataset",
+                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-new-evaluation",
                 json=req,
                 timeout=600,
             )
@@ -350,9 +363,16 @@ def _run_dataset_pipeline(dataset_name: str, run_id: str):
 def trigger_dataset_run(
     dataset_name: str,
     background_tasks: BackgroundTasks,
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """Trigger evaluation for a specific dataset (e.g. 'spider2' or 'text2sql_production')."""
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
+
     # 1. Sync production dataset if requested
     if dataset_name == "text2sql_production":
         prod_tables = session.exec(
@@ -400,14 +420,19 @@ def trigger_dataset_run(
 
     # 2. Create the run record
     run = EvalRun(
-        table_id=None, total_questions=total_q_count, triggered_by=dataset_name
+        table_id=None,
+        total_questions=total_q_count,
+        triggered_by=dataset_name,
+        connection_id=connection_id,
     )
     session.add(run)
     session.commit()
     session.refresh(run)
 
     # 3. Queue the task
-    background_tasks.add_task(_run_dataset_pipeline, dataset_name, run.id)
+    background_tasks.add_task(
+        _run_dataset_pipeline, dataset_name, run.id, connection_id
+    )
     return EvalRunRead.model_validate(
         run, update={"table_name": f"Dataset: {dataset_name}"}
     )
@@ -874,20 +899,18 @@ def system_health(session: Session = Depends(get_session)):
     # Top failing tables (lowest avg score)
     table_scores: dict[str, list[float]] = {}
     for r in all_runs:
-        if r.score is not None:
+        if r.table_id is not None and r.score is not None:
             table_scores.setdefault(r.table_id, []).append(r.score)
 
     failing_tables = []
     for tid, scores in table_scores.items():
         avg = sum(scores) / len(scores)
         if avg < LOW_SCORE_THRESHOLD:
-            table = session.get(Table, tid) if tid else None
+            table = session.get(Table, tid)
             failing_tables.append(
                 {
                     "table_id": tid,
-                    "table_name": table.name
-                    if table
-                    else (tid[:8] if tid else "Unknown"),
+                    "table_name": table.name if table else tid[:8],
                     "avg_score": round(avg, 3),
                     "failure_rate": round(1 - avg, 3),
                 }

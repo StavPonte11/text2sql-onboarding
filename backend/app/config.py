@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     JEEN_METADATA_MCP_KEY: str = (
         "mcp_f885337e381366db5edc22093415450e38f71e997e96dc708fea69bde9529ab9"
     )
+    JEEN_METADATA_CONNECTION_ID: int = 89
 
     APP_ENV: str = "development"
     OPENMETADATA_URL: str = "http://localhost:8585"

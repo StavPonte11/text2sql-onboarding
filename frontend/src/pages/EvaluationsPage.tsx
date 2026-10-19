@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { agentApi } from '../api/agent';
 import { orchestrationApi } from '../api/orchestration';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
@@ -139,11 +140,15 @@ function RunTriggerPanel({
   showSpider2,
   onToggleSpider2,
   spider2Pending,
+  connections,
+  loadingConnections,
 }: {
   onLaunch?: () => void;
   showSpider2: boolean;
   onToggleSpider2: () => void;
   spider2Pending: boolean;
+  connections: any[];
+  loadingConnections: boolean;
 }) {
   const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
   const [triggeredBy] = useState('user');
@@ -153,6 +158,7 @@ function RunTriggerPanel({
   const [activeOwners, setActiveOwners] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState(50);
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
   const { message } = App.useApp();
 
   useEffect(() => {
@@ -192,9 +198,20 @@ function RunTriggerPanel({
     [tables],
   );
 
+  useEffect(() => {
+    if (!selectedConnection && connections.length > 0) {
+      setSelectedConnection(connections[0].connection_id);
+    }
+  }, [connections, selectedConnection]);
+
   const filteredTables = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const selectedCatalog = selectedConnection
+      ? connections.find((c: any) => c.connection_id === selectedConnection)?.name?.toLowerCase()
+      : undefined;
+
     return tables.filter((t: Table) => {
+      if (selectedCatalog && t.catalog?.toLowerCase() !== selectedCatalog) return false;
       if (!showSpider2 && isSpider2Table(t)) return false;
       if (activeStatuses.length > 0 && !activeStatuses.includes(t.status)) return false;
       const owner = (t as any).owner_id;
@@ -204,15 +221,19 @@ function RunTriggerPanel({
       const haystack = `${t.name} ${t.schema_name} ${serviceCatalog}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [tables, search, activeStatuses, activeOwners, showSpider2]);
+  }, [tables, search, activeStatuses, activeOwners, showSpider2, selectedConnection, connections]);
 
   const displayedTables = useMemo(() => {
     return filteredTables.slice(0, visibleCount);
   }, [filteredTables, visibleCount]);
 
   const handleLaunch = () => {
+    if (!selectedConnection) {
+      message.error('Please select a catalog connection before launching evaluation.');
+      return;
+    }
     triggerMut.mutate(
-      { tableIds: selectedTableIds, triggeredBy },
+      { tableIds: selectedTableIds, triggeredBy, connectionId: selectedConnection },
       {
         onSuccess: () => {
           setLaunched(true);
@@ -258,6 +279,25 @@ function RunTriggerPanel({
         sub="Select tables then launch an evaluation"
         action={
           <div className="run-trigger-panel__actions">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                Catalog
+              </span>
+              <Select
+                value={selectedConnection}
+                onChange={(val) => {
+                  setSelectedConnection(val);
+                  setSelectedTableIds([]);
+                }}
+                style={{ minWidth: 180 }}
+                placeholder="Select catalog"
+                loading={loadingConnections}
+                options={connections.map((c: any) => ({
+                  value: c.connection_id,
+                  label: c.name,
+                }))}
+              />
+            </div>
             <button className="btn btn--ghost btn--sm" onClick={selectAll}>
               Select All
             </button>
@@ -384,7 +424,8 @@ function RunTriggerPanel({
 
       <button
         className="btn btn--primary launch-btn-full"
-        disabled={selectedTableIds.length === 0 || triggerMut.isPending}
+        disabled={selectedTableIds.length === 0 || triggerMut.isPending || !selectedConnection}
+        title={!selectedConnection ? 'Please select a catalog connection' : undefined}
         onClick={handleLaunch}
       >
         {triggerMut.isPending ? (
@@ -408,6 +449,8 @@ interface DatasetRunPanelProps {
   setRunningDataset: (val: string | null) => void;
   setRunningRunId: (val: string | null) => void;
   onLaunch?: () => void;
+  connections: any[];
+  loadingConnections: boolean;
 }
 
 function DatasetRunPanel({
@@ -415,25 +458,41 @@ function DatasetRunPanel({
   setRunningDataset,
   setRunningRunId,
   onLaunch,
+  connections,
+  loadingConnections,
 }: DatasetRunPanelProps) {
   const triggerDatasetMut = useTriggerDatasetRun();
   const { message } = App.useApp();
+  const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!selectedConnection && connections.length > 0) {
+      setSelectedConnection(connections[0].connection_id);
+    }
+  }, [connections, selectedConnection]);
 
   const handleLaunch = (datasetName: string) => {
+    if (!selectedConnection) {
+      message.error('Please select a catalog connection before launching dataset evaluation.');
+      return;
+    }
     setRunningDataset(datasetName);
-    triggerDatasetMut.mutate(datasetName, {
-      onSuccess: (run) => {
-        setRunningRunId(run.id);
-        // Switch to history tab so the user can watch progress
-        onLaunch?.();
+    triggerDatasetMut.mutate(
+      { datasetName, connectionId: selectedConnection },
+      {
+        onSuccess: (run) => {
+          setRunningRunId(run.id);
+          // Switch to history tab so the user can watch progress
+          onLaunch?.();
+        },
+        onError: (err: any) => {
+          setRunningDataset(null);
+          setRunningRunId(null);
+          const detail = err?.response?.data?.detail;
+          message.error(detail || 'Failed to launch dataset evaluation. Please try again.', 10);
+        },
       },
-      onError: (err: any) => {
-        setRunningDataset(null);
-        setRunningRunId(null);
-        const detail = err?.response?.data?.detail;
-        message.error(detail || 'Failed to launch dataset evaluation. Please try again.', 10);
-      },
-    });
+    );
   };
 
   return (
@@ -441,13 +500,32 @@ function DatasetRunPanel({
       <SectionHeader
         title="Dataset Evaluation Controls"
         sub="Execute complete dataset-level evaluations across all production tables"
+        action={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              Catalog
+            </span>
+            <Select
+              value={selectedConnection}
+              onChange={setSelectedConnection}
+              style={{ minWidth: 200 }}
+              placeholder="Select catalog"
+              loading={loadingConnections}
+              options={connections.map((c: any) => ({
+                value: c.connection_id,
+                label: c.name,
+              }))}
+            />
+          </div>
+        }
       />
 
       <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
         <button
           className="btn btn--secondary"
           style={{ flex: 1, justifyContent: 'center' }}
-          disabled={triggerDatasetMut.isPending || !!runningDataset}
+          disabled={triggerDatasetMut.isPending || !!runningDataset || !selectedConnection}
+          title={!selectedConnection ? 'Please select a catalog connection' : undefined}
           onClick={() => handleLaunch('spider2')}
         >
           {triggerDatasetMut.isPending && runningDataset === 'spider2' ? (
@@ -464,7 +542,8 @@ function DatasetRunPanel({
         <button
           className="btn btn--secondary"
           style={{ flex: 1, justifyContent: 'center' }}
-          disabled={triggerDatasetMut.isPending || !!runningDataset}
+          disabled={triggerDatasetMut.isPending || !!runningDataset || !selectedConnection}
+          title={!selectedConnection ? 'Please select a catalog connection' : undefined}
           onClick={() => handleLaunch('text2sql_production')}
         >
           {triggerDatasetMut.isPending && runningDataset === 'text2sql_production' ? (
@@ -495,6 +574,24 @@ export function EvaluationsPage() {
       setShowSpider2((v) => !v);
     });
   };
+
+  // Shared connections state (same pattern as Agent Sandbox)
+  const [connections, setConnections] = useState<any[]>([]);
+  const [loadingConnections, setLoadingConnections] = useState(false);
+
+  useEffect(() => {
+    setLoadingConnections(true);
+    agentApi
+      .listConnections()
+      .then((res) => {
+        setConnections(res.connections || []);
+        setLoadingConnections(false);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch connections:', err);
+        setLoadingConnections(false);
+      });
+  }, []);
 
   // All tables — used to build spider2 table ID set for run history filtering
   const { data: allTables = [] } = useTables();
@@ -601,12 +698,16 @@ export function EvaluationsPage() {
             showSpider2={showSpider2}
             onToggleSpider2={handleToggleSpider2}
             spider2Pending={spider2Pending}
+            connections={connections}
+            loadingConnections={loadingConnections}
           />
           <DatasetRunPanel
             runningDataset={runningDataset}
             setRunningDataset={setRunningDataset}
             setRunningRunId={setRunningRunId}
             onLaunch={switchToHistory}
+            connections={connections}
+            loadingConnections={loadingConnections}
           />
         </div>
       )}
