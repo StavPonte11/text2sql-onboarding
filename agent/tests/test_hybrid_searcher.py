@@ -3,37 +3,13 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from typing import List
 
 from agent.services.enrichment_models import SQLFilterParams, AgentSQLTable
-from agent.services.hybrid_searcher import (
-    search_workflow,
-    unit_id_workflow,
-    HybridSearcher
-)
+from agent.services.hybrid_searcher import HybridSearcher
 
 @pytest.fixture
 def mock_mcp_client(mocker):
     mock_client = AsyncMock()
     mocker.patch("agent.services.hybrid_searcher.get_jeen_metadata_client", return_value=mock_client)
     return mock_client
-
-@pytest.mark.asyncio
-async def test_search_workflow(mock_mcp_client):
-    mock_mcp_client.search_column_values.return_value = ["Tel Aviv", "Tlv"]
-    
-    results = await search_workflow("users", "city", "Tel")
-    assert results == ["Tel Aviv", "Tlv"]
-    mock_mcp_client.search_column_values.assert_called_once_with(
-        query="Tel", table_name="users", column_name="city"
-    )
-
-@pytest.mark.asyncio
-async def test_unit_id_workflow(mock_mcp_client):
-    mock_mcp_client.search_column_values.return_value = ["User-1234", "Acc-1234"]
-    
-    results = await unit_id_workflow("accounts", "acc_id", "1234")
-    assert results == ["User-1234", "Acc-1234"]
-    mock_mcp_client.search_column_values.assert_called_once_with(
-        query="1234", table_name="accounts", column_name="acc_id"
-    )
 
 @pytest.mark.asyncio
 async def test_hybrid_searcher_search(mock_mcp_client):

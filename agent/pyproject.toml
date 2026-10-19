@@ -57,6 +57,7 @@ select = ["TID"]
 "src/agent/utils/esca.py" = ["TID251"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "real_llm: tests that make live LLM calls",

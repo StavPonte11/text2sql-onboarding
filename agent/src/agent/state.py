@@ -9,6 +9,7 @@ class AgentState(TypedDict):
     execution_path: Annotated[list[str], operator.add]
     messages: Annotated[list[BaseMessage], add_messages]
     query_enrichments: list[dict[str, Any]]
+    filter_enrichments: list[dict[str, Any]] | None
     jeen_catalog: str
     sql_query: str
     trino_error: str | None
@@ -30,7 +31,7 @@ class AgentState(TypedDict):
     esca_write_failed: bool | None
     inline_result_rows: list[list[Any]] | None
     inline_result_columns: list[str] | None
-    error_history: list[dict[str, str]] | None
+    attempt_history: list[dict[str, Any]] | None
     schema_explorer_retry_count: int | None
     refiner_reasoning: str | None
     # G2-01: table scoping
@@ -47,9 +48,10 @@ class AgentState(TypedDict):
     # ── Map related state ─────────────────────────────────────────────────────
     locations_dict: dict[str, dict[str, str]] | None
     location_wkt_instruction: str | None
+    locations_analysis: str | None
     is_satisfied: bool | None
-    last_result_row_count: int | None
-    last_result_data: str | None
+    current_result_row_count: int | None
+    current_result_data: str | None
     # ── Ambiguity Detection (detect_ambiguity node) ───────────────────────────
     # Raw parsed JSON output from the detect_ambiguity LLM call.
     ambiguity_result: Optional[dict] | None

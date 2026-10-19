@@ -106,9 +106,9 @@ class SQLTransformer:
         elif op_clean == "LIKE":
             return exp.Like(this=lhs, expression=lit)
         elif op_clean == "ILIKE":
-            return exp.ILike(this=lhs, expression=lit)
-        
-        return exp.EQ(this=lhs, expression=lit)
+            return exp.Like(this=exp.Lower(this=lhs), expression=SQLTransformer._make_literal(val.lower()))
+
+        raise ValueError(f"Unsupported filter operator '{op_str}' for AST transformation.")
 
 
     @staticmethod

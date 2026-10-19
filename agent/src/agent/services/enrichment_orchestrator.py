@@ -23,6 +23,8 @@ from agent.services.hybrid_searcher import HybridSearcher
 from agent.services.sql_transformer import SQLTransformer
 from agent.llm import get_llm
 
+from langchain_core.runnables import RunnableConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +94,7 @@ class EnrichmentOrchestrator:
         initial_sql: str,
         schema: Dict[str, Dict[str, str]],
         tables: List[AgentSQLTable],
+        config: Optional[RunnableConfig] = None,
     ) -> Tuple[str, Optional[TransformationPlan], bool]:
         """
         Coordinates the pipeline execution:
@@ -102,6 +105,7 @@ class EnrichmentOrchestrator:
             initial_sql: The draft SQL statement to enrich.
             schema: Database schema metadata dictionary.
             tables: List of AgentSQLTable schemas.
+            config: Optional RunnableConfig for LangChain/Langfuse callbacks.
 
         Returns:
             A tuple of (refined_sql, transformation_plan, is_enriched).
@@ -130,22 +134,12 @@ class EnrichmentOrchestrator:
 
             # Format candidate pools for prompt presentation
             search_results_formatted: str = ""
-            for key, candidates in search_results.items():
+            for idx, (key, candidates) in enumerate(search_results.items(), 1):
                 col, val = key.split(settings.CACHE_KEY_DELIMITER)
-                matching_filter = next(
-                    (
-                        f
-                        for f in filters
-                        if f.source_column.lower() == col.lower()
-                        and (
-                            str(f.value) == val
-                            or (isinstance(f.value, (list, tuple, set)) and val in [str(v) for v in f.value])
-                        )
-                    ),
-                    None,
+                search_results_formatted += (
+                    f"{idx}. column - '{col}',\n value - '{val}',\n"
+                    f"canonical values: {json.dumps(candidates)}\n\n"
                 )
-                orig_op = matching_filter.operator if matching_filter else "="
-                search_results_formatted += f"Column: {col}\nOriginal Operator: {orig_op}\nOriginal Value: {val}\nCandidates: {json.dumps(candidates)}\n\n"
 
             # 3. Request keeping/replacing decisions from LLM
             from agent.langfuse_client import langfuse_client
@@ -166,9 +160,10 @@ class EnrichmentOrchestrator:
                 {
                     "schema": json.dumps(schema, indent=2),
                     "user_request": user_request,
-                    "initial_sql": initial_sql,
-                    "search_results_formatted": search_results_formatted,
-                }
+                    "current_agent_query": initial_sql,
+                    "columns_search_results": search_results_formatted,
+                },
+                config=config,
             )
             messages = prompt_value.to_messages()
 
@@ -179,12 +174,12 @@ class EnrichmentOrchestrator:
                 structured_llm = llm.with_structured_output(
                     TransformationPlan, method="json_schema"
                 )
-                plan = await structured_llm.ainvoke(messages)
+                plan = await structured_llm.ainvoke(messages, config=config)
             except Exception as e:
                 logger.warning(
                     f"LangChain structured output failed: {e}. Attempting fallback parsing."
                 )
-                raw_response = await llm.ainvoke(messages)
+                raw_response = await llm.ainvoke(messages, config=config)
                 plan = parse_transformation_plan(raw_response.content)
 
             if not plan or not plan.enrichment_details:
@@ -199,13 +194,24 @@ class EnrichmentOrchestrator:
             # Validate and check for ghost value mappings
             for tf in plan.enrichment_details:
                 # Propagate source_table from original filters to transformations
+                tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
                 for param in filters:
                     if param.source_column.lower() == tf.column.lower():
-                        val_str = "null" if param.value is None else str(param.value).replace("%", "").strip().lower()
-                        tf_orig_clean = tf.original_value.replace("%", "").strip().lower()
-                        if val_str == tf_orig_clean:
-                            tf.table = param.source_table
-                            break
+                        match = False
+                        if param.value is None:
+                            match = (tf_orig_clean == "null")
+                        elif isinstance(param.value, (list, tuple, set)):
+                            match = any(str(v).replace("%", "").strip().lower() == tf_orig_clean for v in param.value)
+                        else:
+                            match = (str(param.value).replace("%", "").strip().lower() == tf_orig_clean)
+                        
+                        if match:
+                            if tf.table and param.source_table.lower() == tf.table.lower():
+                                tf.table = param.source_table
+                                break
+                            elif not tf.table:
+                                tf.table = param.source_table
+                                break
 
                 if tf.changed_filter:
                     norm_col = tf.column.strip('"\'').lower()
@@ -218,22 +224,27 @@ class EnrichmentOrchestrator:
                                 candidates = v
                                 break
                     if candidates is not None:
-                        for ref_val in tf.refined_values:
-                            if ref_val not in candidates:
-                                logger.warning(
-                                    f"[Validation Failure] Ghost value detected: refined value '{ref_val}' "
-                                    f"does not exist in candidates list {candidates} for column '{tf.column}'."
-                                )
+                        # If using a LIKE operator with wildcards, exact candidate matching doesn't apply
+                        if tf.new_operator.upper() != "LIKE":
+                            for ref_val in tf.refined_values:
+                                if ref_val not in candidates:
+                                    logger.warning(
+                                        f"[Validation Failure] Ghost value detected: refined value '{ref_val}' "
+                                        f"does not exist in candidates list {candidates} for column '{tf.column}'."
+                                    )
                     else:
                         logger.warning(
                             f"[Validation Failure] No candidate pool found for column '{tf.column}'."
                         )
 
-            # 4. Transform predicates inside SQL AST
-            refined_sql: str = SQLTransformer.apply(initial_sql, plan)
-
-            logger.info(f"Enriched Refined SQL: {refined_sql}")
+            # 4. Transform predicates inside SQL AST (only if filters were actually changed)
             is_enriched: bool = any(tf.changed_filter for tf in plan.enrichment_details)
+            if is_enriched:
+                refined_sql: str = SQLTransformer.apply(initial_sql, plan)
+                logger.info(f"Enriched Refined SQL: {refined_sql}")
+            else:
+                refined_sql = initial_sql
+                logger.info("No filters changed during category enrichment.")
 
             return refined_sql, plan, is_enriched
 

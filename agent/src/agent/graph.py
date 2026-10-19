@@ -133,7 +133,7 @@ def hitl_escalation_node(
         "satisfaction_failures": None,
         "satisfaction_fail_count": 0,
         "trino_error": None,
-        "error_history": [],
+        "attempt_history": [],
         "refinement_count": 0,
     }
 

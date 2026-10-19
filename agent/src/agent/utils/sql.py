@@ -40,3 +40,19 @@ def replace_unquoted_char(sql: str, old: str, new: str) -> str:
     for i in range(0, len(parts), 2):
         parts[i] = parts[i].replace(old, new)
     return "'".join(parts)
+
+
+def resolve_wkt_polygons(sql: str, locations_dict: dict | None) -> str:
+    """Replaces `@<name>_wkt@` placeholders in SQL with full WKT string literals for database execution."""
+    if not sql or not locations_dict or "coords" not in locations_dict:
+        return sql
+    
+    final_sql = sql
+    for placeholder, wkt_str in locations_dict["coords"].items():
+        clean_wkt = wkt_str.strip("'")
+        replacement = f"'{clean_wkt}'"
+        final_sql = re.sub(r"['\"]?@" + re.escape(placeholder) + r"@['\"]?", replacement, final_sql)
+        
+    return final_sql
+
+
