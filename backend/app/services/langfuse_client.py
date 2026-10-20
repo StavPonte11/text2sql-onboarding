@@ -291,7 +291,10 @@ class LangfuseDatasetService:
                     f"?datasetName={dataset_name}&limit=100&page={page}",
                     auth=(pub, sec),
                 )
-                if res.status_code != 200:
+                if res.status_code == 404:
+                    existing_items = []
+                    break
+                elif res.status_code != 200:
                     self.logger.warning(
                         f"[LangfuseDatasetService] Could not fetch existing items "
                         f"(status {res.status_code}) — aborting sync."
@@ -400,7 +403,8 @@ class LangfuseDatasetService:
                     id=q["question_id"],
                     input={
                         "query": q["question_text"],
-                        "databases": [q.get("schema_name", q["table_id"])],
+                        "connection_id": q.get("connection_id"),
+                        "databases": [q.get("schema_name", q.get("table_id", ""))],
                     },
                     expected_output={"sql": sql_str, "response": sql_str},
                     metadata={
@@ -410,6 +414,8 @@ class LangfuseDatasetService:
                         "question_type": str(q.get("question_type", ""))
                         .lower()
                         .strip(),
+                        "connection_id": q.get("connection_id"),
+                        "connection_name": q.get("connection_name", ""),
                         "table_id": q.get("table_id", ""),
                     },
                 )

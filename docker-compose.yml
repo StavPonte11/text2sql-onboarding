@@ -539,6 +539,9 @@ services:
       - ./backend:/app/backend
       - /app/backend/.venv
       - ./certs/azure-trino-certs:/app/azure-trino-certs:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "evaluation-service:host-gateway"
   agent:
     build:
       context: .

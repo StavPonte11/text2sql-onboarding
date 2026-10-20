@@ -252,5 +252,19 @@ async def suggest_fixes(thread_id: str, category: str) -> str:
     except Exception as e:
         return json.dumps([])
 
+
+def _strip_schema_titles(schema):
+    if isinstance(schema, dict):
+        return {k: _strip_schema_titles(v) for k, v in schema.items() if k != "title"}
+    elif isinstance(schema, list):
+        return [_strip_schema_titles(item) for item in schema]
+    return schema
+
+
+for _tool in mcp._tool_manager.list_tools():
+    _tool.parameters = _strip_schema_titles(_tool.parameters)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
+

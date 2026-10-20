@@ -119,3 +119,61 @@ def delete_question(
         raise HTTPException(status_code=404, detail="Question not found")
     session.delete(q)
     session.commit()
+
+
+# ── Connection-Scoped Golden Questions ─────────────────────────────────────────
+
+connection_questions_router = APIRouter(
+    prefix="/connections", tags=["connection-golden-questions"]
+)
+
+
+@connection_questions_router.get(
+    "/{connection_id}/questions", response_model=list[GoldenQuestionRead]
+)
+def list_connection_questions(
+    connection_id: int,
+    session: Session = Depends(get_session),
+):
+    """List all golden questions configured for a specific catalog connection."""
+    return session.exec(
+        select(GoldenQuestion)
+        .where(GoldenQuestion.connection_id == connection_id)
+        .order_by(GoldenQuestion.created_at.desc())
+    ).all()
+
+
+@connection_questions_router.post(
+    "/{connection_id}/questions", response_model=GoldenQuestionRead, status_code=201
+)
+def create_connection_question(
+    connection_id: int,
+    payload: GoldenQuestionCreate,
+    session: Session = Depends(get_session),
+):
+    """Add a new golden question directly to a catalog connection."""
+    data = payload.model_dump()
+    data["connection_id"] = connection_id
+    q = GoldenQuestion(**data)
+    session.add(q)
+    session.commit()
+    session.refresh(q)
+    return q
+
+
+@connection_questions_router.delete(
+    "/{connection_id}/questions/{question_id}", status_code=204
+)
+def delete_connection_question(
+    connection_id: int,
+    question_id: str,
+    session: Session = Depends(get_session),
+):
+    """Delete a golden question associated with a connection."""
+    q = session.get(GoldenQuestion, question_id)
+    if not q or q.connection_id != connection_id:
+        raise HTTPException(
+            status_code=404, detail="Question not found for this connection"
+        )
+    session.delete(q)
+    session.commit()

@@ -9,12 +9,11 @@ import { AuthProvider } from './components/layout/AuthProvider';
 import { ScopeBanner } from './components/layout/ScopeBanner';
 import { Sidebar } from './components/layout/Sidebar';
 import { MonitoringPage } from './components/monitoring/MonitoringPage';
-import { TableDetails } from './components/tables/TableDetails';
-import { TableList } from './components/tables/TableList';
 import { OnboardingWizard } from './components/wizard/OnboardingWizard';
 import { AdminPanelPage } from './pages/AdminPanelPage';
 import { AgentTestingPage } from './pages/AgentTestingPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import ConnectionsPage from './pages/ConnectionsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { EvaluationsPage } from './pages/EvaluationsPage';
 import { FlagsPage } from './pages/FlagsPage';
@@ -99,6 +98,22 @@ function AppLayout() {
             }
           />
           <Route
+            path="/connections"
+            element={
+              <ProtectedRoute>
+                <ConnectionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/connections/:id"
+            element={
+              <ProtectedRoute>
+                <ConnectionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/analytics"
             element={
               <ProtectedRoute>
@@ -106,23 +121,9 @@ function AppLayout() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/tables"
-            element={
-              <ProtectedRoute>
-                <TableList />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/tables/:id" element={<Navigate to="overview" replace />} />
-          <Route
-            path="/tables/:id/:tab"
-            element={
-              <ProtectedRoute>
-                <TableDetails />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/tables" element={<Navigate to="/connections" replace />} />
+          <Route path="/tables/:id" element={<Navigate to="/connections" replace />} />
+          <Route path="/tables/:id/:tab" element={<Navigate to="/connections" replace />} />
           <Route
             path="/wizard"
             element={

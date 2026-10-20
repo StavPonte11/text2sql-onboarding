@@ -36,12 +36,96 @@ export function useTriggerOrchestrationRun() {
   });
 }
 
+// ── Trigger connection evaluation run ─────────────────────────────────────────
+export function useTriggerConnectionRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      connectionId,
+      connectionName,
+      datasetName,
+      triggeredBy,
+    }: {
+      connectionId: number;
+      connectionName?: string;
+      datasetName?: string;
+      triggeredBy?: string;
+    }) =>
+      orchestrationApi.triggerConnectionRun(connectionId, connectionName, datasetName, triggeredBy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+    },
+  });
+}
+
+// ── Stop/cancel evaluation run ───────────────────────────────────────────────
+export function useStopEvalRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => orchestrationApi.stopRun(runId),
+    onSuccess: (updatedRun) => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+      queryClient.invalidateQueries({ queryKey: ['running-run-status', updatedRun?.id] });
+      queryClient.invalidateQueries({ queryKey: ['run-report', updatedRun?.id] });
+    },
+  });
+}
+
+// ── Connection golden questions hooks ────────────────────────────────────────
+export function useConnectionQuestions(connectionId: number | undefined) {
+  return useQuery({
+    queryKey: ['connection_questions', connectionId],
+    queryFn: () =>
+      connectionId ? orchestrationApi.listConnectionQuestions(connectionId) : Promise.resolve([]),
+    enabled: connectionId !== undefined,
+  });
+}
+
+export function useCreateConnectionQuestion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      connectionId,
+      payload,
+    }: {
+      connectionId: number;
+      payload: {
+        question: string;
+        expected_sql: string;
+        difficulty?: string;
+        question_type?: string;
+      };
+    }) => orchestrationApi.createConnectionQuestion(connectionId, payload),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['connection_questions', vars.connectionId] });
+    },
+  });
+}
+
+export function useDeleteConnectionQuestion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectionId, questionId }: { connectionId: number; questionId: string }) =>
+      orchestrationApi.deleteConnectionQuestion(connectionId, questionId),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['connection_questions', vars.connectionId] });
+    },
+  });
+}
+
 // ── Trigger dataset evaluation run ───────────────────────────────────────────
 export function useTriggerDatasetRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ datasetName, connectionId }: { datasetName: string; connectionId?: number }) =>
-      orchestrationApi.triggerDatasetRun(datasetName, connectionId),
+    mutationFn: ({
+      datasetName,
+      connectionId,
+      connectionName,
+    }: {
+      datasetName: string;
+      connectionId?: number;
+      connectionName?: string;
+    }) => orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

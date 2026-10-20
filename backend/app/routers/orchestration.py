@@ -31,7 +31,6 @@ from core.models.models import (
     EvaluationScheduleUpdate,
     GoldenQuestion,
     Table,
-    TableStatus,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
@@ -82,6 +81,11 @@ def _run_full_pipeline(
             with Session(engine) as session:
                 run = session.get(EvalRun, run_id)
                 if not run:
+                    continue
+                if run.status == EvalStatus.cancelled:
+                    logger.info(
+                        f"[Eval] Run {run_id} was cancelled by user; skipping table {table_id}"
+                    )
                     continue
 
                 try:
@@ -316,6 +320,12 @@ def _run_dataset_pipeline(
         if not run:
             return
 
+        if run.status == EvalStatus.cancelled:
+            logger.info(
+                f"[Eval] Run {run_id} was already cancelled before dataset pipeline started."
+            )
+            return
+
         if connection_id is None and run.connection_id is not None:
             connection_id = run.connection_id
 
@@ -342,19 +352,38 @@ def _run_dataset_pipeline(
             resp.raise_for_status()
             eval_resp = RunDatasetResponse(**resp.json())
 
+            # Check if run was cancelled while evaluation was in progress
+            session.refresh(run)
+            if run.status == EvalStatus.cancelled:
+                logger.info(
+                    f"[Eval] Run {run_id} was cancelled by user; discarding evaluation response."
+                )
+                return
+
             _map_and_save_run_metrics(run, eval_resp, session, run_id)
             session.commit()
         except Exception as e:
+            try:
+                session.refresh(run)
+                if run.status == EvalStatus.cancelled:
+                    logger.info(
+                        f"[Eval] Run {run_id} was cancelled by user; ignoring exception: {e}"
+                    )
+                    return
+            except Exception:
+                pass
+
             logger.error(
                 f"[Eval] Dataset {dataset_name} evaluation failed: {e}",
                 exc_info=True,
             )
             try:
                 session.refresh(run)
-                run.status = EvalStatus.failed
-                run.score = 0.0
-                session.add(run)
-                session.commit()
+                if run.status != EvalStatus.cancelled:
+                    run.status = EvalStatus.failed
+                    run.score = 0.0
+                    session.add(run)
+                    session.commit()
             except Exception as db_err:
                 logger.error(f"[Eval] Failed to mark run {run_id} as failed: {db_err}")
 
@@ -364,49 +393,95 @@ def trigger_dataset_run(
     dataset_name: str,
     background_tasks: BackgroundTasks,
     connection_id: int | None = Query(default=None),
+    connection_name: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    """Trigger evaluation for a specific dataset (e.g. 'spider2' or 'text2sql_production')."""
     if connection_id is None:
         raise HTTPException(
             status_code=400,
             detail="connection_id is required. Please select a catalog connection.",
         )
 
-    # 1. Sync production dataset if requested
-    if dataset_name == "text2sql_production":
-        prod_tables = session.exec(
-            select(Table)
-            .where(Table.status == TableStatus.production)
-            .where(Table.owner_id != "spider2")
-        ).all()
-        all_production_questions: list[GoldenQuestion] = []
-        for table in prod_tables:
-            qs = session.exec(
-                select(GoldenQuestion).where(GoldenQuestion.table_id == table.id)
-            ).all()
-            all_production_questions.extend(qs)
+    try:
+        conn_id = int(connection_id)
+        if conn_id <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
+        )
 
-        all_questions_payload = []
-        for table in prod_tables:
-            qs_for_table = [
-                q for q in all_production_questions if q.table_id == table.id
-            ]
-            all_questions_payload.extend(_build_questions_payload(qs_for_table, table))
+    conn_name = connection_name if isinstance(connection_name, str) else None
 
-        if all_questions_payload:
-            if langfuse_client.enabled:
-                try:
-                    langfuse_client.sync_dataset(
-                        "text2sql_production", all_questions_payload
-                    )
-                except Exception as e:
-                    logger.warning(f"[Eval] Production dataset sync failed: {e}")
+    # Fallback to look up connection name from previous runs if not passed
+    if not conn_name and conn_id:
+        prev_run = session.exec(
+            select(EvalRun)
+            .where(EvalRun.connection_id == conn_id)
+            .where(EvalRun.connection_name.is_not(None))
+        ).first()
+        if prev_run:
+            conn_name = prev_run.connection_name
 
     total_q_count = 0
+    all_questions_payload: list[dict] = []
+
+    # 1. Sync production dataset if requested
     if dataset_name == "text2sql_production":
-        total_q_count = len(all_production_questions)
+        # First priority: check for golden questions directly associated with this connection
+        conn_questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
+        ).all()
+
+        if conn_questions:
+            all_questions_payload = [
+                {
+                    "question_id": q.id,
+                    "question_text": q.question,
+                    "expected_sql": q.expected_sql,
+                    "connection_id": conn_id,
+                    "connection_name": conn_name,
+                    "difficulty": q.difficulty.value
+                    if hasattr(q.difficulty, "value")
+                    else str(q.difficulty),
+                    "question_type": q.question_type.value
+                    if hasattr(q.question_type, "value")
+                    else str(q.question_type),
+                }
+                for q in conn_questions
+            ]
+            total_q_count = len(conn_questions)
+        else:
+            # Fallback: check if there are catalog tables matching connection_name
+            matching_tables = []
+            if conn_name:
+                matching_tables = session.exec(
+                    select(Table).where(Table.catalog.ilike(f"%{conn_name}%"))
+                ).all()
+
+            if matching_tables:
+                prod_table_ids = [t.id for t in matching_tables]
+                prod_qs = session.exec(
+                    select(GoldenQuestion).where(
+                        GoldenQuestion.table_id.in_(prod_table_ids)
+                    )
+                ).all()
+                all_questions_payload = []
+                for table in matching_tables:
+                    qs_for_table = [q for q in prod_qs if q.table_id == table.id]
+                    all_questions_payload.extend(
+                        _build_questions_payload(qs_for_table, table)
+                    )
+                total_q_count = len(prod_qs)
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}). Please configure golden questions for this connection first.",
+                )
+
     elif dataset_name == "spider2":
+        all_questions_payload = []
         spider2_tables = session.exec(
             select(Table).where(Table.owner_id == "spider2")
         ).all()
@@ -418,12 +493,27 @@ def trigger_dataset_run(
                 ).all()
             )
 
+    actual_dataset_to_run = (
+        f"text2sql_connection_{conn_id}"
+        if dataset_name == "text2sql_production"
+        else dataset_name
+    )
+
+    if all_questions_payload and langfuse_client.enabled:
+        try:
+            langfuse_client.sync_dataset(actual_dataset_to_run, all_questions_payload)
+        except Exception as e:
+            logger.warning(f"[Eval] Dataset sync failed: {e}")
+
     # 2. Create the run record
     run = EvalRun(
         table_id=None,
         total_questions=total_q_count,
         triggered_by=dataset_name,
-        connection_id=connection_id,
+        connection_id=conn_id,
+        connection_name=conn_name,
+        dataset_id=actual_dataset_to_run,
+        status=EvalStatus.running,
     )
     session.add(run)
     session.commit()
@@ -431,10 +521,128 @@ def trigger_dataset_run(
 
     # 3. Queue the task
     background_tasks.add_task(
-        _run_dataset_pipeline, dataset_name, run.id, connection_id
+        _run_dataset_pipeline, actual_dataset_to_run, run.id, conn_id
+    )
+
+    display_title = (
+        f"Production Dataset: {conn_name}"
+        if conn_name and dataset_name == "text2sql_production"
+        else f"Dataset: {dataset_name} ({conn_name})"
+        if conn_name
+        else f"Dataset: {dataset_name}"
     )
     return EvalRunRead.model_validate(
-        run, update={"table_name": f"Dataset: {dataset_name}"}
+        run, update={"table_name": display_title, "connection_name": conn_name}
+    )
+
+
+@router.post("/run-connection", response_model=EvalRunRead, status_code=202)
+def trigger_connection_run(
+    background_tasks: BackgroundTasks,
+    connection_id: int = Query(...),
+    connection_name: str | None = Query(default=None),
+    dataset_name: str | None = Query(default=None),
+    triggered_by: str = Query(default="user"),
+    session: Session = Depends(get_session),
+):
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
+    try:
+        conn_id = int(connection_id)
+        if conn_id <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
+        )
+
+    conn_name = connection_name if isinstance(connection_name, str) else None
+    ds_name = (
+        dataset_name
+        if isinstance(dataset_name, str) and dataset_name
+        else f"text2sql_connection_{conn_id}"
+    )
+    trig_by = triggered_by if isinstance(triggered_by, str) else "user"
+
+    # 1. Fetch all golden questions for this connection
+    questions = session.exec(
+        select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
+    ).all()
+
+    # Fallback to catalog name matching if no direct questions assigned
+    if not questions and conn_name:
+        tables = session.exec(
+            select(Table).where(Table.catalog.ilike(f"%{conn_name}%"))
+        ).all()
+        t_ids = [t.id for t in tables]
+        if t_ids:
+            questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id.in_(t_ids))
+            ).all()
+
+    if not questions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}). Please configure golden questions for this connection before running evaluation.",
+        )
+
+    # 2. Sync to Langfuse dataset if available
+    if questions and langfuse_client.enabled:
+        payload = [
+            {
+                "question_id": q.id,
+                "question_text": q.question,
+                "expected_sql": q.expected_sql,
+                "connection_id": conn_id,
+                "connection_name": conn_name,
+                "difficulty": q.difficulty.value
+                if hasattr(q.difficulty, "value")
+                else str(q.difficulty),
+                "question_type": q.question_type.value
+                if hasattr(q.question_type, "value")
+                else str(q.question_type),
+            }
+            for q in questions
+        ]
+        try:
+            langfuse_client.sync_dataset(ds_name, payload)
+        except Exception as e:
+            logger.warning(
+                f"[Eval] Connection dataset sync failed for '{ds_name}': {e}"
+            )
+
+    # 3. Create run record
+    run = EvalRun(
+        table_id=None,
+        total_questions=len(questions),
+        triggered_by=trig_by,
+        connection_id=conn_id,
+        connection_name=conn_name,
+        dataset_id=ds_name,
+        status=EvalStatus.running,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # 4. Queue background evaluation pipeline
+    background_tasks.add_task(_run_dataset_pipeline, ds_name, run.id, conn_id)
+
+    display_title = (
+        f"Connection: {conn_name} (ID {conn_id})"
+        if conn_name
+        else f"Connection: {conn_id}"
+    )
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": display_title,
+            "connection_name": conn_name,
+        },
     )
 
 
@@ -444,6 +652,7 @@ def list_runs(
     offset: int = Query(default=0),
     status: str | None = Query(default=None),
     table_id: str | None = Query(default=None),
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     query = (
@@ -457,20 +666,29 @@ def list_runs(
         query = query.where(EvalRun.status == status)
     if table_id:
         query = query.where(EvalRun.table_id == table_id)
+    if connection_id is not None:
+        query = query.where(EvalRun.connection_id == connection_id)
 
     results = session.exec(query).all()
     runs = []
     for run, table_name in results:
-        t_name = (
-            table_name
-            if table_name
-            else (
-                f"Dataset: {run.triggered_by}"
-                if run.table_id is None
-                else "All prod tables"
-            )
+        if table_name:
+            t_name = table_name
+        elif run.connection_name or run.connection_id is not None:
+            c_name = run.connection_name or f"ID {run.connection_id}"
+            t_name = f"Connection: {c_name}"
+        elif run.triggered_by and run.triggered_by != "user":
+            t_name = f"Dataset: {run.triggered_by}"
+        else:
+            t_name = "Catalog Evaluation"
+
+        read = EvalRunRead.model_validate(
+            run,
+            update={
+                "table_name": t_name,
+                "connection_name": run.connection_name,
+            },
         )
-        read = EvalRunRead.model_validate(run, update={"table_name": t_name})
         runs.append(read)
     return runs
 
@@ -487,16 +705,67 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     run, table_name = result
-    t_name = (
-        table_name
-        if table_name
-        else (
-            f"Dataset: {run.triggered_by}"
-            if run.table_id is None
-            else "All prod tables"
-        )
+    if table_name:
+        t_name = table_name
+    elif run.connection_name or run.connection_id is not None:
+        c_name = run.connection_name or f"ID {run.connection_id}"
+        t_name = f"Connection: {c_name}"
+    elif run.triggered_by and run.triggered_by != "user":
+        t_name = f"Dataset: {run.triggered_by}"
+    else:
+        t_name = "Catalog Evaluation"
+
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": t_name,
+            "connection_name": run.connection_name,
+        },
     )
-    return EvalRunRead.model_validate(run, update={"table_name": t_name})
+
+
+@router.post("/runs/{run_id}/stop", response_model=EvalRunRead)
+@router.post("/runs/{run_id}/cancel", response_model=EvalRunRead)
+def stop_eval_run(run_id: str, session: Session = Depends(get_session)):
+    """Stop/cancel an in-progress evaluation run."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+
+    if run.status == EvalStatus.running:
+        run.status = EvalStatus.cancelled
+        now = datetime.now()
+        run.completed_at = now
+        duration = (now - run.started_at).total_seconds()
+        run.duration_seconds = max(0.0, round(duration, 2))
+        run.failure_breakdown = {
+            "cancelled": True,
+            "message": "Evaluation stopped by user",
+        }
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+    t_name = run.table_id or "Unknown"
+    if run.table_id:
+        table = session.get(Table, run.table_id)
+        if table:
+            t_name = table.name
+    elif run.connection_name or run.connection_id is not None:
+        c_name = run.connection_name or f"ID {run.connection_id}"
+        t_name = f"Connection: {c_name}"
+    elif run.triggered_by and run.triggered_by != "user":
+        t_name = f"Dataset: {run.triggered_by}"
+    else:
+        t_name = "Catalog Evaluation"
+
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": t_name,
+            "connection_name": run.connection_name,
+        },
+    )
 
 
 @router.get("/runs/{run_id}/report")

@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
-import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
+import { useStopEvalRun } from '../../hooks/useEvaluations';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 
 import './RunHistoryTable.css';
 
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
+  const stopMut = useStopEvalRun();
   const { data: report, isLoading } = useQuery({
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
@@ -40,9 +42,38 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
       <div className="run-detail-panel">
         <div className="run-detail-header">
           <div className="run-detail-title">Run Details</div>
-          <button className="btn btn--ghost btn--sm" onClick={onClose}>
-            ✕ Close
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {report?.status === 'running' && (
+              <button
+                className="btn btn--danger btn--sm"
+                disabled={stopMut.isPending}
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to stop this evaluation run?')) {
+                    stopMut.mutate(runId);
+                  }
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1px solid #dc2626',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                <Square size={12} fill="currentColor" />
+                {stopMut.isPending ? 'Stopping…' : 'Stop Evaluation'}
+              </button>
+            )}
+            <button className="btn btn--ghost btn--sm" onClick={onClose}>
+              ✕ Close
+            </button>
+          </div>
         </div>
 
         {isLoading && (
@@ -370,6 +401,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 // ── RunHistoryTable ────────────────────────────────────────────────────────────
 interface RunHistoryTableProps {
   tableId?: string;
+  connectionId?: number;
   limit?: number;
   compact?: boolean;
   excludeTableIds?: Set<string>;
@@ -377,10 +409,12 @@ interface RunHistoryTableProps {
 
 export function RunHistoryTable({
   tableId,
+  connectionId,
   limit = 50,
   compact = false,
   excludeTableIds,
 }: RunHistoryTableProps) {
+  const stopMut = useStopEvalRun();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = compact ? 5 : 10;
@@ -391,8 +425,9 @@ export function RunHistoryTable({
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ['eval-runs', tableId, limit],
-    queryFn: () => orchestrationApi.listRuns({ limit, table_id: tableId }),
+    queryKey: ['eval-runs', tableId, connectionId, limit],
+    queryFn: () =>
+      orchestrationApi.listRuns({ limit, table_id: tableId, connection_id: connectionId }),
     refetchInterval: (query) => {
       const data = query.state.data as typeof runs;
       const hasRunning = data?.some((r) => r.status === 'running');
@@ -440,7 +475,7 @@ export function RunHistoryTable({
           <thead>
             <tr>
               {!compact && <th>Run ID</th>}
-              {!tableId && <th>Table</th>}
+              {!tableId && <th>Target / Connection</th>}
               <th>Score</th>
               <th>Pass Rate</th>
               {!compact && <th>Questions</th>}
@@ -463,7 +498,27 @@ export function RunHistoryTable({
                 )}
                 {!tableId && (
                   <td className="table-link-cell">
-                    {run.table_id ? (
+                    {run.connection_id ? (
+                      <span
+                        className="table-link run-table-name"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        title={run.connection_name || run.table_name}
+                      >
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            padding: '2px 6px',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            color: '#2563eb',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Connection
+                        </span>
+                        {run.connection_name || run.table_name || `ID: ${run.connection_id}`}
+                      </span>
+                    ) : run.table_id ? (
                       <Link
                         to={`/tables/${run.table_id}`}
                         onClick={(e) => e.stopPropagation()}
@@ -549,8 +604,38 @@ export function RunHistoryTable({
                   </td>
                 )}
                 <td className="date-cell">{dayjs(run.created_at).format('MMM D, HH:mm')}</td>
-                <td>
-                  <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                <td style={{ textAlign: 'right' }}>
+                  {run.status === 'running' ? (
+                    <button
+                      className="btn btn--danger btn--xs"
+                      title="Stop this evaluation run"
+                      disabled={stopMut.isPending && stopMut.variables === run.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm('Are you sure you want to stop this evaluation run?')) {
+                          stopMut.mutate(run.id);
+                        }
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        color: '#ef4444',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Square size={10} fill="currentColor" />
+                      {stopMut.isPending && stopMut.variables === run.id ? 'Stopping…' : 'Stop'}
+                    </button>
+                  ) : (
+                    <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                  )}
                 </td>
               </tr>
             ))}

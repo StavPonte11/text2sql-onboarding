@@ -8,6 +8,8 @@ const STATUS_MAP: Record<string, { color: string; bg: string; label: string }> =
   completed: { color: '#10b981', bg: 'rgba(16,185,129,0.12)', label: 'Completed' },
   running: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Running' },
   failed: { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', label: 'Failed' },
+  cancelled: { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', label: 'Cancelled' },
+  stopped: { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', label: 'Stopped' },
   healthy: { color: '#10b981', bg: 'rgba(16,185,129,0.12)', label: 'Healthy' },
   warning: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Warning' },
   critical: { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', label: 'Critical' },

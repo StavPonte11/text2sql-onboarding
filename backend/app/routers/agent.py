@@ -381,3 +381,42 @@ async def list_connections():
     except Exception as e:
         logger.error(f"List connections error: {e}")
         return {"connections": []}
+
+
+@router.get("/connections/{connection_id}/tables")
+async def list_connection_tables(connection_id: int):
+    """Fetch all tables for a given connection from Jeen MCP (list_tables_rich)."""
+    try:
+        async with _get_jeen_mcp_client() as session:
+            result = await session.call_tool(
+                "list_tables_rich",
+                arguments={"connection_id": connection_id},
+                read_timeout_seconds=timedelta(seconds=60.0),
+            )
+            content = result.content[0].text
+            rows = json.loads(content)
+            if not isinstance(rows, list):
+                rows = []
+            # Normalise to a consistent shape for the frontend
+            tables = []
+            for row in rows:
+                name = row.get("name") or row.get("table_name") or ""
+                tables.append(
+                    {
+                        "name": name,
+                        "schema_name": row.get("schema_name")
+                        or row.get("schema")
+                        or "",
+                        "catalog": row.get("catalog") or "",
+                        "description": row.get("description") or "",
+                        "row_count": row.get("rowCount") or row.get("row_count"),
+                        "column_count": row.get("columnCount")
+                        or row.get("column_count"),
+                    }
+                )
+            return tables
+    except Exception as e:
+        logger.error(
+            f"List connection tables error (connection_id={connection_id}): {e}"
+        )
+        return []

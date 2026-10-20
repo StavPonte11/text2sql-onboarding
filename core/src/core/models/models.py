@@ -106,12 +106,15 @@ class GoldenQuestion(SQLModel, table=True):
     __tablename__ = "golden_questions"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    table_id: str = Field(
+    table_id: str | None = Field(
+        default=None,
+        nullable=True,
         sa_column_args=[
             ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE")
         ],
         index=True,
     )
+    connection_id: int | None = Field(default=None, nullable=True, index=True)
     question: str
     expected_sql: str
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.simple)
@@ -123,6 +126,8 @@ class GoldenQuestion(SQLModel, table=True):
 class GoldenQuestionCreate(SQLModel):
     question: str
     expected_sql: str
+    connection_id: int | None = None
+    table_id: str | None = None
     difficulty: DifficultyLevel = DifficultyLevel.simple
     question_type: QuestionType = QuestionType.simple
     coverage_tags: list[str] | None = None
@@ -130,12 +135,13 @@ class GoldenQuestionCreate(SQLModel):
 
 class GoldenQuestionRead(SQLModel):
     id: str
-    table_id: str
     question: str
     expected_sql: str
     difficulty: DifficultyLevel
     question_type: QuestionType
-    coverage_tags: list[str] | None
+    connection_id: int | None = None
+    table_id: str | None = None
+    coverage_tags: list[str] | None = None
     created_at: datetime
 
 
@@ -143,6 +149,7 @@ class EvalStatus(StrEnum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class EvalRun(SQLModel, table=True):
@@ -158,7 +165,8 @@ class EvalRun(SQLModel, table=True):
         index=True,
     )
     dataset_id: str | None = Field(default=None, index=True)
-    connection_id: int | None = Field(default=None, nullable=True)  # catalog used for this run
+    connection_id: int | None = Field(default=None, nullable=True, index=True)  # catalog used for this run
+    connection_name: str | None = Field(default=None, nullable=True)
     score: float = Field(default=0.0)
     pass_rate: float = Field(default=0.0)
     fail_rate: float = Field(default=0.0)
@@ -184,6 +192,7 @@ class EvalRunRead(SQLModel):
     table_name: str
     dataset_id: str | None
     connection_id: int | None = None
+    connection_name: str | None = None
     score: float
     pass_rate: float
     fail_rate: float

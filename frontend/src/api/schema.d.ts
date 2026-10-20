@@ -1297,7 +1297,7 @@ export interface components {
      * EvalStatus
      * @enum {string}
      */
-    EvalStatus: 'running' | 'completed' | 'failed';
+    EvalStatus: 'running' | 'completed' | 'failed' | 'cancelled';
     /** EvaluationAlertRead */
     EvaluationAlertRead: {
       /** Id */

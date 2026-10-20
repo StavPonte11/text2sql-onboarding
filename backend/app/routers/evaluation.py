@@ -221,21 +221,26 @@ def _map_and_save_run_metrics(
     # Only insert EvalResult rows for question_ids that are valid FK references
     # (i.e. exist in golden_questions). External benchmark cases (e.g. Spider2) won't match.
     if eval_resp.cases:
-        case_ids = [c.question_id for c in eval_resp.cases]
+
+        def _clean_qid(qid: str) -> str:
+            return qid.split(":")[-1] if ":" in qid else qid
+
+        case_ids = [_clean_qid(c.question_id) for c in eval_resp.cases]
         valid_ids = set(
             session.exec(
                 select(GoldenQuestion.id).where(GoldenQuestion.id.in_(case_ids))
             ).all()
         )
         for case in eval_resp.cases:
-            if case.question_id in valid_ids:
+            target_id = _clean_qid(case.question_id)
+            if target_id in valid_ids:
                 score = case.scores.get("contains_accuracy", 0.0)
                 status = "pass" if score >= settings.EVAL_THRESHOLD else "fail"
                 error_type = None if status == "pass" else case.error
                 session.add(
                     EvalResult(
                         run_id=run_id,
-                        question_id=case.question_id,
+                        question_id=target_id,
                         score=score,
                         status=status,
                         error_type=error_type,
@@ -335,6 +340,15 @@ def execute_single_table_eval(
             }
             eval_resp = _call_run_new_evaluation(req)
         except Exception as e:
+            try:
+                session.refresh(run)
+                if run.status == EvalStatus.cancelled:
+                    logger.info(
+                        f"[Eval] Table {table_id} evaluation was cancelled by user; ignoring exception: {e}"
+                    )
+                    return 0.0
+            except Exception:
+                pass
             logger.error(f"[Eval] Table {table_id} evaluation failed via API: {e}")
             run.status = EvalStatus.failed
             run.score = 0.0
@@ -342,6 +356,13 @@ def execute_single_table_eval(
                 run.total_questions = len(questions)
             session.add(run)
             session.commit()
+            return 0.0
+
+        session.refresh(run)
+        if run.status == EvalStatus.cancelled:
+            logger.info(
+                f"[Eval] Table {table_id} evaluation was cancelled by user; discarding evaluation response."
+            )
             return 0.0
 
         _map_and_save_run_metrics(run, eval_resp, session, run_id)
