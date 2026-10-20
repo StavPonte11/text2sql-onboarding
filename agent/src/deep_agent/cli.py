@@ -21,6 +21,7 @@ from langchain_core.messages import BaseMessage
 
 from agent.config import settings
 from deep_agent.agent import create_deep_agent
+from deep_agent import observability
 from deep_agent.context import DeepAgentContext
 
 # ANSI Colors for terminal output
@@ -153,7 +154,9 @@ async def run_query(
     print(f"{DIM} Thread: {thread_id}{RESET}")
     print(f"{CYAN}{BOLD}{'='*80}{RESET}\n")
 
-    config = {"configurable": {"thread_id": thread_id}}
+    config = observability.build_run_config(
+        thread_id, user_id=context.user_id, connection_id=context.connection_id
+    )
 
     start_time = time.time()
     final_state = None
@@ -173,6 +176,8 @@ async def run_query(
         return
 
     final_sql, clean_answer = extract_final_sql_and_answer(final_state["messages"])
+    trace_id = observability.langfuse_trace_id(config)
+    observability.score_run(trace_id, observability.run_metrics(final_state["messages"], execution_time))
 
     if log_file is not None:
         append_run_record(
@@ -191,6 +196,8 @@ async def run_query(
         f"\n{GREEN}{BOLD}[Run finished] Execution time: {execution_time}s, "
         f"Final SQL captured: {'Yes' if final_sql else 'None'}{RESET}"
     )
+    if trace_id:
+        print(f"{DIM} Langfuse trace: {trace_id}{RESET}")
     if final_sql:
         print(f"\n{CYAN}{BOLD}{'='*30} FINAL GENERATED SQL {'='*30}{RESET}")
         print(f"{GREEN}{final_sql}{RESET}")
@@ -275,7 +282,10 @@ def main() -> None:
         print(f"{RED}{BOLD}Error: You must provide a query or run with --interactive{RESET}\n")
         parser.print_help()
         raise SystemExit(2)
-    asyncio.run(_amain(args))
+    try:
+        asyncio.run(_amain(args))
+    finally:
+        observability.flush()
 
 
 if __name__ == "__main__":

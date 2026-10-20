@@ -59,3 +59,13 @@ Every SQL the deep agent runs goes through `agent/utils/sql_guard.py` (sqlglot, 
 - table and column names in `get_sample_rows` / `get_column_distinct_values` are parsed and quoted by sqlglot, never string-interpolated
 
 The guard is an application-level control. The Trino principal used by the agent should also be SELECT-only.
+
+### Tracing (deep agent)
+
+Every deep-agent run is **one Langfuse trace** built by `deep_agent.observability.build_run_config()`:
+- session = thread id, user = `user_id`, tag `deep-agent`, metadata `agent_version` (`DEEP_AGENT_VERSION` env, e.g. the git SHA, else the package version) and `connection_id`
+- all model calls, tool calls, subagent calls and enrichment LLM calls are nested observations
+- `execute_trino_query` / `get_sample_rows` / `get_column_distinct_values` observations carry `trino_query_id`, `execution_time_ms`, `row_count`, `truncated` (or `error_category`) as metadata
+- run-level scores: `deep-agent.model_calls`, `.tool_calls`, `.sql_executions`, `.executed_successfully`, `.final_sql_present`, `.latency_s`
+
+In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disable tracing with `DEEP_AGENT_TRACING_ENABLED=false`.

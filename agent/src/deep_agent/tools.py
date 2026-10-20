@@ -24,6 +24,7 @@ from core.trino import execute_query_sync
 from deep_agent import trino_errors
 from deep_agent.context import DeepAgentContext, cached_catalog, capability, connection_id, latest_user_request
 from deep_agent.envelope import fail, ok
+from deep_agent.observability import annotate_current_span
 
 logger = logging.getLogger(__name__)
 
@@ -192,23 +193,44 @@ def _error_kwargs(error: dict) -> dict:
 
 
 def _run_sql(sql: str, row_cap: int) -> str:
-    """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation."""
+    """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation.
+
+    Telemetry (query id, timing, row count / error category) goes both into the envelope
+    and onto the current Langfuse tool observation.
+    """
     try:
         res = execute_query_sync(sql)
     except Exception as e:
-        return fail(**_error_kwargs(trino_errors.classify_message(None, str(e)).to_error()))
+        error = trino_errors.classify_message(None, str(e)).to_error()
+        annotate_current_span({"error_category": error["category"]}, level="ERROR")
+        return fail(**_error_kwargs(error))
     if not res.success:
-        return fail(**_error_kwargs(trino_errors.classify_result(res).to_error()))
+        error = trino_errors.classify_result(res).to_error()
+        error["execution_time_ms"] = res.execution_time_ms
+        annotate_current_span({
+            "trino_query_id": res.query_id,
+            "execution_time_ms": res.execution_time_ms,
+            "error_category": error["category"],
+            "trino_error_name": res.error_name,
+        }, level="ERROR")
+        return fail(**_error_kwargs(error))
 
     rows = res.rows or []
     truncated = len(rows) > row_cap
     rows = rows[:row_cap]
+    annotate_current_span({
+        "trino_query_id": res.query_id,
+        "execution_time_ms": res.execution_time_ms,
+        "row_count": len(rows),
+        "truncated": truncated,
+    })
     return ok({
         "columns": res.columns,
         "row_count": len(rows),
         "truncated": truncated,
         "rows": rows,
         "query_id": res.query_id,
+        "execution_time_ms": res.execution_time_ms,
     })
 
 
