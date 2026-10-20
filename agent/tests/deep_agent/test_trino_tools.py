@@ -69,12 +69,13 @@ def test_distinct_values_quotes_hebrew_column(trino):
 
 
 def test_validate_rejects_writes_without_calling_trino(trino):
-    out = tools.validate_sql_syntax.invoke({"sql": "DELETE FROM t"})
-    assert out.startswith("Syntax Error:")
+    out = json.loads(tools.validate_sql_syntax.invoke({"sql": "DELETE FROM t"}))
+    assert out["valid"] is False
+    assert out["error_category"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
 def test_validate_runs_explain_for_reads(trino):
     trino.return_value = _ok(0)
-    assert tools.validate_sql_syntax.invoke({"sql": "SELECT 1"}) == "Syntax is VALID."
+    assert json.loads(tools.validate_sql_syntax.invoke({"sql": "SELECT 1"})) == {"valid": True}
     assert trino.call_args.args[0] == "EXPLAIN (TYPE VALIDATE) SELECT 1"
