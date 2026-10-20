@@ -1,0 +1,15 @@
+[
+  {"expected": "FUNCTION_NOT_FOUND", "error": {"message": "line 1:8: Function 'st_geomfromtext' not registered", "errorCode": 44, "errorName": "FUNCTION_NOT_FOUND", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 8}}},
+  {"expected": "FUNCTION_SIGNATURE", "error": {"message": "line 1:8: Unexpected parameters (varchar(10), integer) for function date_parse. Expected: date_parse(varchar(x), varchar(y))", "errorCode": 44, "errorName": "FUNCTION_NOT_FOUND", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 8}}},
+  {"expected": "COLUMN_NOT_FOUND", "error": {"message": "line 1:8: Column 'fligth_id' cannot be resolved", "errorCode": 47, "errorName": "COLUMN_NOT_FOUND", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 8}}},
+  {"expected": "TABLE_NOT_FOUND", "error": {"message": "line 1:15: Table 'postgres.public.flight' does not exist", "errorCode": 46, "errorName": "TABLE_NOT_FOUND", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 15}}},
+  {"expected": "TABLE_NOT_FOUND", "error": {"message": "line 1:15: Schema 'pubic' does not exist", "errorCode": 45, "errorName": "SCHEMA_NOT_FOUND", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 15}}},
+  {"expected": "SYNTAX_ERROR", "error": {"message": "line 1:1: mismatched input 'SELEC'. Expecting: 'ALTER', 'ANALYZE', 'CALL', 'SELECT', 'WITH'", "errorCode": 1, "errorName": "SYNTAX_ERROR", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 1}}},
+  {"expected": "TYPE_MISMATCH", "error": {"message": "line 3:5: Cannot apply operator: timestamp(3) = varchar(10)", "errorCode": 58, "errorName": "TYPE_MISMATCH", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 3, "columnNumber": 5}}},
+  {"expected": "GROUP_BY_ERROR", "error": {"message": "line 1:8: 'city_name' must be an aggregate expression or appear in GROUP BY clause", "errorCode": 2, "errorName": "EXPRESSION_NOT_AGGREGATE", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 8}}},
+  {"expected": "DIVISION_BY_ZERO", "error": {"message": "Division by zero", "errorCode": 8, "errorName": "DIVISION_BY_ZERO", "errorType": "USER_ERROR"}},
+  {"expected": "AMBIGUOUS_COLUMN", "error": {"message": "line 1:8: Column 'city_code' is ambiguous", "errorCode": 18, "errorName": "AMBIGUOUS_NAME", "errorType": "USER_ERROR", "errorLocation": {"lineNumber": 1, "columnNumber": 8}}},
+  {"expected": "INVALID_VALUE", "error": {"message": "Value cannot be cast to timestamp: 2026-06-01T10:00:00Z", "errorCode": 9, "errorName": "INVALID_CAST_ARGUMENT", "errorType": "USER_ERROR"}},
+  {"expected": "TIMEOUT_OR_RESOURCE", "error": {"message": "Query exceeded per-node memory limit of 1GB [Allocated: 1.00GB]", "errorCode": 131079, "errorName": "EXCEEDED_LOCAL_MEMORY_LIMIT", "errorType": "INSUFFICIENT_RESOURCES"}},
+  {"expected": "INFRASTRUCTURE_ERROR", "error": {"message": "Error opening Hive split: connection reset", "errorCode": 16777216, "errorName": "GENERIC_INTERNAL_ERROR", "errorType": "INTERNAL_ERROR"}}
+]

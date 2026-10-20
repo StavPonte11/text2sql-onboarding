@@ -9,6 +9,7 @@ from agent.utils import sql_guard
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
 from agent.utils.sql import clean_sql
 from agent.utils.sql_guard import clamp
+from deep_agent import trino_errors
 from core.trino import execute_query_sync
 from agent.services.geo_utils import get_geojson_polygon, geojson_to_simplified_wkt
 
@@ -214,43 +215,8 @@ async def get_column_profile(table_name: str, column_name: str) -> str:
 # Query Execution
 # ---------------------------------------------------------------------------
 
-def _classify_trino_error(error_message: str) -> str:
-    """Classify a Trino error message into an actionable category."""
-    msg = error_message.lower()
-    if any(k in msg for k in ["syntax error", "mismatched input", "parse error", "unexpected"]):
-        return "SYNTAX_ERROR"
-    if any(k in msg for k in ["table not found", "schema not found", "catalog not found", "does not exist"]):
-        return "TABLE_NOT_FOUND"
-    if any(k in msg for k in ["column", "field", "not found in", "cannot resolve"]):
-        return "COLUMN_NOT_FOUND"
-    if any(k in msg for k in ["type mismatch", "cannot cast", "invalid cast", "expected", "varchar", "bigint", "double"]):
-        return "TYPE_MISMATCH"
-    if any(k in msg for k in ["function not found", "no function", "not a function"]):
-        return "FUNCTION_NOT_FOUND"
-    if any(k in msg for k in ["timeout", "exceeded", "resource", "query killed"]):
-        return "TIMEOUT_OR_RESOURCE"
-    return "EXECUTION_ERROR"
-
-
-_HINTS = {
-    "SYNTAX_ERROR": "Fix the specific syntax line — do not redesign the entire query.",
-    "TABLE_NOT_FOUND": "Re-verify the exact 3-part table name from get_database_catalog.",
-    "COLUMN_NOT_FOUND": "Re-verify the column name from get_table_columns for this table.",
-    "TYPE_MISMATCH": "Add CAST(column AS target_type) for the mismatched column.",
-    "FUNCTION_NOT_FOUND": "Check Trino function spelling. E.g., use ST_GeometryFromText, not ST_GeomFromText.",
-    "TIMEOUT_OR_RESOURCE": "Add a tighter LIMIT or simplify the query.",
-    "FORBIDDEN_STATEMENT": "Only a single read-only SELECT/WITH (or SHOW/DESCRIBE) statement without comments is allowed.",
-    "EXECUTION_ERROR": "Investigate the specific error message.",
-}
-
-
 def _error_result(error_category: str, error_message: str) -> str:
-    return json.dumps({
-        "success": False,
-        "error_category": error_category,
-        "error_message": error_message,
-        "hint": _HINTS.get(error_category, "Investigate the error message."),
-    }, ensure_ascii=False)
+    return json.dumps(trino_errors.classify_message(error_category, error_message).to_dict(), ensure_ascii=False)
 
 
 def _run_sql(sql: str, row_cap: int) -> str:
@@ -258,10 +224,9 @@ def _run_sql(sql: str, row_cap: int) -> str:
     try:
         res = execute_query_sync(sql)
     except Exception as e:
-        return _error_result("EXECUTION_ERROR", str(e))
+        return _error_result(None, str(e))
     if not res.success:
-        error_msg = res.error_message or "Unknown error"
-        return _error_result(_classify_trino_error(error_msg), error_msg)
+        return json.dumps(trino_errors.classify_result(res).to_dict(), ensure_ascii=False)
 
     rows = res.rows or []
     truncated = len(rows) > row_cap
@@ -272,6 +237,7 @@ def _run_sql(sql: str, row_cap: int) -> str:
         "row_count": len(rows),
         "truncated": truncated,
         "rows": rows,
+        "query_id": res.query_id,
     }, ensure_ascii=False, default=str)
 
 
@@ -294,8 +260,12 @@ def execute_trino_query(sql: str, limit: int = 50) -> str:
     - TABLE_NOT_FOUND / COLUMN_NOT_FOUND: re-verify exact identifiers from the catalog
     - TYPE_MISMATCH: add an explicit CAST(col AS type)
     - FUNCTION_NOT_FOUND: check the Trino function name
+    - FUNCTION_SIGNATURE: the function exists but argument types are wrong — CAST the arguments
+    - GROUP_BY_ERROR / DIVISION_BY_ZERO / INVALID_VALUE: fix grouping, wrap divisor in NULLIF, use TRY_CAST
     - TIMEOUT_OR_RESOURCE: simplify the query or add a tighter LIMIT
+    - INFRASTRUCTURE_ERROR: not a SQL problem — do not rewrite the SQL; retry once
     - FORBIDDEN_STATEMENT: rewrite as a single read-only query without comments
+    When available, 'error_location' gives the {line, column} of the offending token.
 
     Args:
         sql (str): The exact Trino SQL query string to execute. Markdown fences and trailing
@@ -368,11 +338,14 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
 @tool
 def validate_sql_syntax(sql: str) -> str:
     """
-    Validates the syntax of a Trino SQL query without executing it against data.
+    Validates a Trino SQL query without executing it against data (syntax AND semantics:
+    table/column names, types, function names and signatures are all checked by the planner).
 
-    Use this to dry-run a query and instantly catch syntax errors (missing CASTs, typos, bad
-    function names). This is cheap — always call this before execute_trino_query on a new draft.
-    Do NOT use this to check if a query returns 0 rows; it only checks syntax validity.
+    Use this to dry-run a new draft and catch errors cheaply before execute_trino_query.
+    Do NOT use this to check if a query returns 0 rows; it never reads data.
+
+    Returns JSON: {"valid": true} or {"valid": false, "error_category", "error_message",
+    "hint", "error_location"} using the same categories as execute_trino_query.
 
     Args:
         sql (str): The exact Trino SQL query string to validate.
@@ -381,15 +354,21 @@ def validate_sql_syntax(sql: str) -> str:
     try:
         sql_guard.parse_read_statement(sql_clean)
     except sql_guard.GuardError as e:
-        return f"Syntax Error: {e}"
+        error = trino_errors.classify_message("FORBIDDEN_STATEMENT", str(e))
+        return json.dumps({"valid": False, **_without_success(error.to_dict())}, ensure_ascii=False)
     try:
         res = execute_query_sync(f"EXPLAIN (TYPE VALIDATE) {sql_clean}")
-        if res.success:
-            return "Syntax is VALID."
-        else:
-            return f"Syntax Error: {res.error_message}"
     except Exception as e:
-        return f"Validation failed: {str(e)}"
+        error = trino_errors.classify_message(None, str(e))
+        return json.dumps({"valid": False, **_without_success(error.to_dict())}, ensure_ascii=False)
+    if res.success:
+        return json.dumps({"valid": True})
+    error = trino_errors.classify_result(res)
+    return json.dumps({"valid": False, **_without_success(error.to_dict())}, ensure_ascii=False)
+
+
+def _without_success(d: dict) -> dict:
+    return {k: v for k, v in d.items() if k != "success"}
 
 
 # ---------------------------------------------------------------------------

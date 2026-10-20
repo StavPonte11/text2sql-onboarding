@@ -31,7 +31,7 @@ dependencies = [
 deep-agent = "deep_agent.cli:main"
 
 [tool.uv.sources]
-core = { path = "../core" }
+core = { path = "../core", editable = true }
 esca-sdk = { git = "https://github.com/elirazpevz/esca.git", subdirectory = "packages/esca-sdk" }
 
 [build-system]
