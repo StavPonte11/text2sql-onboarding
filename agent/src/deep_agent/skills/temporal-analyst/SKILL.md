@@ -1,207 +1,165 @@
 ---
 name: temporal-analyst
-description: Trino date and time handling — use when queries involve timestamps, date filtering, relative time expressions, date parsing from strings, or time zone conversions. Covers all common string timestamp formats in this database.
+description: Trino date and time handling — use when queries involve timestamps, date filtering, relative time expressions (including Hebrew ones), date parsing from strings, or time zone conversions.
 ---
 # Temporal SQL Reference for Trino
 
-## The Core Problem: String-Stored Timestamps
+## Step 1 — Know the column type
 
-Many columns in this database store dates and times as VARCHAR strings rather than native DATE or TIMESTAMP types.
-Before writing any date filter, check `get_column_profile` to confirm the actual data type and look at example values.
+Check `get_column_profile` (or the catalog) before writing any date filter:
 
-If `column_type` is `varchar`, `text`, or `string` — you MUST use string-based parsing.
-
----
-
-## Identifying the Format from Example Values
-
-Run `get_sample_rows` or check the catalog's example values to identify the format before writing any date filter.
+- **Native `date` / `timestamp`** → compare the column directly against date/timestamp literals with half-open
+  ranges. Never wrap it in a function in `WHERE` (that defeats partition pruning and min/max statistics).
+- **`varchar` / text** → the value must be parsed first. Identify the format from example values or
+  `get_sample_rows`, parse once (ideally in a CTE), then filter the parsed value.
 
 | Example value | Format | Parse function |
 |--------------|--------|----------------|
 | `2024-01-15` | ISO date | `CAST(col AS DATE)` or `from_iso8601_date(col)` |
 | `2024-01-15 14:30:00` | ISO datetime | `CAST(col AS TIMESTAMP)` |
 | `2024-01-15T14:30:00` | ISO 8601 with T | `from_iso8601_timestamp(col)` |
-| `2024-01-15T14:30:00Z` | ISO 8601 UTC (with Z) | `from_iso8601_timestamp(col)` |
-| `15/01/2024` | European DD/MM/YYYY | `date_parse(col, '%d/%m/%Y')` |
-| `01/15/2024` | US MM/DD/YYYY | `date_parse(col, '%m/%d/%Y')` |
+| `2024-01-15T14:30:00Z` | ISO 8601 UTC | `from_iso8601_timestamp(col)` |
+| `15/01/2024` | DD/MM/YYYY | `date_parse(col, '%d/%m/%Y')` |
+| `01/15/2024` | MM/DD/YYYY | `date_parse(col, '%m/%d/%Y')` |
 | `15-Jan-2024` | Text month | `date_parse(col, '%d-%b-%Y')` |
-| `20240115` | Compact YYYYMMDD | `date_parse(col, '%Y%m%d')` |
-| `1705312200` | Unix epoch (seconds) | `from_unixtime(CAST(col AS BIGINT))` |
-| `1705312200000` | Unix epoch (milliseconds) | `from_unixtime(CAST(col AS BIGINT) / 1000.0)` |
+| `20240115` | YYYYMMDD | `date_parse(col, '%Y%m%d')` |
+| `1705312200` | Unix seconds | `from_unixtime(CAST(col AS BIGINT))` |
+| `1705312200000` | Unix milliseconds | `from_unixtime(CAST(col AS BIGINT) / 1000.0)` |
 | `2024-01-15 14:30:00.000` | With milliseconds | `date_parse(col, '%Y-%m-%d %H:%i:%s.%f')` |
+
+`date_parse` uses MySQL-style specifiers: `%i` is minutes, `%s` seconds, `%H` 24-hour.
 
 ---
 
-## Safe Parsing & Filtering Patterns
+## Step 2 — Filter with half-open ranges
 
-### Sargability: Never Wrap Filtered Timestamp Columns in Functions
-Wrapping a timestamp/date column in a function prevents Trino from pruning partitions and evaluating min/max metadata statistics:
 ```sql
--- BAD (slow, prevents partition pruning):
-WHERE date(event_at) = DATE '2024-05-01'
-WHERE date_format(event_at, '%Y-%m-%d') = '2024-05-01'
-
--- GOOD (sargable, fast half-open range):
+SELECT count(*) FROM "catalog"."schema"."events"
 WHERE event_at >= TIMESTAMP '2024-05-01 00:00:00'
   AND event_at <  TIMESTAMP '2024-05-02 00:00:00'
 ```
 
-### Always cast string dates before comparing
 ```sql
--- WRONG: string comparison, not date comparison
-WHERE date_col > '2024-01-01'
-
--- CORRECT for ISO date strings
-WHERE CAST(date_col AS DATE) >= DATE '2024-01-01'
-
--- CORRECT for ISO timestamps with T/Z
-WHERE from_iso8601_timestamp(date_col) >= TIMESTAMP '2024-01-01 00:00:00'
-
--- CORRECT for non-ISO strings (e.g. DD/MM/YYYY)
-WHERE date_parse(date_col, '%d/%m/%Y') >= DATE '2024-01-01'
+SELECT count(*) FROM "catalog"."schema"."events"
+WHERE event_date >= DATE '2023-01-01'
+  AND event_date <  DATE '2024-01-01'
 ```
 
-### Truncating to a period
-```sql
--- Group by month
-date_trunc('month', CAST(date_col AS TIMESTAMP))
-
--- Group by year
-date_trunc('year', CAST(date_col AS DATE))
-
--- Extract just the year as integer
-YEAR(CAST(date_col AS DATE))
-EXTRACT(YEAR FROM CAST(date_col AS DATE))
-```
-
-### Range filters (inclusive lower, exclusive upper — always safer for TIMESTAMP)
-```sql
--- CORRECT: year 2023
-WHERE CAST(date_col AS DATE) >= DATE '2023-01-01'
-  AND CAST(date_col AS DATE) < DATE '2024-01-01'
-
--- CORRECT: month of January 2024
-WHERE CAST(date_col AS DATE) >= DATE '2024-01-01'
-  AND CAST(date_col AS DATE) < DATE '2024-02-01'
-
--- AVOID: '2023-12-31' as upper bound for TIMESTAMP — misses 2023-12-31 23:59:59
-```
-
----
-
-## Relative Date Expressions
-
-> [!IMPORTANT]
-> In Trino, the `INTERVAL` value **MUST be a quoted string literal**:
-> - Write: `INTERVAL '1' DAY` or `INTERVAL '24' HOUR`
-> - NEVER write: `INTERVAL 1 DAY` or `INTERVAL '1 day'` or `INTERVAL '1 days'` (all trigger parser syntax errors).
+For VARCHAR columns, parse in a CTE and filter the parsed value the same way:
 
 ```sql
--- Today
-CURRENT_DATE
-
--- Yesterday
-CURRENT_DATE - INTERVAL '1' DAY
--- or: date_add('day', -1, CURRENT_DATE)
-
--- Last 7 days (rolling)
-WHERE CAST(date_col AS DATE) >= CURRENT_DATE - INTERVAL '7' DAY
-
--- This month
-WHERE date_trunc('month', CAST(date_col AS TIMESTAMP)) = date_trunc('month', CURRENT_TIMESTAMP)
-
--- Last month
-WHERE date_trunc('month', CAST(date_col AS TIMESTAMP)) = date_trunc('month', date_add('month', -1, CURRENT_TIMESTAMP))
-
--- Last N months
-WHERE CAST(date_col AS DATE) >= date_add('month', -N, CURRENT_DATE)
-
--- This year
-WHERE YEAR(CAST(date_col AS DATE)) = YEAR(CURRENT_DATE)
-
--- Last year
-WHERE YEAR(CAST(date_col AS DATE)) = YEAR(CURRENT_DATE) - 1
-```
-
----
-
-## Hebrew Temporal Expressions → SQL
-
-| Hebrew | SQL equivalent |
-|--------|---------------|
-| "אתמול" (yesterday) | `CAST(col AS DATE) = CURRENT_DATE - INTERVAL '1' DAY` |
-| "השבוע" (this week) | `CAST(col AS DATE) >= date_trunc('week', CURRENT_DATE)` |
-| "החודש" (this month) | `date_trunc('month', CAST(col AS TIMESTAMP)) = date_trunc('month', CURRENT_TIMESTAMP)` |
-| "החודש שעבר" (last month) | Use date_add('month', -1, ...) |
-| "השנה" (this year) | `YEAR(CAST(col AS DATE)) = YEAR(CURRENT_DATE)` |
-| "ב-2023" (in 2023) | `YEAR(CAST(col AS DATE)) = 2023` |
-| "בינואר" (in January) | `MONTH(CAST(col AS DATE)) = 1` + year filter |
-| "ברבעון הראשון" (Q1) | `MONTH(CAST(col AS DATE)) BETWEEN 1 AND 3` |
-| "ב-12 החודשים האחרונים" (last 12 months) | `CAST(col AS DATE) >= date_add('month', -12, CURRENT_DATE)` |
-| "לפני X ימים" (X days ago) | `CAST(col AS DATE) = date_add('day', -X, CURRENT_DATE)` |
-
----
-
-## Time Zone Handling
-
-If the column stores UTC and you need local time (Israel = UTC+3 / UTC+2 depending on DST):
-```sql
--- Convert UTC timestamp string to Israel local time
-AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jerusalem'
-
--- Example
-SELECT date_parse(col, '%Y-%m-%dT%H:%i:%s') AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jerusalem'
-```
-
----
-
-## Duration and Interval Calculations
-
-```sql
--- Difference in days between two date strings
-date_diff('day',
-  CAST(start_date_col AS DATE),
-  CAST(end_date_col AS DATE)
+WITH parsed AS (
+  SELECT e.*, date_parse(e.created_str, '%d/%m/%Y') AS created_at
+  FROM "catalog"."schema"."events" e
 )
+SELECT count(*) FROM parsed
+WHERE created_at >= TIMESTAMP '2024-01-01 00:00:00'
+  AND created_at <  TIMESTAMP '2024-02-01 00:00:00'
+```
 
--- Difference in hours between two timestamps
-date_diff('hour',
-  date_parse(start_col, '%Y-%m-%d %H:%i:%s'),
-  date_parse(end_col, '%Y-%m-%d %H:%i:%s')
-)
+Avoid `BETWEEN '2024-01-01' AND '2024-01-31'` on timestamps — it misses everything after midnight on the 31st.
+
+---
+
+## Relative dates
+
+`INTERVAL` values must be quoted string literals: `INTERVAL '1' DAY`, `INTERVAL '3' MONTH`
+(never `INTERVAL 1 DAY` or `INTERVAL '1 day'`). `current_date`, `current_timestamp` and `now()` are all valid.
+
+| Period | Sargable filter on a native column `d` |
+|---|---|
+| Today | `d >= current_date AND d < current_date + INTERVAL '1' DAY` |
+| Yesterday | `d >= current_date - INTERVAL '1' DAY AND d < current_date` |
+| Last 7 days (rolling) | `d >= current_date - INTERVAL '7' DAY` |
+| This month | `d >= date_trunc('month', current_date) AND d < date_trunc('month', current_date) + INTERVAL '1' MONTH` |
+| Last month | `d >= date_trunc('month', current_date) - INTERVAL '1' MONTH AND d < date_trunc('month', current_date)` |
+| This year | `d >= date_trunc('year', current_date) AND d < date_trunc('year', current_date) + INTERVAL '1' YEAR` |
+| Last 12 months | `d >= current_date - INTERVAL '12' MONTH` |
+
+---
+
+## Hebrew temporal expressions
+
+The Israeli week starts on **Sunday**, but Trino's `date_trunc('week', ...)` returns **Monday**. Sunday-based week start:
+`date_add('day', -(day_of_week(current_date) % 7), current_date)` (`day_of_week`: Monday = 1 … Sunday = 7).
+
+| Hebrew | Meaning | Filter on a native column `d` |
+|--------|---------|-------------------------------|
+| "היום" | today | `d >= current_date AND d < current_date + INTERVAL '1' DAY` |
+| "אתמול" | yesterday | `d >= current_date - INTERVAL '1' DAY AND d < current_date` |
+| "השבוע" | this week (Sun–Sat) | `d >= date_add('day', -(day_of_week(current_date) % 7), current_date)` |
+| "השבוע שעבר" | last week (Sun–Sat) | `d >= date_add('day', -(day_of_week(current_date) % 7) - 7, current_date) AND d < date_add('day', -(day_of_week(current_date) % 7), current_date)` |
+| "החודש" | this month | see "This month" above |
+| "החודש שעבר" | last month | see "Last month" above |
+| "השנה" | this year | see "This year" above |
+| "ב-2023" | in 2023 | `d >= DATE '2023-01-01' AND d < DATE '2024-01-01'` |
+| "בינואר 2024" | January 2024 | `d >= DATE '2024-01-01' AND d < DATE '2024-02-01'` |
+| "ברבעון הראשון 2024" | Q1 2024 | `d >= DATE '2024-01-01' AND d < DATE '2024-04-01'` |
+| "ב-12 החודשים האחרונים" | last 12 months | `d >= current_date - INTERVAL '12' MONTH` |
+| "לפני X ימים" | X days ago | `d >= current_date - INTERVAL 'X' DAY AND d < current_date - INTERVAL 'X' DAY + INTERVAL '1' DAY` |
+| "בשבועיים הראשונים של יולי 2026" | July 1–14, 2026 | `d >= DATE '2026-07-01' AND d < DATE '2026-07-15'` |
+
+If a month is given without a year, assume the most recent past occurrence relative to today and state it in `assumptions`.
+
+---
+
+## Grouping by period (SELECT / GROUP BY — functions are fine here)
+
+```sql
+SELECT date_trunc('month', event_at) AS month, count(*) AS events
+FROM "catalog"."schema"."events"
+GROUP BY 1
+ORDER BY 1
+```
+
+`year(d)`, `month(d)`, `day_of_week(d)` and `extract(year FROM d)` are fine in `SELECT` and `GROUP BY` — just not in
+`WHERE` on a native column you are filtering.
+
+---
+
+## Time zones
+
+A naive `timestamp` has no zone. To treat it as UTC and show Israel local time:
+
+```sql
+SELECT with_timezone(event_at, 'UTC') AT TIME ZONE 'Asia/Jerusalem' AS event_at_israel
+FROM "catalog"."schema"."events"
+```
+
+For a value that already carries a zone (`timestamp with time zone`, e.g. from `from_iso8601_timestamp('...Z')`),
+`col AT TIME ZONE 'Asia/Jerusalem'` is enough. Israel is UTC+2 in winter and UTC+3 in summer (DST).
+
+---
+
+## Durations
+
+```sql
+SELECT date_diff('day', start_date, end_date) AS days,
+       date_diff('hour', started_at, ended_at) AS hours
+FROM "catalog"."schema"."trips"
+```
+
+Unit first, then start, then end.
+
+---
+
+## Defensive parsing
+
+`try_cast(col AS DATE)` and `try(date_parse(col, '%d/%m/%Y'))` return NULL instead of failing on malformed values.
+When the format is unknown, look before parsing:
+
+```sql
+SELECT DISTINCT created_str FROM "catalog"."schema"."events" LIMIT 20
 ```
 
 ---
 
-## Defensive Patterns
+## Common mistakes
 
-### When the format may vary or the column has NULLs
-```sql
--- TRY_CAST returns NULL instead of throwing on bad values
-WHERE TRY_CAST(date_col AS DATE) >= DATE '2024-01-01'
-
--- Check if parsing succeeds before using the column
-SELECT *
-FROM table
-WHERE TRY_CAST(date_col AS DATE) IS NOT NULL
-  AND CAST(date_col AS DATE) >= DATE '2024-01-01'
-```
-
-### When you don't know the format — investigate first
-```sql
--- Sample 20 distinct values to see the actual format
-SELECT DISTINCT date_col FROM "catalog"."schema"."table" LIMIT 20
-```
-Then use `get_column_profile` to see example values before writing the parse call.
-
----
-
-## Common Mistakes to Avoid
-
-- `WHERE date_col = '2024-01-15'` on a TIMESTAMP column — matches only midnight, not the whole day
-- `WHERE date_col BETWEEN '2024-01-01' AND '2024-12-31'` on a TIMESTAMP — misses Dec 31 23:59
-- `date_parse` with wrong format string — returns NULL silently or throws an error
-- Using `NOW()` — Trino uses `CURRENT_TIMESTAMP` (no parentheses needed)
-- Using `DATEDIFF` — Trino uses `date_diff('unit', start, end)`
-- Using `DATE_FORMAT` — Trino uses `format_datetime(ts, 'pattern')`
+- `WHERE ts_col = '2024-01-15'` on a timestamp — matches only midnight, not the whole day.
+- `WHERE date(ts_col) = DATE '2024-05-01'` — correct but not sargable; use a half-open range.
+- Wrong `date_parse` format string — returns an error or NULL; `%i` (not `%M`) is minutes.
+- `DATEDIFF(a, b)` does not exist — use `date_diff('day', a, b)`.
+- `date_format(ts, '%Y-%m')` (MySQL-style specifiers) and `format_datetime(ts, 'yyyy-MM')` (Joda-style patterns)
+  both exist; don't mix the two pattern styles.
+- `date_trunc('week', ...)` is Monday-based — use the Sunday formula above for Hebrew "השבוע".

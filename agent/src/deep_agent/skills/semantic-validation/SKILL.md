@@ -127,7 +127,7 @@ If any answer is "no" or "unsure" — revise the SQL before executing.
 
 **0 rows returned:**
 1. Strip WHERE clauses one at a time to find which one eliminates all rows
-2. `search_column_values` on any string filter you wrote
+2. Re-resolve every string filter you wrote by semantic type (`get_column_distinct_values` for categorical, `search_column_values` for large_categorical)
 3. Sample the join keys: `get_sample_rows` on both sides — do the key formats match?
 
 **Count too high (round number like 10000 or identical to table size):**
