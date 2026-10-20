@@ -1,0 +1,117 @@
+{
+  "description": "Deep Agent vs legacy graph evaluation set. Metric: execution accuracy against gold_sql result sets. Items with gold_sql=null are reported as no_gold and not scored. gold_source=agent_run_unverified marks gold SQL taken from consistent past agent runs that still needs domain-expert verification.",
+  "items": [
+    {
+      "id": "q01",
+      "question": "כמה טיסות המריאו מצרפת",
+      "tags": [
+        "simple_filter",
+        "categorical"
+      ],
+      "gold_sql": "SELECT COUNT(DISTINCT flight_id) AS flight_count FROM \"postgres\".\"public\".\"flights_table\" WHERE launch_country = 'France'",
+      "gold_source": "agent_run_unverified"
+    },
+    {
+      "id": "q02",
+      "question": "what cities are in the Haifa district",
+      "tags": [
+        "large_categorical",
+        "join"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q03",
+      "question": "חשב את מספר התראות הטיסה לנפש עבור כל מחוז. לאחר מכן, עבור 3 המחוזות עם כמות ההתראות הגבוהה ביותר, ציין את 3 הערים הגדולות ביותר בכל מחוז על בסיס שטח הפנים שלהן.",
+      "tags": [
+        "per_capita",
+        "join",
+        "aggregation",
+        "top_n"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q04",
+      "question": "כמה טיסות המריאו מצרפת ונחתו בתל אביב",
+      "tags": [
+        "simple_filter",
+        "categorical",
+        "large_categorical"
+      ],
+      "gold_sql": "SELECT COUNT(DISTINCT flight_id) AS flight_count FROM \"postgres\".\"public\".\"flights_table\" WHERE launch_country = 'France' AND city_name LIKE 'Tel Aviv%'",
+      "gold_source": "agent_run_unverified"
+    },
+    {
+      "id": "q05",
+      "question": "מצא את אזורי ההנחיה שבהם מדיניות הטיסה אוסרת טיסה בגובה נמוך או סוגרת את המרחב האווירי לחלוטין, ובמקביל מדיניות הנחיתה מחייבת העברה לשדה חלופי. עבור כל אזור הצג את מדיניות הטיסה, את מדיניות הנחיתה ואת מועד העדכון האחרון. מיין מהעדכון החדש ביותר לישן ביותר.",
+      "tags": [
+        "categorical",
+        "temporal_latest"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q06",
+      "question": "השווה בין ערים לפי מספר ההתרעות שהתקבלו בהן במהלך יוני 2026 ביחס לגודל האוכלוסייה שלהן. הצג רק ערים שיש להן לפחות 10 התרעות בתקופה, והצג את חמש הערים עם מספר ההתרעות הגבוה ביותר לכל 10,000 תושבים. הצג גם את מספר ההתרעות ואת גודל האוכלוסייה ששימשו לחישוב.",
+      "tags": [
+        "temporal",
+        "per_capita",
+        "join",
+        "aggregation",
+        "top_n"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q07",
+      "question": "מצא את הערים שבהן נרשמו לפחות 5 התרעות במהלך השבועיים הראשונים של יולי 2026, אך לא נרשמה בהן אף נחיתת חירום באותה תקופה. הצג את מספר ההתרעות בכל עיר, ומיין מהמספר הגבוה לנמוך.",
+      "tags": [
+        "temporal",
+        "anti_join",
+        "aggregation"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q08",
+      "question": "עבור טיסות שהמריאו במהלך יוני 2026, מצא את אזורי ההנחיה שבהם שיעור הטיסות ארוכות הטווח גבוה מהממוצע של כלל הטיסות בתקופה. הצג את מספר הטיסות בכל אזור, מספר הטיסות ארוכות הטווח, השיעור שלהן והפער בנקודות אחוז מהממוצע הכללי. מיין לפי הפער מהגבוה לנמוך.",
+      "tags": [
+        "temporal",
+        "join",
+        "aggregation",
+        "comparison_to_average"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q09",
+      "question": "זהה את עשר הרשויות שבהן היחס בין מספר האנשים השוהים במתקני האירוח לבין מספר העובדים הוא הגבוה ביותר, בתנאי שיש בהן לפחות 500 אנשים. הצג גם את מספר החדרים, את מספר האנשים לכל חדר ואת מועד העדכון של נתוני האירוח. אל תכלול רשויות שבהן מספר העובדים הוא אפס.",
+      "tags": [
+        "ratio",
+        "join",
+        "aggregation",
+        "top_n"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    },
+    {
+      "id": "q10",
+      "question": "עבור כל אזור הנחיה, הצג את המדיניות העדכנית ביותר הידועה, את תאריך העדכון שלה ואת מספר הטיסות ששויכו לאזור במהלך יולי 2026. הצג גם אזורים שאין להם טיסות בתקופה, וודא שאזור שמופיעות עבורו כמה גרסאות של מדיניות נספר פעם אחת בלבד.",
+      "tags": [
+        "temporal_latest",
+        "left_join",
+        "deduplication"
+      ],
+      "gold_sql": null,
+      "gold_source": null
+    }
+  ]
+}
