@@ -58,3 +58,11 @@ def policy_model():
         return model
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _packaged_prompts(monkeypatch):
+    """Unit tests use the packaged prompts; Langfuse prompt fetching is tested explicitly."""
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_LANGFUSE_PROMPTS", False)

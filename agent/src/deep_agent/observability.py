@@ -69,6 +69,14 @@ def build_run_config(
     }
     if user_id:
         metadata["langfuse_user_id"] = user_id
+    if handlers:
+        from deep_agent.prompt_registry import load_prompt
+
+        prompt = load_prompt("system")
+        if prompt.client is not None:
+            metadata["langfuse_prompt"] = prompt.client  # links generations to the served prompt version
+        metadata["prompt_source"] = prompt.source
+        metadata["prompt_version"] = prompt.version
 
     return RunnableConfig(
         configurable={"thread_id": thread_id},

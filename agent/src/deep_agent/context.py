@@ -11,7 +11,6 @@ Nothing request-specific lives in module globals:
   context's timezone, so long-running processes never serve a stale date.
 """
 
-import operator
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,10 +31,27 @@ class DeepAgentContext:
     timezone: str = DEFAULT_TIMEZONE
 
 
+def merge_executions(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Append-only reducer for executed_queries that ignores records already present.
+
+    deepagents passes the parent's state into a subagent and returns the subagent's state as
+    an update; a plain list-append reducer would duplicate the parent's history on every
+    `task` call.
+    """
+    merged = list(left or [])
+    seen = {(r.get("query_id"), r.get("executed_sql")) for r in merged}
+    for record in right or []:
+        key = (record.get("query_id"), record.get("executed_sql"))
+        if key not in seen:
+            merged.append(record)
+            seen.add(key)
+    return merged
+
+
 class DeepAgentRuntimeState(AgentState):
     connection_capabilities: NotRequired[dict[str, bool]]
     jeen_catalog: NotRequired[str]  # raw catalog text, cached so tools never need the model to re-send it
-    executed_queries: NotRequired[Annotated[list[dict[str, Any]], operator.add]]  # successful executions (append-only)
+    executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
     final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
 
 

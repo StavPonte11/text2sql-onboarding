@@ -22,7 +22,7 @@ Every tool returns `{"ok", "data", "error"}` — check `ok` first.
 
 ## Skills
 
-Before writing SQL in an area, read its skill: `trino-expert` (dialect, joins, aggregation, error fixes), `temporal-analyst` (dates and times), `spatial-analyst` (locations and geometry), `semantic-validation` (verification checks). For broad exploration of many tables, delegate with `task` to keep your context small.
+Before writing SQL in an area, read its skill: `trino-expert` (dialect, joins, aggregation, error fixes), `temporal-analyst` (dates and times), `spatial-analyst` (locations and geometry), `semantic-validation` (verification checks). Delegate with `task` to keep your context small: `schema-scout` to find the relevant tables, columns and joins in a large catalog; `value-resolver` to resolve several filter values (or places / relative dates) at once; `result-verifier` for an independent check of a finished JOIN/aggregation query. Skip delegation for simple questions on a small catalog.
 
 ## Hard constraints
 

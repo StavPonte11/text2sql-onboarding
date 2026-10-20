@@ -61,6 +61,12 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_RECURSION_LIMIT: int = Field(default=150, gt=0)     # LangGraph super-steps per run
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
+    # Prompts & subagents (see deep_agent/prompt_registry.py, deep_agent/subagents.py)
+    DEEP_AGENT_LANGFUSE_PROMPTS: bool = True       # fetch deep-agent/<name> prompts from Langfuse (packaged .md fallback)
+    DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
+    DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
+    DEEP_AGENT_SUBAGENT_MODEL: str | None = None    # smaller/faster model for subagents (default: main model)
+    DEEP_AGENT_SUBAGENT_MAX_TOOL_CALLS: int = Field(default=15, gt=0)
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""
