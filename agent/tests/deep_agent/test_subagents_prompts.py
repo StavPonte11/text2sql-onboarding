@@ -114,6 +114,9 @@ def test_disabled_langfuse_uses_packaged_prompt():
 @pytest.fixture
 def langfuse_enabled(monkeypatch):
     monkeypatch.setattr(settings, "DEEP_AGENT_LANGFUSE_PROMPTS", True)
+    prompt_registry._misses.clear()
+    yield
+    prompt_registry._misses.clear()
 
 
 def _served(text, version=3, fallback=False):
@@ -189,3 +192,20 @@ def test_sync_script_pushes_every_prompt_with_label():
         assert call.kwargs["labels"] == ["staging"] and call.kwargs["type"] == "text"
     assert module.sync(MagicMock(), label="staging", dry_run=True) == pushed
     json.dumps(pushed)
+
+
+def test_missing_prompt_is_not_refetched_on_every_call(langfuse_enabled):
+    """A 404 / fallback must not cost a Langfuse round trip on every model call."""
+    fake = MagicMock(get_prompt=MagicMock(return_value=_served(local_prompt("system"), version=None, fallback=True)))
+    with patch("agent.langfuse_client.langfuse_client", fake):
+        for _ in range(5):
+            assert load_prompt("system").source == "local"
+    assert fake.get_prompt.call_count == 1
+
+
+def test_miss_expires_after_ttl(langfuse_enabled, monkeypatch):
+    fake = MagicMock(get_prompt=MagicMock(side_effect=[RuntimeError("down"), _served("now served", version=2)]))
+    with patch("agent.langfuse_client.langfuse_client", fake):
+        assert load_prompt("system").source == "local"
+        prompt_registry._misses["system"] = 0.0  # TTL elapsed
+        assert load_prompt("system").text == "now served"

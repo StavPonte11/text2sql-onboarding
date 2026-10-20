@@ -13,6 +13,7 @@ a label in Langfuse changes behaviour without a redeploy. Push the packaged prom
 """
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,9 +47,21 @@ class LoadedPrompt:
     client: Any = None        # langfuse TextPromptClient (links generations to the prompt version)
 
 
+# key -> monotonic deadline until which Langfuse is not asked again (prompt missing / unreachable).
+# The SDK caches successful fetches but not misses, and load_prompt runs on every model call.
+_misses: dict[str, float] = {}
+
+
+def _miss(key: str, local: str) -> LoadedPrompt:
+    _misses[key] = time.monotonic() + max(settings.DEEP_AGENT_PROMPT_CACHE_TTL_S, 1)
+    return LoadedPrompt(key, local, "local")
+
+
 def load_prompt(key: str) -> LoadedPrompt:
     local = local_prompt(key)
     if not settings.DEEP_AGENT_LANGFUSE_PROMPTS:
+        return LoadedPrompt(key, local, "local")
+    if _misses.get(key, 0.0) > time.monotonic():
         return LoadedPrompt(key, local, "local")
     try:
         from agent.langfuse_client import langfuse_client
@@ -64,9 +77,10 @@ def load_prompt(key: str) -> LoadedPrompt:
         )
     except Exception as exc:
         logger.warning("Langfuse prompt %s unavailable (%s); using packaged prompt", langfuse_name(key), exc)
-        return LoadedPrompt(key, local, "local")
+        return _miss(key, local)
     if getattr(client, "is_fallback", False):
-        return LoadedPrompt(key, local, "local")
+        return _miss(key, local)
+    _misses.pop(key, None)
     return LoadedPrompt(key, client.prompt, "langfuse", getattr(client, "version", None), client)
 
 
