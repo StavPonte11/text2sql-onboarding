@@ -45,6 +45,10 @@ class AgentSettings(BaseSettings):
     JEEN_METADATA_SEARCH_LIMIT: int = 10     # Max tables returned by the search tool
     JEEN_METADATA_PROFILE_TIMEOUT: float = 30.0  # Per-MCP-call timeout (seconds)
 
+    # ── Deep Agent ────────────────────────────────────────────────────────────
+    DEEP_AGENT_SKILLS_DIR: str | None = None  # Override packaged skills dir (<dir>/<name>/SKILL.md)
+    DEEP_AGENT_MEMORY_DIR: str | None = None  # Override packaged memory dir (must contain AGENTS.md)
+
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""
     TRINO_SCHEMA: str = ""
