@@ -28,7 +28,7 @@ TOOL_ARGS = {
     "get_sample_rows": {"table_name": "t"},
     "get_column_distinct_values": {"table_name": "t", "column_name": "c"},
     "validate_sql_syntax": {"sql": "SELECT 1"},
-    "enrich_sql_filters": {"user_request": "q", "sql": "SELECT 1 FROM t WHERE a = 'x'", "jeen_catalog": "cat"},
+    "enrich_sql_filters": {"sql": "SELECT 1 FROM t WHERE a = 'x'"},
 }
 
 
