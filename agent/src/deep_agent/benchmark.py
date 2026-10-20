@@ -137,13 +137,14 @@ def main() -> None:
     args = parser.parse_args()
 
     from agent.utils.jeen_metadata_client import close_mcp_sessions
-    from deep_agent.agent import create_deep_agent
+    from deep_agent.agent import acreate_deep_agent
 
     questions = json.loads(args.questions.read_text(encoding="utf-8"))
 
     async def _run():
         try:
-            return await run_benchmark(create_deep_agent(), questions, DeepAgentContext(connection_id=args.connection_id),
+            return await run_benchmark(await acreate_deep_agent(), questions,
+                                       DeepAgentContext(connection_id=args.connection_id),
                                        concurrency=args.concurrency)
         finally:
             await close_mcp_sessions()

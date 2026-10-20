@@ -107,6 +107,11 @@ WHERE ST_Distance(to_spherical_geography(ST_Point(e.lon, e.lat)),
 If the landmark is only known by name, `resolve_location_to_wkt` gives the surrounding area polygon; use its
 centroid `ST_Centroid(ST_GeometryFromText(...))` as the point, and say so in `assumptions`.
 
+**If the Utils-Server tools are available:** check a spatial expression with `trino_validate_spatial_expression`
+before putting it in a query — it reports whether the expression is valid and the functions exist on this Trino (with
+close-name suggestions for typos), and can evaluate it on one row of a table. `geo_create_buffer` turns a point +
+radius (true metres) into a polygon returned as GeoJSON; use it in SQL with `from_geojson_geometry('<geojson>')`.
+
 ---
 
 ## 4. Proximity & Directional Intent Patterns

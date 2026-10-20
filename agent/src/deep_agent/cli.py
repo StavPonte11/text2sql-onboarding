@@ -19,7 +19,7 @@ from pathlib import Path
 from langchain_core.messages import BaseMessage
 
 from agent.config import settings
-from deep_agent.agent import create_deep_agent
+from deep_agent.agent import acreate_deep_agent
 from agent.utils.jeen_metadata_client import close_mcp_sessions
 from deep_agent import observability
 from deep_agent.answer import best_effort_result, render_markdown
@@ -246,7 +246,7 @@ async def _amain(args: argparse.Namespace) -> None:
     print(f"{MAGENTA}{BOLD}================================================================{RESET}\n")
 
     print(f"{MAGENTA}{BOLD}Initializing Deep Agent...{RESET}")
-    agent = create_deep_agent()
+    agent = await acreate_deep_agent()
 
     if args.interactive:
         print(f"{GREEN}{BOLD}Starting Interactive Mode. Type 'quit', 'exit', or 'q' to stop.{RESET}")

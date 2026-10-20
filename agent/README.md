@@ -69,3 +69,23 @@ Every deep-agent run is **one Langfuse trace** built by `deep_agent.observabilit
 - run-level scores: `deep-agent.model_calls`, `.tool_calls`, `.sql_executions`, `.executed_successfully`, `.final_sql_present`, `.latency_s`
 
 In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disable tracing with `DEEP_AGENT_TRACING_ENABLED=false`.
+
+### Utils-Server tools (deep agent, optional)
+
+A curated subset of [Utils-Server](https://github.com/matzpen-agency/Utils-Server) tools is loaded from the Jarvis Registry
+MCP gateway at startup (`deep_agent/utils_mcp.py`). Set:
+
+```bash
+JARVIS_GATEWAY_URL=http://jarvis-mcp-gateway:8001   # unset = disabled
+JARVIS_MCP_NAMESPACE=global                         # gateway namespace exposing Utils-Server
+JARVIS_API_KEY=...                                  # sent as "Authorization: ApiKey <key>"
+```
+
+| Agent | Tools |
+|---|---|
+| main | `datetime_parse_relative_expression`, `text_normalize`, `trino_validate_spatial_expression` |
+| value-resolver | `datetime_parse_relative_expression`, `text_normalize`, `geo_create_buffer`, `geo_validate_geometry` |
+
+The registry service identity needs the `datetime:read`, `text:read`, `geo:read` and `trino:read` scopes, and each tool must be
+approved in the registry. SQL is never executed through Utils-Server. If the gateway is unreachable the agent starts without
+these tools and logs a warning.

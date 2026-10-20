@@ -16,6 +16,7 @@ HINTS: dict[str, str] = {
     "INVALID_INPUT": "Fix the tool arguments as described in the message and call again.",
     "ENRICHMENT_ERROR": "Enrichment failed; the original SQL is unchanged — verify filter values with search_column_values instead.",
     "LOCATION_NOT_FOUND": "The location could not be geocoded. Try the Hebrew or English official name, or filter by a text column instead.",
+    "EXTERNAL_TOOL_ERROR": "The Utils-Server utility failed — continue without it (fall back to the skill's rules).",
 }
 
 

@@ -51,8 +51,10 @@ def _subagent_model(main_model: BaseChatModel) -> BaseChatModel | None:
     return main_model.model_copy(update={"model_name": settings.DEEP_AGENT_SUBAGENT_MODEL})
 
 
-def build_subagents(main_model: BaseChatModel) -> list[dict]:
+def build_subagents(main_model: BaseChatModel, extra_tools: dict[str, list] | None = None) -> list[dict]:
+    """Subagent specs; `extra_tools` maps subagent name -> additional tools (e.g. Utils-Server)."""
     model = _subagent_model(main_model)
+    extra_tools = extra_tools or {}
     subagents = []
     for name, tools in SUBAGENT_TOOLS.items():
         prompt = load_prompt(name).text
@@ -60,7 +62,7 @@ def build_subagents(main_model: BaseChatModel) -> list[dict]:
             "name": name,
             "description": SUBAGENT_DESCRIPTIONS[name],
             "system_prompt": prompt,
-            "tools": tools,
+            "tools": [*tools, *extra_tools.get(name, [])],
             "skills": [SKILLS_ROUTE],
             "middleware": [
                 DeepAgentContextMiddleware(),

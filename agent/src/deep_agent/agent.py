@@ -16,6 +16,7 @@ from deep_agent.prompt_registry import PromptRefreshMiddleware, load_prompt, loc
 from deep_agent.resources import build_resources
 from deep_agent.subagents import build_subagents
 from deep_agent.tools import DEEP_AGENT_TOOLS
+from deep_agent.utils_mcp import load_utils_tools
 
 
 # Packaged system prompt (the Langfuse-managed version, when available, is loaded per agent build and refreshed per call).
@@ -27,7 +28,12 @@ def _default_llm() -> BaseChatModel:
     return get_llm().model_copy(update={"request_timeout": settings.DEEP_AGENT_LLM_TIMEOUT_S, "max_retries": 0})
 
 
-def create_deep_agent(model: BaseChatModel | None = None):
+async def acreate_deep_agent(model: BaseChatModel | None = None):
+    """create_deep_agent plus the curated Utils-Server tools from the Jarvis Registry gateway (when configured)."""
+    return create_deep_agent(model=model, extra_tools=await load_utils_tools())
+
+
+def create_deep_agent(model: BaseChatModel | None = None, extra_tools: dict[str, list] | None = None):
     """
     Creates and returns a compiled LangGraph deep agent equipped with all exploration,
     enrichment, temporal, geospatial, and semantic validation tools.
@@ -37,7 +43,9 @@ def create_deep_agent(model: BaseChatModel | None = None):
 
     Args:
         model: Chat model override (tests); defaults to the configured LLM.
+        extra_tools: Additional tools per agent ("main" or a subagent name), e.g. from load_utils_tools().
     """
+    extra_tools = extra_tools or {}
     llm = model or _default_llm()
     memory = MemorySaver()
     resources = build_resources()
@@ -45,9 +53,9 @@ def create_deep_agent(model: BaseChatModel | None = None):
 
     agent = create_harness_agent(
         model=llm,
-        tools=DEEP_AGENT_TOOLS,
+        tools=[*DEEP_AGENT_TOOLS, *extra_tools.get("main", [])],
         system_prompt=system_prompt,
-        subagents=build_subagents(llm),
+        subagents=build_subagents(llm, extra_tools),
         middleware=[
             DeepAgentContextMiddleware(),
             PromptRefreshMiddleware("system", system_prompt),
