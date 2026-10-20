@@ -156,27 +156,38 @@ class JeenMetadataClient:
     # ------------------------------------------------------------------
 
     async def search_column_values(
-        self, query: str, table_name: str | None = None, column_name: str | None = None
-    ) -> list[str]:
+        self,
+        search_term: str,
+        table: str | None = None,
+        column: str | None = None,
+        limit: int | None = None,
+        raw: bool = False,
+    ) -> list[str] | dict[str, Any]:
         """
         Looks up real values a column contains using semantic and keyword matching via MCP.
+        Uses exact MCP parameter names: search_term, table, column, limit.
+        When raw=True, returns the full payload dictionary from the MCP server.
         """
         if not self.is_configured:
             logger.warning("JeenMetadataClient is not configured. Returning empty search results.")
-            return []
-            
+            return [] if not raw else {"error": "JeenMetadataClient is not configured."}
+
+        lim = limit if limit is not None else self._search_limit
         args: dict[str, Any] = {
             "connection_id": self._connection_id,
-            "search_term": query,
-            "limit": self._search_limit,
+            "search_term": search_term,
+            "limit": lim,
         }
-        if table_name:
-            args["table"] = table_name
-        if column_name:
-            args["column"] = column_name
+        if table:
+            args["table"] = table
+        if column:
+            args["column"] = column
 
         try:
             payload = await self._call("search_column_values", args)
+            if raw:
+                return payload if isinstance(payload, dict) else {"values": payload}
+
             if isinstance(payload, dict) and "values" in payload:
                 results = []
                 for v in payload["values"]:
@@ -185,10 +196,12 @@ class JeenMetadataClient:
                     else:
                         results.append(str(v))
                 return results
+            elif isinstance(payload, list):
+                return [str(x) for x in payload]
             return []
         except Exception as exc:
             logger.error("JeenMetadataClient.search_column_values failed: %s", exc, exc_info=True)
-            return []
+            return [] if not raw else {"error": str(exc)}
 
     # ------------------------------------------------------------------
     # Glossary / Context
@@ -267,15 +280,21 @@ class JeenMetadataClient:
             table_profile: dict = payload.get("table_profile") or {} if isinstance(payload, dict) else {}
             columns_raw: list[dict] = payload.get("columns") or [] if isinstance(payload, dict) else []
 
-            # Normalise column list into the shape the agent already consumes
+            # Normalise column list into the shape the agent consumes
             columns = []
             for col in columns_raw:
+                null_val = col.get("nullRatio") if col.get("nullRatio") is not None else (col.get("nullRate") or col.get("null_rate"))
+                distinct_val = col.get("distinctCount") if col.get("distinctCount") is not None else col.get("distinct_count")
+                sem_type = col.get("semanticType") or col.get("semantic_type") or col.get("columnRole") or "unknown"
+
                 entry: dict[str, Any] = {
                     "name": col.get("columnName") or col.get("column_name") or col.get("name", ""),
                     "type": col.get("dataType") or col.get("data_type") or col.get("type", ""),
-                    "null_rate": round(float(col.get("nullRate") or col.get("null_rate") or 0.0), 4),
-                    "distinct_count": int(col.get("distinctCount") or col.get("distinct_count") or 0),
-                    "semantic_type": col.get("semantic_type") or "unknown",
+                    "null_rate": round(float(null_val or 0.0), 4),
+                    "distinct_count": int(distinct_val or 0),
+                    "semantic_type": sem_type,
+                    "domain_is_complete": bool(col.get("domainIsComplete") or col.get("domain_is_complete", False)),
+                    "example_values": col.get("exampleValues") or col.get("example_values") or [],
                 }
                 # Propagate optional stats if available
                 for src_key, dst_key in [
@@ -321,7 +340,7 @@ class JeenMetadataClient:
         Returns the latest stored statistics for a single column: role, null ratio, distinct count, min/max, and example values.
         """
         try:
-            profile = await self._call(
+            res = await self._call(
                 "get_column_profile",
                 {
                     "connection_id": self._connection_id,
@@ -329,10 +348,87 @@ class JeenMetadataClient:
                     "column_name": column_name,
                 },
             )
-            return profile if isinstance(profile, dict) else None
+            if isinstance(res, dict):
+                return res.get("profile") or res
+            return None
         except Exception as exc:
             logger.error("JeenMetadataClient.get_column_profile failed: %s", exc)
             return None
+
+    # ------------------------------------------------------------------
+    # Prompt & Scoping Tools
+    # ------------------------------------------------------------------
+
+    # async def get_filtered_prompt(self, question: str, connection_id: int | None = None) -> dict[str, Any]:
+    #     """
+    #     Returns metadata prompt narrowed to the question: the most relevant columns,
+    #     knowledge pairs, and business terms. Returns { 'prompt': str, 'meta': dict }.
+    #     """
+    #     cid = connection_id if connection_id is not None else self._connection_id
+    #     return await self._call("get_filtered_prompt", {"connection_id": cid, "question": question})
+
+    # async def resolve_question(self, question: str, connection_id: int | None = None) -> dict[str, Any]:
+    #     """
+    #     Explains how a question maps onto this connection's curated vocabulary:
+    #     glossary terms, synonyms, acronyms, tables, and columns.
+    #     """
+    #     cid = connection_id if connection_id is not None else self._connection_id
+    #     return await self._call("resolve_question", {"connection_id": cid, "question": question})
+
+    # ------------------------------------------------------------------
+    # Tables, Columns & Relationships Structure
+    # ------------------------------------------------------------------
+
+    async def get_tables(self, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns the list of tables for a connection with business descriptions and quoted identifiers.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        res = await self._call("get_tables", {"connection_id": cid})
+        if isinstance(res, dict) and "tables" in res:
+            return res["tables"]
+        return res if isinstance(res, list) else []
+
+    async def get_columns(self, table_name: str | None = None, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns columns for connection (data type, primary key, description, example values, profiling stats).
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        args: dict[str, Any] = {"connection_id": cid}
+        if table_name:
+            args["table_name"] = table_name
+        res = await self._call("get_columns", args)
+        if isinstance(res, dict) and "columns" in res:
+            return res["columns"]
+        return res if isinstance(res, list) else []
+
+    async def get_relationships(self, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns source-scoped foreign-key and semantic-model joins for a connection.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        res = await self._call("get_relationships", {"connection_id": cid})
+        if isinstance(res, dict) and "relationships" in res:
+            return res["relationships"]
+        return res if isinstance(res, list) else []
+
+    async def get_source_statistics(self, connection_id: int | None = None) -> dict[str, Any]:
+        """
+        Stored source profile summary: latest profile run, table types, column roles.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        return await self._call("get_source_statistics", {"connection_id": cid})
+
+    # ------------------------------------------------------------------
+    # Query Execution via MCP
+    # ------------------------------------------------------------------
+
+    async def run_query(self, query: str, max_rows: int = 100, connection_id: int | None = None) -> dict[str, Any]:
+        """
+        Executes a read-only SQL query via the MCP server on connections where can_execute=True.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        return await self._call("run_query", {"connection_id": cid, "query": query, "max_rows": max_rows})
 
     # ------------------------------------------------------------------
     # Full table listing (fallback when search returns nothing)
@@ -399,17 +495,6 @@ class JeenMetadataClient:
             return await self._call("search_knowledge_pairs", {"connection_id": self._connection_id, "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search_knowledge_pairs failed: %s", exc)
-            return {"error": str(exc)}
-
-    async def search_column_values(self, query: str, table: str = None, column: str = None, limit: int = 10) -> Any:
-        """Looks up the real values a column contains (large categorical resolver)."""
-        args = {"connection_id": self._connection_id, "query": query, "limit": limit}
-        if table: args["table"] = table
-        if column: args["column"] = column
-        try:
-            return await self._call("search_column_values", args)
-        except Exception as exc:
-            logger.error("search_column_values failed: %s", exc)
             return {"error": str(exc)}
 
 
