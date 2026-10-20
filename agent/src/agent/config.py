@@ -72,6 +72,9 @@ class AgentSettings(BaseSettings):
     JARVIS_MCP_NAMESPACE: str = "global"            # gateway namespace (provider slug) exposing Utils-Server
     JARVIS_API_KEY: str = ""                        # sent as "Authorization: ApiKey <key>"
     UTILS_MCP_TIMEOUT_S: float = Field(default=10.0, gt=0)
+    # Serving (see deep_agent/service.py)
+    AGENT_ENGINE: Literal["legacy", "deep"] = "legacy"   # default engine for chat_with_agent (per-call `engine` overrides)
+    DEEP_AGENT_CHECKPOINT_DB_URL: str | None = None       # postgresql://... for durable deep-agent threads; unset = in-memory
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

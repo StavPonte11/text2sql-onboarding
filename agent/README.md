@@ -110,3 +110,22 @@ For a Langfuse dataset, items use `input = {"question": ...}` and `expected_outp
 for every PR touching `agent/` or `core/`. It needs a repository secret **`PYTHON_CORE_UTILS_TOKEN`**: a fine-grained
 token with read access to `matzpen-agency/python-core-utils` (used instead of the `git+ssh` URL). Real-service e2e
 tests (`tests/refiner/test_refiner_e2e_real.py`) are excluded.
+
+### Serving the deep agent (rollout)
+
+The UI → backend → agent path is the `chat_with_agent` MCP tool. It runs the legacy graph or the deep agent:
+
+| Setting / argument | Effect |
+|---|---|
+| `AGENT_ENGINE=legacy` (default) / `deep` | default engine for new threads |
+| `engine` argument (backend `POST /api/agent/chat` body: `"engine": "deep"`) | per-request choice |
+| thread id `deep-…` | resumes always go back to the deep agent (and legacy threads to the legacy graph) |
+| `DEEP_AGENT_CHECKPOINT_DB_URL=postgresql://…` | durable deep-agent threads (shared by replicas, survive restarts); unset = in-memory |
+
+The deep agent is built once per process and streams the same Redis `agent_stream:{thread_id}` events as the legacy graph
+(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `engine`, `verification`, `confidence`.
+A clarification comes back as `status: "interrupted"` with `interrupt_details.type = "hitl_escalation"`
+(`subtype: "clarification"`); the user's answer is sent as `resume_value` (string or `{"feedback": ...}`).
+
+Rollout: `AGENT_ENGINE=legacy` + per-request `engine: "deep"` for internal users → `deep-agent-eval --gate` passes on the
+expert gold set → `AGENT_ENGINE=deep` → remove the legacy graph.

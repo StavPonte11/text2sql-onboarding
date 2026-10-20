@@ -145,10 +145,26 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]], stop_reason: str 
 
 
 class AnswerVerificationMiddleware(AgentMiddleware):
-    """After the agent finishes, bind the structured answer to executed SQL and real rows."""
+    """Bind each turn's structured answer to executed SQL and real rows.
+
+    before_agent clears the previous turn's structured answer (it would otherwise be reported
+    again on a turn that ends without a new one) and marks where this turn's executions start.
+    """
+
+    def before_agent(self, state, runtime) -> dict[str, Any] | None:
+        return {"structured_response": None, "turn_execution_start": len(state.get("executed_queries") or [])}
+
+    async def abefore_agent(self, state, runtime) -> dict[str, Any] | None:
+        return self.before_agent(state, runtime)
 
     def after_agent(self, state, runtime) -> dict[str, Any] | None:
-        return {"final_result": verify_answer(state.get("structured_response"), state.get("executed_queries") or [])}
+        executed = state.get("executed_queries") or []
+        answer = state.get("structured_response")
+        if not isinstance(answer, DeepAgentAnswer):
+            # No answer this turn: fall back only to SQL that ran in this turn.
+            return {"final_result": best_effort_result(executed[state.get("turn_execution_start") or 0:],
+                                                       "no structured answer")}
+        return {"final_result": verify_answer(answer, executed)}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.after_agent, state, runtime)

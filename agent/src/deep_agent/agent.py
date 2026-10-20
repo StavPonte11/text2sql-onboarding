@@ -28,12 +28,14 @@ def _default_llm() -> BaseChatModel:
     return get_llm().model_copy(update={"request_timeout": settings.DEEP_AGENT_LLM_TIMEOUT_S, "max_retries": 0})
 
 
-async def acreate_deep_agent(model: BaseChatModel | None = None):
+async def acreate_deep_agent(model: BaseChatModel | None = None, checkpointer=None):
     """create_deep_agent plus the curated Utils-Server tools from the Jarvis Registry gateway (when configured)."""
-    return create_deep_agent(model=model, extra_tools=await load_utils_tools())
+    return create_deep_agent(model=model, extra_tools=await load_utils_tools(), checkpointer=checkpointer)
 
 
-def create_deep_agent(model: BaseChatModel | None = None, extra_tools: dict[str, list] | None = None):
+def create_deep_agent(
+    model: BaseChatModel | None = None, extra_tools: dict[str, list] | None = None, checkpointer=None
+):
     """
     Creates and returns a compiled LangGraph deep agent equipped with all exploration,
     enrichment, temporal, geospatial, and semantic validation tools.
@@ -44,10 +46,11 @@ def create_deep_agent(model: BaseChatModel | None = None, extra_tools: dict[str,
     Args:
         model: Chat model override (tests); defaults to the configured LLM.
         extra_tools: Additional tools per agent ("main" or a subagent name), e.g. from load_utils_tools().
+        checkpointer: Thread persistence (e.g. AsyncPostgresSaver); defaults to an in-memory saver.
     """
     extra_tools = extra_tools or {}
     llm = model or _default_llm()
-    memory = MemorySaver()
+    memory = checkpointer or MemorySaver()
     resources = build_resources()
     system_prompt = load_prompt("system").text
 
