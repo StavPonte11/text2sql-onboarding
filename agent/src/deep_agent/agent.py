@@ -3,10 +3,12 @@ Agent logic and LangGraph harness for the Deep Agent.
 """
 
 from deepagents import create_deep_agent as create_harness_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.llm import get_llm
+from deep_agent.answer import AnswerVerificationMiddleware, DeepAgentAnswer
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
@@ -177,12 +179,16 @@ If any check fails or is uncertain, run a targeted diagnostic query. Do not gues
 
 ---
 
-## Final Response Format (Hebrew)
+## Final Answer
 
-Your response MUST be in Hebrew and include:
-1. A brief explanation of what the SQL does
-2. A markdown table of the actual query results
-3. The exact successful SQL in a ```sql``` block at the very bottom
+Finish by calling `DeepAgentAnswer` exactly once:
+- `sql` — the exact final SQL you executed successfully with `execute_trino_query` (it is verified against your executions)
+- `explanation_he` — a brief Hebrew explanation of what the SQL does and what the result means
+- `assumptions` — interpretation choices you made (Hebrew)
+- `confidence` — high / medium / low
+- `needs_clarification` — instead of `sql`, when the question is genuinely ambiguous
+
+Do NOT type result tables — the rows shown to the user are taken directly from the executed query.
 """
 
 
@@ -205,7 +211,8 @@ def create_deep_agent(model: BaseChatModel | None = None):
         model=llm,
         tools=DEEP_AGENT_TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[DeepAgentContextMiddleware()],
+        middleware=[DeepAgentContextMiddleware(), AnswerVerificationMiddleware()],
+        response_format=ToolStrategy(DeepAgentAnswer),
         context_schema=DeepAgentContext,
         checkpointer=memory,
         backend=resources.backend,

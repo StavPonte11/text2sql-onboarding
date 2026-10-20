@@ -165,7 +165,8 @@ def test_score_run_posts_one_score_per_metric():
         observability.score_run("trace-1", RunMetrics(4, 3, 1, True, True, 9.5))
     names = {c.kwargs["name"]: c.kwargs for c in fake_client.create_score.call_args_list}
     assert set(names) == {f"deep-agent.{n}" for n in
-                          ("model_calls", "tool_calls", "sql_executions", "executed_successfully", "final_sql_present", "latency_s")}
+                          ("model_calls", "tool_calls", "sql_executions", "executed_successfully", "final_sql_present", "latency_s",
+                           "answer_verified")}
     assert names["deep-agent.executed_successfully"]["data_type"] == "BOOLEAN"
     assert all(kw["trace_id"] == "trace-1" for kw in names.values())
 
