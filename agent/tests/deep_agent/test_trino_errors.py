@@ -40,8 +40,8 @@ def test_real_trino_payloads_are_classified_from_error_name(case):
 
 def test_error_location_is_reported():
     case = next(c for c in FIXTURES if c["error"]["errorName"] == "TYPE_MISMATCH")
-    out = trino_errors.classify_result(_run_through_core(case["error"])).to_dict()
-    assert out["error_location"] == {"line": 3, "column": 5}
+    out = trino_errors.classify_result(_run_through_core(case["error"])).to_error()
+    assert out["location"] == {"line": 3, "column": 5}
     assert out["trino_error_name"] == "TYPE_MISMATCH"
 
 
@@ -73,9 +73,10 @@ def test_execute_tool_returns_structured_error():
     )
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT ST_GeomFromText('POINT(1 1)')"}))
-    assert out["error_category"] == "FUNCTION_NOT_FOUND"
-    assert out["error_location"] == {"line": 1, "column": 8}
-    assert out["query_id"] == "q1"
+    assert out["ok"] is False and out["data"] is None
+    assert out["error"]["category"] == "FUNCTION_NOT_FOUND"
+    assert out["error"]["location"] == {"line": 1, "column": 8}
+    assert out["error"]["query_id"] == "q1"
 
 
 def test_validate_returns_structured_json():
@@ -85,6 +86,5 @@ def test_validate_returns_structured_json():
     )
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql_syntax.invoke({"sql": "SELECT x FROM t"}))
-    assert out["valid"] is False
-    assert out["error_category"] == "COLUMN_NOT_FOUND"
-    assert "success" not in out
+    assert out["ok"] is False
+    assert out["error"]["category"] == "COLUMN_NOT_FOUND"

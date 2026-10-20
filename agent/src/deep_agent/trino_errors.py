@@ -9,6 +9,7 @@ those first and fall back to message heuristics only for non-Trino exceptions
 from dataclasses import dataclass
 
 from core.trino import TrinoExecutionResult
+from deep_agent.envelope import error_payload
 
 HINTS: dict[str, str] = {
     "SYNTAX_ERROR": "Fix the specific syntax at the reported line/column — do not redesign the entire query.",
@@ -87,20 +88,16 @@ class ClassifiedError:
     error_location: tuple[int, int] | None = None
     query_id: str | None = None
 
-    def to_dict(self) -> dict:
-        out = {
-            "success": False,
-            "error_category": self.category,
-            "error_message": self.message,
-            "hint": self.hint,
-        }
-        if self.error_name:
-            out["trino_error_name"] = self.error_name
-        if self.error_location:
-            out["error_location"] = {"line": self.error_location[0], "column": self.error_location[1]}
-        if self.query_id:
-            out["query_id"] = self.query_id
-        return out
+    def to_error(self) -> dict:
+        """The `error` object of the tool envelope."""
+        return error_payload(
+            self.category,
+            self.message,
+            self.hint,
+            location={"line": self.error_location[0], "column": self.error_location[1]} if self.error_location else None,
+            trino_error_name=self.error_name,
+            query_id=self.query_id,
+        )
 
 
 def _from_message(message: str) -> str:

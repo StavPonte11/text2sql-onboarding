@@ -2,33 +2,15 @@
 Agent logic and LangGraph harness for the Deep Agent.
 """
 
+import datetime
+
 from deepagents import create_deep_agent as create_harness_agent
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 
-from deep_agent.tools import (
-    get_database_catalog,
-    # get_filtered_prompt,
-    # resolve_question,
-    get_database_tables,
-    get_table_columns,
-    get_table_relationships,
-    get_table_profile,
-    get_column_profile,
-    execute_trino_query,
-    get_sample_rows,
-    get_column_distinct_values,
-    search_metadata,
-    search_business_terms,
-    search_knowledge_pairs,
-    search_column_values,
-    resolve_location_to_wkt,
-    validate_sql_syntax,
-    enrich_sql_filters,
-)
-import datetime
 from agent.llm import get_llm
 from deep_agent.resources import build_resources
+from deep_agent.tools import DEEP_AGENT_TOOLS
 
 
 SYSTEM_PROMPT = """You are an elite, autonomous Deep SQL Analyst. Your mission: translate Hebrew natural-language questions into verified Trino SQL that is **semantically correct** — not just syntactically valid or merely executable.
@@ -116,7 +98,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
 ## Phase 5 — Execute & Diagnose
 
 - `execute_trino_query` — always LIMIT exploratory queries
-- **Classify the error before retrying** (the response includes `error_category`):
+- Every tool returns `{{"ok", "data", "error"}}` — check `ok` first. **Classify the error before retrying** (`error.category`, with `error.hint` and, for SQL, `error.location`):
   - `SYNTAX_ERROR` → fix the specific line only, do not redesign
   - `TABLE_NOT_FOUND` / `COLUMN_NOT_FOUND` → re-verify exact identifiers from catalog
   - `TYPE_MISMATCH` → add `CAST(col AS type)`
@@ -167,7 +149,7 @@ If any check fails or is uncertain, run a targeted diagnostic query. Do not gues
 - `resolve_location_to_wkt` — Hebrew location → WKT polygon for `ST_GeometryFromText(...)`
 
 **Execution**
-- `execute_trino_query` — runs SQL; response includes `error_category` on failure
+- `execute_trino_query` — runs SQL; on failure `error.category` says how to fix it
 - `get_sample_rows` — peek at raw data format, string casing, date format
 - `get_column_distinct_values` — live distinct values. Appropriate for standard low-cardinality `categorical` columns (e.g. `launch_country`) when not listed in catalog.
 - `validate_sql_syntax` — free dry-run. Call before every execute on a new draft.
@@ -216,37 +198,13 @@ def create_deep_agent(model: BaseChatModel | None = None):
         model: Chat model override (tests); defaults to the configured LLM.
     """
     llm = model or get_llm()
-
-    tools = [
-        # Discovery & Schema
-        get_database_catalog,
-        get_database_tables,
-        get_table_columns,
-        get_table_relationships,
-        get_table_profile,
-        get_column_profile,
-        # Search & Resolve
-        search_metadata,
-        search_business_terms,
-        search_knowledge_pairs,
-        search_column_values,
-        resolve_location_to_wkt,
-        # Query Execution
-        execute_trino_query,
-        get_sample_rows,
-        get_column_distinct_values,
-        validate_sql_syntax,
-        # Post-processing
-        enrich_sql_filters,
-    ]
-
     memory = MemorySaver()
     today = datetime.date.today().isoformat()
     resources = build_resources()
 
     agent = create_harness_agent(
         model=llm,
-        tools=tools,
+        tools=DEEP_AGENT_TOOLS,
         system_prompt=SYSTEM_PROMPT.format(today=today),
         checkpointer=memory,
         backend=resources.backend,

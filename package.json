@@ -18,6 +18,9 @@
     "backend/app/**/*.py": [
       "backend/.venv/bin/ruff check --fix",
       "backend/.venv/bin/ruff format"
+    ],
+    "agent/src/deep_agent/**/*.py": [
+      "agent/.venv/bin/ruff check --extend-select F --config agent/pyproject.toml"
     ]
   },
   "devDependencies": {
