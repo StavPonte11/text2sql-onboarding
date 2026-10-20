@@ -24,6 +24,7 @@ dependencies = [
     "sqlglot>=25.0.0",
     "deepagents>=0.6.12",
     "urllib3>=2.7.0",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

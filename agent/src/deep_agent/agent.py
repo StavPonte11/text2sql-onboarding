@@ -3,6 +3,7 @@ Agent logic and LangGraph harness for the Deep Agent.
 """
 
 from deepagents import create_deep_agent as create_harness_agent
+from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 
 from deep_agent.tools import (
@@ -27,6 +28,7 @@ from deep_agent.tools import (
 )
 import datetime
 from agent.llm import get_llm
+from deep_agent.resources import build_resources
 
 
 SYSTEM_PROMPT = """You are an elite, autonomous Deep SQL Analyst. Your mission: translate Hebrew natural-language questions into verified Trino SQL that is **semantically correct** — not just syntactically valid or merely executable.
@@ -205,12 +207,15 @@ Your response MUST be in Hebrew and include:
 """
 
 
-def create_deep_agent():
+def create_deep_agent(model: BaseChatModel | None = None):
     """
     Creates and returns a compiled LangGraph deep agent equipped with all exploration,
     enrichment, temporal, geospatial, and semantic validation tools.
+
+    Args:
+        model: Chat model override (tests); defaults to the configured LLM.
     """
-    llm = get_llm()
+    llm = model or get_llm()
 
     tools = [
         # Discovery & Schema
@@ -237,19 +242,17 @@ def create_deep_agent():
 
     memory = MemorySaver()
     today = datetime.date.today().isoformat()
+    resources = build_resources()
 
     agent = create_harness_agent(
         model=llm,
         tools=tools,
         system_prompt=SYSTEM_PROMPT.format(today=today),
         checkpointer=memory,
-        memory=["/Users/benben/Desktop/code/text2sql-onboarding/agent/AGENTS.md"],
-        skills=[
-            "/Users/benben/Desktop/code/text2sql-onboarding/agent/skills/trino-expert",
-            "/Users/benben/Desktop/code/text2sql-onboarding/agent/skills/spatial-analyst",
-            "/Users/benben/Desktop/code/text2sql-onboarding/agent/skills/temporal-analyst",
-            "/Users/benben/Desktop/code/text2sql-onboarding/agent/skills/semantic-validation",
-        ],
+        backend=resources.backend,
+        memory=resources.memory,
+        skills=resources.skills,
+        permissions=resources.permissions,
     )
 
     return agent
