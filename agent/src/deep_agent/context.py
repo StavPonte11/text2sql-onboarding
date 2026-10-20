@@ -4,8 +4,9 @@ Request-scoped runtime context and state for the Deep Agent.
 Nothing request-specific lives in module globals:
 - DeepAgentContext is passed per invocation (`agent.ainvoke(..., context=DeepAgentContext(...))`)
   and read by tools through `ToolRuntime.context`.
-- Connection capabilities discovered by get_database_catalog are written to graph state
-  (`connection_capabilities`) and read back by tools through `ToolRuntime.state`.
+- Connection capabilities and the raw catalog fetched by get_database_catalog are written to
+  graph state (`connection_capabilities`, `jeen_catalog`) and read back by tools through
+  `ToolRuntime.state`.
 - Today's date is added to the latest human message on every model call, in the
   context's timezone, so long-running processes never serve a stale date.
 """
@@ -32,6 +33,7 @@ class DeepAgentContext:
 
 class DeepAgentRuntimeState(AgentState):
     connection_capabilities: NotRequired[dict[str, bool]]
+    jeen_catalog: NotRequired[str]  # raw catalog text, cached so tools never need the model to re-send it
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:
@@ -43,6 +45,20 @@ def capability(runtime: ToolRuntime | None, name: str) -> bool:
     """Whether the connection has a discovery source; unknown (catalog not fetched yet) counts as available."""
     state = getattr(runtime, "state", None) or {}
     return bool((state.get("connection_capabilities") or {}).get(name, True))
+
+
+def cached_catalog(runtime: ToolRuntime | None) -> str | None:
+    state = getattr(runtime, "state", None) or {}
+    return state.get("jeen_catalog") or None
+
+
+def latest_user_request(runtime: ToolRuntime | None) -> str:
+    """Text of the most recent human message in the thread (the request currently being answered)."""
+    state = getattr(runtime, "state", None) or {}
+    for msg in reversed(state.get("messages") or []):
+        if isinstance(msg, HumanMessage):
+            return msg.text
+    return ""
 
 
 def _now(tz: str) -> datetime:
