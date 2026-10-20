@@ -10,6 +10,8 @@ AnswerVerificationMiddleware then binds it to evidence:
                   from that execution
 - "rejected" / "re_execution_failed": the answer's SQL is forbidden or fails -> not verified
 - "clarification": the model asked a clarifying question instead of answering
+- "best_effort":  no structured answer (call limit hit, timeout) but SQL did run -> the last
+                  successful execution, with confidence=low
 
 The result table shown to users is always built from Trino rows, never from model text.
 """
@@ -30,7 +32,13 @@ from core.trino import execute_query_sync
 
 logger = logging.getLogger(__name__)
 
-VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution_failed", "clarification", "no_answer"]
+VerificationStatus = Literal[
+    "matched", "re_executed", "rejected", "re_execution_failed", "clarification", "best_effort", "no_answer"
+]
+
+BEST_EFFORT_EXPLANATION = (
+    "לא התקבלה תשובה סופית ({reason}). מוצגת תוצאת השאילתה האחרונה שהורצה בהצלחה — יש לאמת אותה."
+)
 
 
 class DeepAgentAnswer(BaseModel):
@@ -89,7 +97,7 @@ def _re_execute(answer_sql: str) -> tuple[VerificationStatus, dict[str, Any] | N
         guarded = sql_guard.prepare(clean_sql(answer_sql), row_cap)
     except sql_guard.GuardError as e:
         return "rejected", None, str(e)
-    res = execute_query_sync(guarded.sql)
+    res = execute_query_sync(guarded.sql, reuse_connection=True)
     if not res.success:
         return "re_execution_failed", None, res.error_message
     rows = res.rows or []
@@ -102,10 +110,25 @@ def _result_view(record: dict[str, Any]) -> dict[str, Any]:
     return {k: record[k] for k in ("columns", "rows", "row_count", "truncated", "query_id")}
 
 
-def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]:
+def best_effort_result(executed: list[dict[str, Any]], reason: str) -> dict[str, Any]:
+    """Answer from the last successful execution when the agent stopped without a structured answer."""
+    if not executed:
+        return {"status": "no_answer", "verified": False, "answer": None, "sql": None, "result": None,
+                "error": reason}
+    record = executed[-1]
+    answer = DeepAgentAnswer(
+        sql=record["submitted_sql"],
+        explanation_he=BEST_EFFORT_EXPLANATION.format(reason=reason),
+        confidence="low",
+    )
+    return {"status": "best_effort", "verified": True, "answer": answer.model_dump(), "sql": record["submitted_sql"],
+            "result": _result_view(record), "error": reason}
+
+
+def verify_answer(answer: Any, executed: list[dict[str, Any]], stop_reason: str = "no structured answer") -> dict[str, Any]:
     """Build `final_result` from the structured answer and the run's successful executions."""
     if not isinstance(answer, DeepAgentAnswer):
-        return {"status": "no_answer", "verified": False, "answer": None, "sql": None, "result": None, "error": None}
+        return best_effort_result(executed, stop_reason)
 
     base = {"answer": answer.model_dump(), "error": None}
     if answer.needs_clarification or not answer.sql:

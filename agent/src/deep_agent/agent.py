@@ -7,9 +7,11 @@ from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 
+from agent.config import settings
 from agent.llm import get_llm
 from deep_agent.answer import AnswerVerificationMiddleware, DeepAgentAnswer
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
+from deep_agent.limits import build_limit_middleware
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
 
@@ -89,7 +91,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
   - Break complex or multi-step logic into named CTE blocks (e.g. `WITH filtered_data AS (...), aggregated_counts AS (...)`).
   - CTEs make queries significantly cleaner to read, prevent join fan-out (by aggregating child tables in a CTE before joining), and make window rankings (`ROW_NUMBER() / RANK()`) and multi-stage metrics easy to organize.
 - SQL uses ONLY confirmed 3-part table names: `"catalog"."schema"."table"`
-- `validate_sql_syntax` — free, instant, catches typos and wrong function names. Always call before `execute_trino_query` on a fresh draft.
+- `validate_sql_syntax` — optional dry-run (planner-level, no data read). `execute_trino_query` already returns categorized errors with line/column, so validate first only for expensive queries (large joins / full scans).
 - `enrich_sql_filters` — run on any SQL that filters text columns
 
 ---
@@ -151,7 +153,7 @@ If any check fails or is uncertain, run a targeted diagnostic query. Do not gues
 - `execute_trino_query` — runs SQL; on failure `error.category` says how to fix it
 - `get_sample_rows` — peek at raw data format, string casing, date format
 - `get_column_distinct_values` — live distinct values. Appropriate for standard low-cardinality `categorical` columns (e.g. `launch_country`) when not listed in catalog.
-- `validate_sql_syntax` — free dry-run. Call before every execute on a new draft.
+- `validate_sql_syntax` — optional dry-run for expensive queries; not needed before every execute.
 
 **Post-processing**
 - `enrich_sql_filters` — AST-level auto-correction of categorical filter values. Use after drafting SQL with text filters.
@@ -192,6 +194,11 @@ Do NOT type result tables — the rows shown to the user are taken directly from
 """
 
 
+def _default_llm() -> BaseChatModel:
+    """Configured LLM with a deep-agent request timeout; retries are owned by ModelRetryMiddleware."""
+    return get_llm().model_copy(update={"request_timeout": settings.DEEP_AGENT_LLM_TIMEOUT_S, "max_retries": 0})
+
+
 def create_deep_agent(model: BaseChatModel | None = None):
     """
     Creates and returns a compiled LangGraph deep agent equipped with all exploration,
@@ -203,7 +210,7 @@ def create_deep_agent(model: BaseChatModel | None = None):
     Args:
         model: Chat model override (tests); defaults to the configured LLM.
     """
-    llm = model or get_llm()
+    llm = model or _default_llm()
     memory = MemorySaver()
     resources = build_resources()
 
@@ -211,7 +218,7 @@ def create_deep_agent(model: BaseChatModel | None = None):
         model=llm,
         tools=DEEP_AGENT_TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[DeepAgentContextMiddleware(), AnswerVerificationMiddleware()],
+        middleware=[DeepAgentContextMiddleware(), AnswerVerificationMiddleware(), *build_limit_middleware()],
         response_format=ToolStrategy(DeepAgentAnswer),
         context_schema=DeepAgentContext,
         checkpointer=memory,
