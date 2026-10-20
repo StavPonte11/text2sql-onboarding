@@ -35,3 +35,18 @@ graph TD
     finalizer --> END((END))
 ```
 
+
+## Running the deep agent locally
+
+The deep agent (`src/deep_agent/`) has a CLI entry point:
+
+```bash
+uv sync
+uv run deep-agent "כמה טיסות המריאו מצרפת"           # single question, fresh thread
+uv run deep-agent --interactive --session-memory      # REPL, shared thread across questions
+uv run deep-agent "..." --connection-id 89            # override JEEN_METADATA_CONNECTION_ID
+uv run deep-agent "..." --log-file runs/runs.jsonl    # append one JSON line per run
+```
+
+It reads the same `agent/.env` settings as the API (LLM, Trino, Jeen metadata MCP, Langfuse).
+Run logs are opt-in and git-ignored (`agent/runs/`, `agent/*.jsonl`, `agent/*.csv`); Langfuse is the system of record for traces.

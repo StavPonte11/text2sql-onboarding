@@ -26,6 +26,9 @@ dependencies = [
     "urllib3>=2.7.0",
 ]
 
+[project.scripts]
+deep-agent = "deep_agent.cli:main"
+
 [tool.uv.sources]
 core = { path = "../core" }
 esca-sdk = { git = "https://github.com/elirazpevz/esca.git", subdirectory = "packages/esca-sdk" }
@@ -33,6 +36,9 @@ esca-sdk = { git = "https://github.com/elirazpevz/esca.git", subdirectory = "pac
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["agent", "deep_agent"]
 
 [dependency-groups]
 dev = [
