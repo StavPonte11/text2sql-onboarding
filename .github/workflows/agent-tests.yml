@@ -1,0 +1,49 @@
+name: agent-tests
+
+on:
+  pull_request:
+    paths: ["agent/**", "core/**", ".github/workflows/agent-tests.yml"]
+  push:
+    branches: [main, feature/deep-agent-updated]
+    paths: ["agent/**", "core/**", ".github/workflows/agent-tests.yml"]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: agent
+    env:
+      # Settings that AgentSettings requires; tests never reach these endpoints.
+      LANGFUSE_PUBLIC_KEY: pk-lf-ci
+      LANGFUSE_SECRET_KEY: sk-lf-ci
+      LANGFUSE_BASE_URL: http://127.0.0.1:9
+      DEEP_AGENT_LANGFUSE_PROMPTS: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: agent/uv.lock
+
+      # core depends on the private matzpen-agency/python-core-utils over git+ssh.
+      # A fine-grained token with read access to that repo is used over HTTPS instead.
+      - name: Access private python-core-utils
+        env:
+          TOKEN: ${{ secrets.PYTHON_CORE_UTILS_TOKEN }}
+        run: git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Lint (deep agent)
+        run: uv run ruff check --extend-select F src/deep_agent
+
+      - name: Unit tests
+        run: >
+          uv run pytest -q
+          --ignore=tests/refiner/test_refiner_e2e_real.py
+          --cov=deep_agent --cov-report=term --cov-fail-under=80

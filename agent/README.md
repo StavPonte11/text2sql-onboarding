@@ -89,3 +89,24 @@ JARVIS_API_KEY=...                                  # sent as "Authorization: Ap
 The registry service identity needs the `datetime:read`, `text:read`, `geo:read` and `trino:read` scopes, and each tool must be
 approved in the registry. SQL is never executed through Utils-Server. If the gateway is unreachable the agent starts without
 these tools and logs a warning.
+
+### Evaluation (migration go/no-go)
+
+```bash
+uv run deep-agent-eval                                   # deep agent + legacy graph on benchmarks/eval_dataset.json
+uv run deep-agent-eval --systems deep --out runs/eval.json
+uv run deep-agent-eval --gate --p95-slo 60               # exit 1 unless deep accuracy >= legacy and p95 <= SLO
+uv run deep-agent-eval --langfuse-dataset text2sql-eval  # Langfuse Experiment: linked dataset run + scores
+```
+
+Metric: **execution accuracy** — the system's result set vs the gold SQL's (order-insensitive unless the gold query has
+a top-level `ORDER BY`; floats to 6 decimals; permuted columns match). Items without `gold_sql` are reported as
+`no_gold`. `gold_source: agent_run_unverified` marks gold SQL taken from past agent runs that still needs expert review.
+For a Langfuse dataset, items use `input = {"question": ...}` and `expected_output = {"sql": ...}`.
+
+### CI
+
+`.github/workflows/agent-tests.yml` runs ruff (deep agent) and the unit tests with an 80% coverage gate on `deep_agent`
+for every PR touching `agent/` or `core/`. It needs a repository secret **`PYTHON_CORE_UTILS_TOKEN`**: a fine-grained
+token with read access to `matzpen-agency/python-core-utils` (used instead of the `git+ssh` URL). Real-service e2e
+tests (`tests/refiner/test_refiner_e2e_real.py`) are excluded.

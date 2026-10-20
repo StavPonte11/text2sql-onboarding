@@ -61,6 +61,13 @@ def _token_usage(messages: list) -> tuple[int, int]:
 
 
 async def run_question(agent, item: dict[str, Any], context: DeepAgentContext, timeout_s: float) -> QuestionRun:
+    return (await run_question_detailed(agent, item, context, timeout_s))[0]
+
+
+async def run_question_detailed(
+    agent, item: dict[str, Any], context: DeepAgentContext, timeout_s: float
+) -> tuple[QuestionRun, dict[str, Any], str | None]:
+    """Run one question; returns (metrics, final_result with rows, Langfuse trace id)."""
     thread_id = f"bench_{item['id']}_{uuid.uuid4().hex[:6]}"
     config = observability.build_run_config(thread_id, connection_id=context.connection_id)
     start = time.perf_counter()
@@ -79,14 +86,16 @@ async def run_question(agent, item: dict[str, Any], context: DeepAgentContext, t
 
     messages = state.get("messages") or []
     metrics = observability.run_metrics(messages, latency, final_result)
-    observability.score_run(observability.langfuse_trace_id(config), metrics)
+    trace_id = observability.langfuse_trace_id(config)
+    observability.score_run(trace_id, metrics)
     input_tokens, output_tokens = _token_usage(messages)
-    return QuestionRun(
+    run = QuestionRun(
         id=item["id"], question=item["question"], latency_s=metrics.latency_s, model_calls=metrics.model_calls,
         tool_calls=metrics.tool_calls, sql_executions=metrics.sql_executions, input_tokens=input_tokens,
         output_tokens=output_tokens, status=final_result.get("status", "no_answer"),
         verified=bool(final_result.get("verified")), error=error,
     )
+    return run, final_result, trace_id
 
 
 async def run_benchmark(
