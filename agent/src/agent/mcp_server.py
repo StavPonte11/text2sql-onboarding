@@ -25,6 +25,8 @@ async def chat_with_agent(
     active_skills: list[str] | None = None,
     execution_mode: str | None = None,
     hitl_enabled: bool = True,
+    engine: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Run the Text2SQL agent to answer database queries.
 
@@ -40,7 +42,14 @@ async def chat_with_agent(
                         'high_quality', 'benchmark'). Overrides flag defaults
                         for this invocation only.
         hitl_enabled:   If False, skip all human-in-the-loop interrupts.
+        engine:         'legacy' (LangGraph workflow) or 'deep' (Deep Agent). Defaults to AGENT_ENGINE.
+                        Threads started on the deep agent are routed back to it on resume.
+        user_id:        End-user id for tracing (Deep Agent).
     """
+    if _use_deep_agent(engine, thread_id):
+        return json.dumps(await _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id),
+                          default=str)
+
     thread_id = thread_id or str(uuid.uuid4())
     
     langfuse_handler = None
@@ -210,6 +219,35 @@ async def chat_with_agent(
             "is_unanswerable": is_unans,
         }
     )
+
+DEEP_THREAD_PREFIX = "deep-"
+
+
+def _use_deep_agent(engine: str | None, thread_id: str | None) -> bool:
+    if thread_id:  # a resumed thread stays on the engine that started it
+        return thread_id.startswith(DEEP_THREAD_PREFIX)
+    from agent.config import settings
+
+    return (engine or settings.AGENT_ENGINE) == "deep"
+
+
+async def _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id) -> dict:
+    from deep_agent.service import run_deep_chat
+
+    response = await run_deep_chat(
+        connection_id=connection_id,
+        query=query,
+        thread_id=thread_id or f"{DEEP_THREAD_PREFIX}{uuid.uuid4()}",
+        resume_value=resume_value,
+        user_id=user_id,
+    )
+    if not hitl_enabled and response.get("status") == "interrupted":
+        # Non-interactive callers get the clarifying question as the answer instead of a pause.
+        question = (response.get("interrupt_details") or {}).get("reason", "")
+        response = {**response, "status": "completed", "summary": question, "interrupt_details": None,
+                    "is_unanswerable": True}
+    return response
+
 
 @mcp.tool()
 async def suggest_fixes(thread_id: str, category: str) -> str:

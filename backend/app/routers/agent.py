@@ -20,6 +20,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.config import settings
@@ -49,6 +51,7 @@ class ChatRequest(BaseModel):
     execution_mode: str | None = None
     hitl_enabled: bool = True
     connection_id: int
+    engine: Literal["legacy", "deep"] | None = None  # None -> the agent service's AGENT_ENGINE
 
 
 class SuggestFixesRequest(BaseModel):
@@ -68,6 +71,9 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     execution_path: list[str] | None = None
     is_unanswerable: bool = False
+    engine: str | None = None          # "deep" when answered by the Deep Agent
+    verification: str | None = None    # Deep Agent answer verification status (matched, re_executed, ...)
+    confidence: str | None = None      # Deep Agent self-reported confidence (high / medium / low)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +216,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
     }
+    if request.engine is not None:  # only sent when chosen, so older agent services keep working
+        tool_arguments["engine"] = request.engine
 
     result = await _call_agent_mcp(tool_arguments)
     return ChatResponse(**result)
