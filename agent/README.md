@@ -50,3 +50,12 @@ uv run deep-agent "..." --log-file runs/runs.jsonl    # append one JSON line per
 
 It reads the same `agent/.env` settings as the API (LLM, Trino, Jeen metadata MCP, Langfuse).
 Run logs are opt-in and git-ignored (`agent/runs/`, `agent/*.jsonl`, `agent/*.csv`); Langfuse is the system of record for traces.
+
+### SQL safety (deep agent)
+
+Every SQL the deep agent runs goes through `agent/utils/sql_guard.py` (sqlglot, Trino dialect):
+- exactly one read-only statement (`SELECT` / `WITH` / set operations, plus `SHOW` / `DESCRIBE`); writes, DDL, `CALL`, `SET`, multi-statements, SQL comments and `TABLE(...)` pass-through functions are rejected with `FORBIDDEN_STATEMENT`
+- an outer `LIMIT` of cap + 1 is enforced at the AST level (`DEEP_AGENT_MAX_ROWS`, default 100; `DEEP_AGENT_MAX_SAMPLE_ROWS`, default 10) and results report `truncated`
+- table and column names in `get_sample_rows` / `get_column_distinct_values` are parsed and quoted by sqlglot, never string-interpolated
+
+The guard is an application-level control. The Trino principal used by the agent should also be SELECT-only.

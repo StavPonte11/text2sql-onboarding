@@ -4,8 +4,11 @@ import asyncio
 from typing import Optional
 from langchain_core.tools import tool
 
+from agent.config import settings
+from agent.utils import sql_guard
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
-from agent.utils.sql import clean_sql, resolve_wkt_polygons
+from agent.utils.sql import clean_sql
+from agent.utils.sql_guard import clamp
 from core.trino import execute_query_sync
 from agent.services.geo_utils import get_geojson_polygon, geojson_to_simplified_wkt
 
@@ -229,18 +232,61 @@ def _classify_trino_error(error_message: str) -> str:
     return "EXECUTION_ERROR"
 
 
+_HINTS = {
+    "SYNTAX_ERROR": "Fix the specific syntax line — do not redesign the entire query.",
+    "TABLE_NOT_FOUND": "Re-verify the exact 3-part table name from get_database_catalog.",
+    "COLUMN_NOT_FOUND": "Re-verify the column name from get_table_columns for this table.",
+    "TYPE_MISMATCH": "Add CAST(column AS target_type) for the mismatched column.",
+    "FUNCTION_NOT_FOUND": "Check Trino function spelling. E.g., use ST_GeometryFromText, not ST_GeomFromText.",
+    "TIMEOUT_OR_RESOURCE": "Add a tighter LIMIT or simplify the query.",
+    "FORBIDDEN_STATEMENT": "Only a single read-only SELECT/WITH (or SHOW/DESCRIBE) statement without comments is allowed.",
+    "EXECUTION_ERROR": "Investigate the specific error message.",
+}
+
+
+def _error_result(error_category: str, error_message: str) -> str:
+    return json.dumps({
+        "success": False,
+        "error_category": error_category,
+        "error_message": error_message,
+        "hint": _HINTS.get(error_category, "Investigate the error message."),
+    }, ensure_ascii=False)
+
+
+def _run_sql(sql: str, row_cap: int) -> str:
+    """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation."""
+    try:
+        res = execute_query_sync(sql)
+    except Exception as e:
+        return _error_result("EXECUTION_ERROR", str(e))
+    if not res.success:
+        error_msg = res.error_message or "Unknown error"
+        return _error_result(_classify_trino_error(error_msg), error_msg)
+
+    rows = res.rows or []
+    truncated = len(rows) > row_cap
+    rows = rows[:row_cap]
+    return json.dumps({
+        "success": True,
+        "columns": res.columns,
+        "row_count": len(rows),
+        "truncated": truncated,
+        "rows": rows,
+    }, ensure_ascii=False, default=str)
+
+
 @tool
 def execute_trino_query(sql: str, limit: int = 50) -> str:
     """
     Executes a read-only Trino SQL query and returns the resulting rows.
 
     Use this to test SQL queries against the actual database and perform exploratory data analysis.
-    Always use LIMIT on exploratory queries to avoid pulling millions of rows.
+    Only a single SELECT / WITH (or SHOW / DESCRIBE) statement is accepted; anything that writes,
+    multiple statements, SQL comments and TABLE(...) pass-through functions are rejected with
+    error_category FORBIDDEN_STATEMENT.
 
-    IMPORTANT — WKT Location Tokens:
-    If your SQL contains location placeholders in the form '@location_name_wkt@' (produced by
-    resolve_location_to_wkt), you MUST replace them with the actual WKT string before calling
-    this tool. Pass the raw WKT inside ST_GeometryFromText('...') directly in the SQL string.
+    Results are capped: an outer LIMIT is enforced automatically, and the response includes
+    'truncated': true when more rows existed than were returned.
 
     On failure, the response includes an 'error_category' field to help you classify and fix
     the error precisely:
@@ -249,50 +295,19 @@ def execute_trino_query(sql: str, limit: int = 50) -> str:
     - TYPE_MISMATCH: add an explicit CAST(col AS type)
     - FUNCTION_NOT_FOUND: check the Trino function name
     - TIMEOUT_OR_RESOURCE: simplify the query or add a tighter LIMIT
+    - FORBIDDEN_STATEMENT: rewrite as a single read-only query without comments
 
     Args:
         sql (str): The exact Trino SQL query string to execute. Markdown fences and trailing
                    semicolons are stripped automatically.
         limit (int): The maximum number of rows to return (1–100). Defaults to 50.
     """
-    sql_clean = clean_sql(sql).rstrip(';')
-    if "limit" not in sql_clean.lower():
-        sql_clean = f"{sql_clean} LIMIT {limit}"
-
+    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_ROWS, 50)
     try:
-        res = execute_query_sync(sql_clean)
-        if not res.success:
-            error_msg = res.error_message or "Unknown error"
-            error_category = _classify_trino_error(error_msg)
-            result_dict = {
-                "success": False,
-                "error_category": error_category,
-                "error_message": error_msg,
-                "hint": {
-                    "SYNTAX_ERROR": "Fix the specific syntax line — do not redesign the entire query.",
-                    "TABLE_NOT_FOUND": "Re-verify the exact 3-part table name from get_database_catalog.",
-                    "COLUMN_NOT_FOUND": "Re-verify the column name from get_table_columns for this table.",
-                    "TYPE_MISMATCH": "Add CAST(column AS target_type) for the mismatched column.",
-                    "FUNCTION_NOT_FOUND": "Check Trino function spelling. E.g., use ST_GeometryFromText, not ST_GeomFromText.",
-                    "TIMEOUT_OR_RESOURCE": "Add a tighter LIMIT or simplify the query.",
-                    "EXECUTION_ERROR": "Investigate the specific error message.",
-                }.get(error_category, "Investigate the error message."),
-            }
-            return json.dumps(result_dict, ensure_ascii=False)
-
-        result_dict = {
-            "success": True,
-            "columns": res.columns,
-            "row_count": res.row_count,
-            "rows": res.rows,
-        }
-        return json.dumps(result_dict, ensure_ascii=False, default=str)
-    except Exception as e:
-        return json.dumps({
-            "success": False,
-            "error_category": "EXECUTION_ERROR",
-            "error_message": str(e),
-        }, ensure_ascii=False)
+        guarded = sql_guard.prepare(clean_sql(sql), row_cap)
+    except sql_guard.GuardError as e:
+        return _error_result("FORBIDDEN_STATEMENT", str(e))
+    return _run_sql(guarded.sql, guarded.row_cap if guarded.is_query else settings.DEEP_AGENT_MAX_ROWS)
 
 
 @tool
@@ -305,12 +320,15 @@ def get_sample_rows(table_name: str, limit: int = 5) -> str:
     Do NOT use this for counting or aggregating data.
 
     Args:
-        table_name (str): The fully qualified exact name of the table.
+        table_name (str): The fully qualified exact name of the table, e.g. '"catalog"."schema"."table"'.
         limit (int): The number of rows to sample (1–10). Defaults to 5.
     """
-    safe_table = table_name.split()[0].rstrip(';')
-    sql = f"SELECT * FROM {safe_table} LIMIT {limit}"
-    return execute_trino_query.invoke({"sql": sql, "limit": limit})
+    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_SAMPLE_ROWS, 5)
+    try:
+        sql = sql_guard.sample_rows_sql(table_name, row_cap)
+    except sql_guard.GuardError as e:
+        return _error_result("FORBIDDEN_STATEMENT", str(e))
+    return _run_sql(sql, row_cap)
 
 
 @tool
@@ -332,13 +350,15 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
 
     Args:
         table_name (str): The fully qualified exact name of the table.
-        column_name (str): The exact name of the column.
+        column_name (str): The exact name of the column (plain or double-quoted; spaces and Hebrew are fine).
         limit (int): Maximum distinct values to return (1–100). Defaults to 50.
     """
-    safe_table = table_name.split()[0].rstrip(';')
-    safe_col = column_name.split()[0].rstrip(';')
-    sql = f"SELECT DISTINCT {safe_col} FROM {safe_table} LIMIT {limit}"
-    return execute_trino_query.invoke({"sql": sql, "limit": limit})
+    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_ROWS, 50)
+    try:
+        sql = sql_guard.distinct_values_sql(table_name, column_name, row_cap)
+    except sql_guard.GuardError as e:
+        return _error_result("FORBIDDEN_STATEMENT", str(e))
+    return _run_sql(sql, row_cap)
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +377,11 @@ def validate_sql_syntax(sql: str) -> str:
     Args:
         sql (str): The exact Trino SQL query string to validate.
     """
-    sql_clean = clean_sql(sql).rstrip(';')
+    sql_clean = clean_sql(sql)
+    try:
+        sql_guard.parse_read_statement(sql_clean)
+    except sql_guard.GuardError as e:
+        return f"Syntax Error: {e}"
     try:
         res = execute_query_sync(f"EXPLAIN (TYPE VALIDATE) {sql_clean}")
         if res.success:
