@@ -51,7 +51,7 @@ For EACH location mentioned:
 
 2. Regional Area / Agglomeration? ("גוש דן", "עוטף עזה", "הגליל העליון")
    ↳ Text columns rarely contain these aggregate areas.
-   ↳ Call `resolve_location_to_wkt` and filter coordinate columns.
+   ↳ Call `resolve_location_to_wkt` and filter coordinate columns with `ST_Contains`.
 
 3. Specific City or Settlement? ("חיפה", "חאן יונס", "כפר קאסם")
    ↳ Inspect candidate table:
@@ -59,7 +59,7 @@ For EACH location mentioned:
        Prefer direct text equality (fast, indexed, avoids boundary edge clipping).
      • If the table ONLY has coordinates (`lat`/`lon`, `geom`):
        Call `resolve_location_to_wkt` and filter spatially.
-     • If categorical search returns 0 matches:
+     • If the city value cannot be found (catalog, `search_column_values` for large_categorical columns):
        Fall back to `resolve_location_to_wkt`.
 
 4. The "No Blind OR" Rule:
@@ -70,35 +70,42 @@ For EACH location mentioned:
 
 ---
 
-## 3. Handling Points, Polygons, and Lines
+## 3. Handling Areas and Points
 
-`resolve_location_to_wkt(location_name)` resolves Hebrew names via Nominatim and returns the geometry.
+`resolve_location_to_wkt(location_name)` geocodes a place (Hebrew names welcome) and returns **area geometries only**
+(`POLYGON` / `MULTIPOLYGON`, simplified to fit in SQL). It never returns a point. Use `data.sql_literal` — it is already
+a quoted SQL string literal — directly inside `ST_GeometryFromText(...)`.
 
-### A. Polygons & Areas (Cities, Regions, Envelopes)
-When `resolve_location_to_wkt` returns `'POLYGON((...))'`:
+### A. Areas (cities, regions, districts)
 ```sql
-WHERE ST_Contains(ST_GeometryFromText(polygon_wkt), ST_Point(lon, lat))
+SELECT count(*) FROM "catalog"."schema"."events" e
+WHERE ST_Contains(ST_GeometryFromText('POLYGON((34.75 32.05, 34.85 32.05, 34.85 32.12, 34.75 32.12, 34.75 32.05))'),
+                  ST_Point(e.lon, e.lat))
 ```
-- Pre-filter with a cheap numeric bounding box first on large tables:
+On large tables, pre-filter with a cheap numeric bounding box first:
 ```sql
-WHERE lat BETWEEN 32.0 AND 32.2
-  AND lon BETWEEN 34.7 AND 34.9
-  AND ST_Contains(ST_GeometryFromText(polygon_wkt), ST_Point(lon, lat))
+SELECT count(*) FROM "catalog"."schema"."events" e
+WHERE e.lat BETWEEN 32.05 AND 32.12
+  AND e.lon BETWEEN 34.75 AND 34.85
+  AND ST_Contains(ST_GeometryFromText('POLYGON((34.75 32.05, 34.85 32.05, 34.85 32.12, 34.75 32.12, 34.75 32.05))'),
+                  ST_Point(e.lon, e.lat))
 ```
 
-### B. Points (Mountain Peaks, Military Bases, Intersections, Landmarks)
-When `resolve_location_to_wkt` returns a `POINT(lon lat)` (e.g. for `הר דב` or `מחנה נחשונים`):
-- A point has zero area. When the user asks about events "in", "at", or "near" this landmark, **apply a sensible default proximity radius (~500 meters or 1 km)**:
+### B. Points (landmarks, peaks, bases, user-given coordinates)
+Points come from coordinates the user gives or from coordinate columns in a reference table — not from
+`resolve_location_to_wkt`. A point has zero area, so "in / at / near" a landmark means a radius
+(default ~500 m – 1 km; state the radius in `assumptions`):
 ```sql
--- Fast & clean: great_circle_distance (target_lat, target_lon, returns km)
-WHERE great_circle_distance(lat, lon, target_lat, target_lon) <= 0.5   -- 500 meters
-
--- Or spherical geography distance (meters):
-WHERE ST_Distance(
-        to_spherical_geography(ST_Point(lon, lat)),
-        to_spherical_geography(ST_Point(target_lon, target_lat))
-      ) <= 500
+SELECT count(*) FROM "catalog"."schema"."events" e
+WHERE great_circle_distance(e.lat, e.lon, 33.30, 35.75) <= 0.5
 ```
+```sql
+SELECT count(*) FROM "catalog"."schema"."events" e
+WHERE ST_Distance(to_spherical_geography(ST_Point(e.lon, e.lat)),
+                  to_spherical_geography(ST_Point(35.75, 33.30))) <= 500
+```
+If the landmark is only known by name, `resolve_location_to_wkt` gives the surrounding area polygon; use its
+centroid `ST_Centroid(ST_GeometryFromText(...))` as the point, and say so in `assumptions`.
 
 ---
 
