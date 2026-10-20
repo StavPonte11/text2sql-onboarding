@@ -101,6 +101,11 @@ The Israeli week starts on **Sunday**, but Trino's `date_trunc('week', ...)` ret
 
 If a month is given without a year, assume the most recent past occurrence relative to today and state it in `assumptions`.
 
+**If the `datetime_parse_relative_expression` tool is available** (Utils-Server), use it to resolve point-in-time
+phrases deterministically — "לפני 3 ימים", "מחר", "יום ראשון הבא", "בעוד שבועיים" — with `timezone: "Asia/Jerusalem"`.
+It returns a single instant, not a period: "חודש שעבר" comes back as *one month ago*, not last month's bounds, and
+period phrases such as "השבוע" are rejected. Use its date as the anchor, then build the period with the rules above.
+
 ---
 
 ## Grouping by period (SELECT / GROUP BY — functions are fine here)

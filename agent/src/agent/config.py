@@ -67,6 +67,11 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
     DEEP_AGENT_SUBAGENT_MODEL: str | None = None    # smaller/faster model for subagents (default: main model)
     DEEP_AGENT_SUBAGENT_MAX_TOOL_CALLS: int = Field(default=15, gt=0)
+    # Utils-Server tools via Jarvis Registry MCP gateway (see deep_agent/utils_mcp.py); unset URL disables
+    JARVIS_GATEWAY_URL: str | None = None           # e.g. http://jarvis-mcp-gateway:8001
+    JARVIS_MCP_NAMESPACE: str = "global"            # gateway namespace (provider slug) exposing Utils-Server
+    JARVIS_API_KEY: str = ""                        # sent as "Authorization: ApiKey <key>"
+    UTILS_MCP_TIMEOUT_S: float = Field(default=10.0, gt=0)
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

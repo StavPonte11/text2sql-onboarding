@@ -25,6 +25,7 @@ dependencies = [
     "deepagents>=0.6.12",
     "urllib3>=2.7.0",
     "pyyaml>=6.0",
+    "langchain-mcp-adapters>=0.2,<0.3",
 ]
 
 [project.scripts]
