@@ -38,6 +38,9 @@ deploy_key
 
 # Scratch files
 agent/scratch/*
+agent/runs/
+agent/*.csv
+agent/*.jsonl
 fix_agent_langfuse.py
 fix_langfuse.py
 
