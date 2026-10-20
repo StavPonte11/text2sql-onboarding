@@ -45,11 +45,6 @@ def _client(fail: bool) -> MagicMock:
     return client
 
 
-@pytest.fixture(autouse=True)
-def _reset_capabilities():
-    tools._connection_capabilities.update(has_knowledge_pairs=True, has_business_terms=True, has_relationships=True)
-
-
 @pytest.fixture
 def patched(request):
     fail = request.param
