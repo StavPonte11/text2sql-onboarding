@@ -48,6 +48,8 @@ class AgentSettings(BaseSettings):
     # ── Deep Agent ────────────────────────────────────────────────────────────
     DEEP_AGENT_SKILLS_DIR: str | None = None  # Override packaged skills dir (<dir>/<name>/SKILL.md)
     DEEP_AGENT_MEMORY_DIR: str | None = None  # Override packaged memory dir (must contain AGENTS.md)
+    DEEP_AGENT_MAX_ROWS: int = Field(default=100, gt=0)  # Hard cap on rows returned by execute_trino_query
+    DEEP_AGENT_MAX_SAMPLE_ROWS: int = Field(default=10, gt=0)  # Hard cap on rows returned by get_sample_rows
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""
