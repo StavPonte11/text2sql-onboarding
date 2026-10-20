@@ -107,6 +107,7 @@ class RunMetrics:
     executed_successfully: bool
     final_sql_present: bool
     latency_s: float
+    answer_verified: bool = False
 
 
 def _envelope_ok(text: str) -> bool | None:
@@ -116,17 +117,19 @@ def _envelope_ok(text: str) -> bool | None:
         return None
 
 
-def run_metrics(messages: list[BaseMessage], latency_s: float) -> RunMetrics:
+def run_metrics(messages: list[BaseMessage], latency_s: float, final_result: dict | None = None) -> RunMetrics:
     ai = [m for m in messages if m.type == "ai"]
     executions = [m for m in messages if m.type == "tool" and m.name == "execute_trino_query"]
     final_text = ai[-1].text if ai else ""
+    final_sql_present = bool(final_result.get("sql")) if final_result else "```sql" in final_text.lower()
     return RunMetrics(
         model_calls=len(ai),
         tool_calls=sum(len(getattr(m, "tool_calls", None) or []) for m in ai),
         sql_executions=len(executions),
         executed_successfully=any(_envelope_ok(m.text) for m in executions),
-        final_sql_present="```sql" in final_text.lower(),
+        final_sql_present=final_sql_present,
         latency_s=round(latency_s, 2),
+        answer_verified=bool(final_result and final_result.get("verified")),
     )
 
 

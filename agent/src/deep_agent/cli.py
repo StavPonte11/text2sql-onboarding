@@ -10,7 +10,6 @@ Usage:
 import argparse
 import asyncio
 import json
-import re
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -22,6 +21,7 @@ from langchain_core.messages import BaseMessage
 from agent.config import settings
 from deep_agent.agent import create_deep_agent
 from deep_agent import observability
+from deep_agent.answer import render_markdown
 from deep_agent.context import DeepAgentContext
 
 # ANSI Colors for terminal output
@@ -36,10 +36,6 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
-_SQL_BLOCK = re.compile(r"```(?:sql)?\n(.*?)\n?```", re.DOTALL | re.IGNORECASE)
-_THOUGHT_BLOCK = re.compile(r"<thought>.*?</thought>", re.DOTALL)
-
-
 @dataclass
 class RunRecord:
     """One CLI run, written as a single JSONL line when --log-file is set."""
@@ -50,33 +46,13 @@ class RunRecord:
     question: str
     final_sql: str | None
     final_answer: str
+    verification: str
+    verified: bool
 
 
 def _message_text(msg: BaseMessage) -> str:
     """Plain text of a message whose content may be a str or a list of content blocks."""
     return msg.text if isinstance(msg, BaseMessage) else str(getattr(msg, "content", ""))
-
-
-def extract_final_sql_and_answer(messages: list[BaseMessage]) -> tuple[str | None, str]:
-    """Return (last SQL block, answer text without SQL/thought blocks) from a finished run."""
-    if not messages:
-        return None, ""
-
-    final_answer = _message_text(messages[-1])
-    sql_blocks = _SQL_BLOCK.findall(final_answer)
-    final_sql = sql_blocks[-1].strip() if sql_blocks else None
-
-    # Fallback: if missing from final answer, search backward through history
-    if not final_sql:
-        for msg in reversed(messages):
-            fallback_blocks = _SQL_BLOCK.findall(_message_text(msg))
-            if fallback_blocks:
-                final_sql = fallback_blocks[-1].strip()
-                break
-
-    clean_answer = _THOUGHT_BLOCK.sub("", final_answer)
-    clean_answer = _SQL_BLOCK.sub("", clean_answer).strip()
-    return final_sql, clean_answer
 
 
 def append_run_record(log_file: Path, record: RunRecord) -> None:
@@ -175,9 +151,13 @@ async def run_query(
     if not final_state or not final_state.get("messages"):
         return
 
-    final_sql, clean_answer = extract_final_sql_and_answer(final_state["messages"])
+    final_result = final_state.get("final_result") or {"status": "no_answer", "verified": False}
+    final_sql = final_result.get("sql")
+    rendered = render_markdown(final_result)
     trace_id = observability.langfuse_trace_id(config)
-    observability.score_run(trace_id, observability.run_metrics(final_state["messages"], execution_time))
+    observability.score_run(
+        trace_id, observability.run_metrics(final_state["messages"], execution_time, final_result)
+    )
 
     if log_file is not None:
         append_run_record(
@@ -188,20 +168,21 @@ async def run_query(
                 thread_id=thread_id,
                 question=question,
                 final_sql=final_sql,
-                final_answer=clean_answer,
+                final_answer=rendered,
+                verification=final_result.get("status", "no_answer"),
+                verified=bool(final_result.get("verified")),
             ),
         )
 
+    print(f"\n{GREEN}{BOLD}{'='*30} FINAL ANSWER {'='*30}{RESET}\n")
+    print(f"{WHITE}{rendered}{RESET}\n")
+    status_color = GREEN if final_result.get("verified") else YELLOW
     print(
-        f"\n{GREEN}{BOLD}[Run finished] Execution time: {execution_time}s, "
-        f"Final SQL captured: {'Yes' if final_sql else 'None'}{RESET}"
+        f"{status_color}{BOLD}[Run finished] Execution time: {execution_time}s, "
+        f"verification: {final_result.get('status')}{RESET}"
     )
     if trace_id:
         print(f"{DIM} Langfuse trace: {trace_id}{RESET}")
-    if final_sql:
-        print(f"\n{CYAN}{BOLD}{'='*30} FINAL GENERATED SQL {'='*30}{RESET}")
-        print(f"{GREEN}{final_sql}{RESET}")
-        print(f"{CYAN}{BOLD}{'='*81}{RESET}\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
