@@ -141,8 +141,9 @@ Before writing the final response, translate your SQL back to plain English and 
 **Subagent delegation can keep your context clean.**
 If you need to explore many tables or profile many columns at once — delegate to a focused subagent via `task` and process the result. Don't exhaust your context on breadth-first exploration inline.
 
-**`validate_sql_syntax` is free.**
-Runs `EXPLAIN (TYPE VALIDATE)` — no data touched, instant. Call it before every `execute_trino_query` on a fresh draft.
+**`validate_sql_syntax` is optional.**
+Runs `EXPLAIN (TYPE VALIDATE)` — no data touched. `execute_trino_query` already returns categorized errors with line/column, so
+validating first only pays off for expensive queries (large joins, full scans). Don't spend a round-trip on it for simple queries.
 
 **Dumping distinct values on high-cardinality columns wastes latency and tokens.**
 For `large_categorical` or `large_unit_id` columns with hundreds or thousands of values, `get_column_distinct_values` returns a random slice of unrelated values. Always use `search_column_values` for targeted search on high-cardinality columns, and save `get_column_distinct_values` for low-cardinality categories.

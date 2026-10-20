@@ -206,7 +206,7 @@ def _execute(sql: str, row_cap: int) -> tuple[str, dict | None]:
     and onto the current Langfuse tool observation.
     """
     try:
-        res = execute_query_sync(sql)
+        res = execute_query_sync(sql, reuse_connection=True)
     except Exception as e:
         error = trino_errors.classify_message(None, str(e)).to_error()
         annotate_current_span({"error_category": error["category"]}, level="ERROR")
@@ -363,7 +363,7 @@ def validate_sql_syntax(sql: str) -> str:
     except sql_guard.GuardError as e:
         return _guard_failure(e)
     try:
-        res = execute_query_sync(f"EXPLAIN (TYPE VALIDATE) {sql_clean}")
+        res = execute_query_sync(f"EXPLAIN (TYPE VALIDATE) {sql_clean}", reuse_connection=True)
     except Exception as e:
         return fail(**_error_kwargs(trino_errors.classify_message(None, str(e)).to_error()))
     if res.success:

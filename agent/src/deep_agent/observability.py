@@ -76,6 +76,7 @@ def build_run_config(
         metadata=metadata,
         tags=[AGENT_NAME],
         run_name=AGENT_NAME,
+        recursion_limit=settings.DEEP_AGENT_RECURSION_LIMIT,
     )
 
 

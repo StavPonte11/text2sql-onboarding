@@ -51,6 +51,16 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_ROWS: int = Field(default=100, gt=0)  # Hard cap on rows returned by execute_trino_query
     DEEP_AGENT_MAX_SAMPLE_ROWS: int = Field(default=10, gt=0)  # Hard cap on rows returned by get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
+    # Loop bounds & latency (see deep_agent/limits.py)
+    DEEP_AGENT_MAX_MODEL_CALLS: int = Field(default=25, gt=0)      # per run; hitting it ends the run with a best-effort answer
+    DEEP_AGENT_MAX_TOOL_CALLS: int = Field(default=40, gt=0)       # per run, all tools
+    DEEP_AGENT_MAX_SQL_EXECUTIONS: int = Field(default=12, gt=0)   # per run, execute_trino_query
+    DEEP_AGENT_RUN_TIMEOUT_S: float = Field(default=180.0, gt=0)   # wall clock per run
+    DEEP_AGENT_LLM_TIMEOUT_S: float = Field(default=60.0, gt=0)    # per LLM request
+    DEEP_AGENT_LLM_MAX_RETRIES: int = Field(default=2, ge=0)       # retries by ModelRetryMiddleware
+    DEEP_AGENT_RECURSION_LIMIT: int = Field(default=150, gt=0)     # LangGraph super-steps per run
+    JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
+    JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

@@ -20,8 +20,9 @@ from langchain_core.messages import BaseMessage
 
 from agent.config import settings
 from deep_agent.agent import create_deep_agent
+from agent.utils.jeen_metadata_client import close_mcp_sessions
 from deep_agent import observability
-from deep_agent.answer import render_markdown
+from deep_agent.answer import best_effort_result, render_markdown
 from deep_agent.context import DeepAgentContext
 
 # ANSI Colors for terminal output
@@ -138,20 +139,31 @@ async def run_query(
     final_state = None
     printed_count = 0
 
-    async for state in agent.astream(
-        {"messages": [("user", question)]}, config, stream_mode="values", context=context
-    ):
-        messages = state.get("messages", [])
-        while printed_count < len(messages):
-            print_formatted_message(messages[printed_count])
-            printed_count += 1
-        final_state = state
+    timed_out = False
+    try:
+        async with asyncio.timeout(settings.DEEP_AGENT_RUN_TIMEOUT_S):
+            async for state in agent.astream(
+                {"messages": [("user", question)]}, config, stream_mode="values", context=context
+            ):
+                messages = state.get("messages", [])
+                while printed_count < len(messages):
+                    print_formatted_message(messages[printed_count])
+                    printed_count += 1
+                final_state = state
+    except TimeoutError:
+        timed_out = True
+        final_state = (await agent.aget_state(config)).values
 
     execution_time = round(time.time() - start_time, 2)
     if not final_state or not final_state.get("messages"):
         return
 
-    final_result = final_state.get("final_result") or {"status": "no_answer", "verified": False}
+    if timed_out:
+        final_result = best_effort_result(
+            final_state.get("executed_queries") or [], f"timeout after {settings.DEEP_AGENT_RUN_TIMEOUT_S:.0f}s"
+        )
+    else:
+        final_result = final_state.get("final_result") or {"status": "no_answer", "verified": False}
     final_sql = final_result.get("sql")
     rendered = render_markdown(final_result)
     trace_id = observability.langfuse_trace_id(config)
@@ -254,6 +266,8 @@ async def _amain(args: argparse.Namespace) -> None:
 
     elif args.query:
         await run_query(agent, args.query, next_thread_id(), context, args.log_file)
+
+    await close_mcp_sessions()
 
 
 def main() -> None:

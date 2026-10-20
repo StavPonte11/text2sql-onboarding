@@ -3,6 +3,7 @@ trino.py — Real Trino connection and execution helper.
 """
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -17,6 +18,27 @@ if not settings.TRINO_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
+
+# Per-thread reusable connections for callers that opt in (execute_query_sync(reuse_connection=True)).
+_thread_local = threading.local()
+
+
+def _reusable_connection():
+    conn = getattr(_thread_local, "connection", None)
+    if conn is None:
+        conn = get_trino_connection()
+        _thread_local.connection = conn
+    return conn
+
+
+def _drop_reusable_connection() -> None:
+    conn = getattr(_thread_local, "connection", None)
+    _thread_local.connection = None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 class TrinoExecutionResult(BaseModel):
@@ -59,9 +81,17 @@ def get_trino_connection():
     )
 
 
-def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list | None = None) -> TrinoExecutionResult:
+def execute_query_sync(
+    sql: str,
+    table_id: str = "",
+    params: tuple | dict | list | None = None,
+    reuse_connection: bool = False,
+) -> TrinoExecutionResult:
     """
     Execute a SQL query against the real Trino cluster.
+
+    reuse_connection=True keeps one DBAPI connection per thread (no new HTTP/TLS setup per
+    query); a failed query drops it so the next call reconnects.
     """
     start_time = time.time()
     log_sql = sql.strip().replace("\n", " ")[:300]
@@ -78,7 +108,7 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
     conn = None
     cur = None
     try:
-        conn = get_trino_connection()
+        conn = _reusable_connection() if reuse_connection else get_trino_connection()
         cur = conn.cursor()
         if params is not None:
             cur.execute(sql, params)
@@ -90,7 +120,8 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
         execution_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[CoreTrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms")
         cur.close()
-        conn.close()
+        if not reuse_connection:
+            conn.close()
         return TrinoExecutionResult(
             success=True,
             rows=[list(r) for r in rows],
@@ -107,7 +138,9 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
                 cur.close()
             except:
                 pass
-        if conn is not None:
+        if reuse_connection:
+            _drop_reusable_connection()
+        elif conn is not None:
             try:
                 conn.close()
             except:
