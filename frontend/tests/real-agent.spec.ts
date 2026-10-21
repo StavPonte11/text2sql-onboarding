@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { expect,test } from '@playwright/test';
 
 test.describe('Real Agent Execution', () => {
   test('should run query against real backend', async ({ page }) => {

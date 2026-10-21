@@ -82,8 +82,20 @@ async def chat_endpoint(
                 from sqlalchemy import or_
                 for allowed in request.allowed_tables:
                     parts = allowed.split(".")
-                    if len(parts) == 2:
-                        cond = or_(Table.id == allowed, Table.name == allowed, (Table.schema_name == parts[0]) & (Table.name == parts[1]))
+                    if len(parts) == 3:
+                        cond = or_(
+                            Table.id == allowed,
+                            Table.name == allowed,
+                            (Table.catalog == parts[0])
+                            & (Table.schema_name == parts[1])
+                            & (Table.name == parts[2]),
+                        )
+                    elif len(parts) == 2:
+                        cond = or_(
+                            Table.id == allowed,
+                            Table.name == allowed,
+                            (Table.schema_name == parts[0]) & (Table.name == parts[1]),
+                        )
                     else:
                         cond = or_(Table.id == allowed, Table.name == allowed)
                     
