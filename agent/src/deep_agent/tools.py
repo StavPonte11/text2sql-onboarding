@@ -23,7 +23,9 @@ from agent.utils.sql_guard import clamp
 from core.trino import execute_query_sync
 from deep_agent import trino_errors
 from deep_agent.answer import executed_query_record
-from deep_agent.context import DeepAgentContext, cached_catalog, capability, connection_id, latest_user_request
+from deep_agent.context import (
+    DeepAgentContext, cached_catalog, capability, connection_id, geo_registry, latest_user_request,
+)
 from deep_agent.envelope import fail, ok
 from deep_agent.observability import annotate_current_span
 
@@ -58,7 +60,7 @@ async def get_database_catalog(runtime: Runtime = None) -> str | Command:
     Column semantic_type values to watch for:
     - 'categorical' — small finite value set; values are in the catalog or via get_column_distinct_values.
     - 'large_categorical' / 'large_unit_id' — too many values to enumerate; use search_column_values.
-    - 'geo' — WKT geometry column; use resolve_location_to_wkt to build filter values.
+    - 'geo' — WKT geometry column; delegate places to the location-analyst subagent for filter predicates.
 
     Do NOT use this to fetch live data rows; this only retrieves metadata and schema definitions.
     """
@@ -184,6 +186,18 @@ async def get_column_profile(table_name: str, column_name: str, runtime: Runtime
 # Query Execution
 # ---------------------------------------------------------------------------
 
+def _with_geometries(sql: str, runtime: Runtime | None) -> str:
+    """Substitute '@<name>_wkt@' geometry placeholders from the thread's geo_registry (location-analyst)."""
+    from deep_agent.geo.tools import substitute_geometries
+
+    return substitute_geometries(sql, geo_registry(runtime))
+
+
+def _placeholder_failure(e: Exception) -> str:
+    return fail("INVALID_INPUT", str(e), hint="Use only the '@…_wkt@' placeholders returned by location-analyst in "
+                                             "this conversation, or ask it to resolve the place again.")
+
+
 def _guard_failure(e: sql_guard.GuardError) -> str:
     error = trino_errors.classify_message("FORBIDDEN_STATEMENT", str(e))
     return fail(**_error_kwargs(error.to_error()))
@@ -274,7 +288,11 @@ def execute_trino_query(sql: str, limit: int = 50, runtime: Runtime = None) -> s
     """
     row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_ROWS, 50)
     try:
-        guarded = sql_guard.prepare(clean_sql(sql), row_cap)
+        resolved = _with_geometries(clean_sql(sql), runtime)
+    except ValueError as e:
+        return _placeholder_failure(e)
+    try:
+        guarded = sql_guard.prepare(resolved, row_cap)
     except sql_guard.GuardError as e:
         return _guard_failure(e)
     content, payload = _execute(guarded.sql, guarded.row_cap if guarded.is_query else settings.DEEP_AGENT_MAX_ROWS)
@@ -343,7 +361,7 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
 # ---------------------------------------------------------------------------
 
 @tool
-def validate_sql_syntax(sql: str) -> str:
+def validate_sql_syntax(sql: str, runtime: Runtime = None) -> str:
     """
     Validates a Trino SQL query without executing it against data (syntax AND semantics:
     table/column names, types, function names and signatures are all checked by the planner).
@@ -357,7 +375,10 @@ def validate_sql_syntax(sql: str) -> str:
     Args:
         sql (str): The exact Trino SQL query string to validate.
     """
-    sql_clean = clean_sql(sql)
+    try:
+        sql_clean = _with_geometries(clean_sql(sql), runtime)
+    except ValueError as e:
+        return _placeholder_failure(e)
     try:
         sql_guard.parse_read_statement(sql_clean)
     except sql_guard.GuardError as e:
@@ -634,6 +655,9 @@ async def enrich_sql_filters(sql: str, runtime: Runtime = None) -> str | Command
 @tool
 def resolve_location_to_wkt(location_name: str) -> str:
     """
+    [Not offered to the agents — superseded by the location-analyst subagent, which keeps points and
+    lines, never substitutes a bounding box for a boundary, and decides whether geometry is needed.]
+
     Resolves a geographic location name to its WKT (Well-Known Text) polygon representation.
 
     Use this whenever the user's query involves a geographic area and you need a WKT polygon for
@@ -674,7 +698,6 @@ DEEP_AGENT_TOOLS = [
     search_business_terms,
     search_knowledge_pairs,
     search_column_values,
-    resolve_location_to_wkt,
     # Query Execution
     execute_trino_query,
     get_sample_rows,

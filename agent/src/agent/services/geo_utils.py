@@ -179,3 +179,37 @@ def geojson_to_simplified_wkt(geojson_geom: dict, max_length: int = 2100) -> Opt
         logger.error(f"Failed to calculate envelope fallback: {e}")
 
     return None
+
+
+# ── Feature search (any geometry type) ────────────────────────────────────────
+
+
+@lru_cache(maxsize=256)
+def _nominatim_search(query: str, polygon: bool, limit: int) -> tuple[dict, ...]:
+    """Raw Nominatim jsonv2 results for `query`, every geometry type kept.
+
+    polygon_geojson="1" (the string the API expects) is sent only when the caller needs an
+    area or line; otherwise the provider's representative point (lat/lon) is enough.
+    Exceptions propagate (and are not cached), like _fetch_geojson_polygon.
+    """
+    _nominatim_wait()
+    params = {"q": query, "accept-language": "he", "format": "jsonv2", "limit": str(limit), "namedetails": "1"}
+    if polygon:
+        params["polygon_geojson"] = "1"
+    headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
+    if settings.NOMINATIM_API_KEY:
+        headers["x-api-key"] = settings.NOMINATIM_API_KEY
+    res = requests.get(settings.NOMINATIM_URL, params=params, headers=headers, timeout=settings.NOMINATIM_TIMEOUT)
+    res.raise_for_status()
+    data = res.json()
+    if isinstance(data, dict) and data.get("error"):
+        raise ValueError(f"Nominatim error: {data['error']}")
+    return tuple(data if isinstance(data, list) else data.get("features", []))
+
+
+def nominatim_search(query: str, polygon: bool = False, limit: int = 5) -> list[dict]:
+    """Nominatim candidates for `query` (jsonv2 dicts; GeoJSON features if the server ignores format)."""
+    return list(_nominatim_search(query, polygon, limit))
+
+
+nominatim_search.cache_clear = _nominatim_search.cache_clear  # type: ignore[attr-defined]

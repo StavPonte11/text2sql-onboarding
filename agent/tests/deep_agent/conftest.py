@@ -13,7 +13,9 @@ class ScriptedChatModel(GenericFakeChatModel):
     bound_tool_names: list[list[str]] = []
 
     def bind_tools(self, tools, **kwargs):  # deepagents binds tools; the script decides the calls
-        self.bound_tool_names.append([getattr(t, "name", None) or t.get("name") for t in tools])
+        self.bound_tool_names.append([
+            getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else getattr(t, "__name__", None))
+            for t in tools])
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):

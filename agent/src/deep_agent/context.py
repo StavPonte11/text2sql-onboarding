@@ -48,12 +48,30 @@ def merge_executions(left: list[dict[str, Any]] | None, right: list[dict[str, An
     return merged
 
 
+def merge_geo_registry(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
+    """Section-wise merge for geo_registry ({"features", "geometries", "lookups"}: dicts keyed by id).
+
+    Entries are immutable per key except features, whose `geometries` maps are unioned, so a
+    feature resolved first as a point and later as an area keeps both.
+    """
+    merged = {section: dict(entries) for section, entries in (left or {}).items()}
+    for section, entries in (right or {}).items():
+        target = merged.setdefault(section, {})
+        for key, value in entries.items():
+            if section == "features" and key in target:
+                value = {**target[key], **value,
+                         "geometries": {**target[key].get("geometries", {}), **value.get("geometries", {})}}
+            target[key] = value
+    return merged
+
+
 class DeepAgentRuntimeState(AgentState):
     connection_capabilities: NotRequired[dict[str, bool]]
     jeen_catalog: NotRequired[str]  # raw catalog text, cached so tools never need the model to re-send it
     executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
     final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
     turn_execution_start: NotRequired[int]  # index into executed_queries where the current turn began
+    geo_registry: NotRequired[Annotated[dict[str, Any], merge_geo_registry]]  # resolved places (deep_agent.geo)
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:
@@ -70,6 +88,11 @@ def capability(runtime: ToolRuntime | None, name: str) -> bool:
 def cached_catalog(runtime: ToolRuntime | None) -> str | None:
     state = getattr(runtime, "state", None) or {}
     return state.get("jeen_catalog") or None
+
+
+def geo_registry(runtime: ToolRuntime | None) -> dict[str, Any]:
+    state = getattr(runtime, "state", None) or {}
+    return state.get("geo_registry") or {}
 
 
 def latest_user_request(runtime: ToolRuntime | None) -> str:

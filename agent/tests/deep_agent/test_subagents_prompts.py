@@ -77,7 +77,7 @@ async def test_main_agent_task_tool_advertises_the_subagents(scripted_model):
 
 def test_subagent_specs():
     specs = {s["name"]: s for s in build_subagents(MagicMock())}
-    assert set(specs) == {"schema-scout", "value-resolver", "result-verifier"}
+    assert set(specs) == {"schema-scout", "value-resolver", "result-verifier", "location-analyst"}
     assert [t.name for t in specs["result-verifier"]["tools"]] == ["execute_trino_query", "get_sample_rows"]
     assert all("model" not in s for s in specs.values())  # inherit main model by default
     assert all(s["system_prompt"] == local_prompt(s["name"]) for s in specs.values())

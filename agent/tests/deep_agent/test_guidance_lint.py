@@ -12,16 +12,22 @@ import pytest
 import sqlglot
 
 from deep_agent.agent import SYSTEM_PROMPT
+from deep_agent.prompt_registry import PROMPT_KEYS, local_prompt
 from deep_agent.resources import DEFAULT_MEMORY_DIR, DEFAULT_SKILLS_DIR, EXPECTED_SKILLS
+from deep_agent.subagents import SUBAGENT_TOOLS
 from deep_agent.tools import DEEP_AGENT_TOOLS
+from deep_agent.utils_mcp import ALLOWED_UTILS_TOOLS
 
-DOMAIN_TOOLS = {t.name for t in DEEP_AGENT_TOOLS}
+# Domain tools of the main agent and the subagents (resolve_location is built per agent build).
+DOMAIN_TOOLS = {t.name for t in DEEP_AGENT_TOOLS} | {t.name for ts in SUBAGENT_TOOLS.values() for t in ts} | {
+    "resolve_location"} | ALLOWED_UTILS_TOOLS
 HARNESS_TOOLS = {"task", "write_todos", "read_file", "ls", "DeepAgentAnswer"}
 
 DOCS: dict[str, str] = {
     "system prompt": SYSTEM_PROMPT,
     "AGENTS.md": (DEFAULT_MEMORY_DIR / "AGENTS.md").read_text(encoding="utf-8"),
     **{f"skill {p.parent.name}": p.read_text(encoding="utf-8") for p in sorted(DEFAULT_SKILLS_DIR.glob("*/SKILL.md"))},
+    **{f"prompt {key}": local_prompt(key) for key in PROMPT_KEYS if key != "system"},
     **{f"docstring {t.name}": t.description for t in DEEP_AGENT_TOOLS},
 }
 
@@ -38,7 +44,9 @@ BANNED = [
     (r"Using `DATE_FORMAT` — Trino uses", "date_format() is valid Trino"),
     (r'"השבוע".*date_trunc\(\'week\'', "Trino weeks start Monday; Israeli weeks start Sunday"),
     (r"returns a `POINT", "resolve_location_to_wkt returns area geometries only"),
-    (r"@location_name_wkt@|@[a-z_]+_wkt@", "WKT placeholders are a legacy-graph mechanism"),
+    (r"@location_name_wkt@", "geometry placeholders come only from location-analyst plans"),
+    (r"`resolve_location_to_wkt`", "places are owned by location-analyst (#65)"),
+    (r"default ~500 m|default radius of|great_circle_distance\(\.\.\.\) <= 1\.0", "no universal proximity radius (#65)"),
     (r"Call (it|this) before every `execute_trino_query`|Always call before `execute_trino_query`", "validation is optional (#42)"),
     (r"NEVER use Hebrew as SQL identifiers", "Hebrew catalog columns are valid (double-quoted)"),
     (r"jeen_catalog \(str\)", "enrich_sql_filters takes only sql (#36)"),

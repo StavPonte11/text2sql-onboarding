@@ -37,6 +37,10 @@ UTILS_TOOL_ALLOCATION: dict[str, tuple[str, ...]] = {
                        "geo_validate_geometry"),
     "schema-scout": (),
     "result-verifier": (),
+    # get_geocode_address feeds resolve_location; the rest are offered only when the gateway lists them.
+    "location-analyst": ("get_geocode_address", "get_location_by_coordinates", "nominatim_helper",
+                         "getcapabilities_core", "getfeatureschema_core", "searchfeatures_core",
+                         "trino_validate_spatial_expression"),
 }
 ALLOWED_UTILS_TOOLS = frozenset(name for names in UTILS_TOOL_ALLOCATION.values() for name in names)
 
