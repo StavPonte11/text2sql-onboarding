@@ -23,7 +23,6 @@ TOOL_ARGS = {
     "search_business_terms": {"query": "q"},
     "search_knowledge_pairs": {"query": "q"},
     "search_column_values": {"search_term": "תל אביב"},
-    "resolve_location_to_wkt": {"location_name": "חיפה"},
     "execute_trino_query": {"sql": "SELECT 1"},
     "get_sample_rows": {"table_name": "t"},
     "get_column_distinct_values": {"table_name": "t", "column_name": "c"},

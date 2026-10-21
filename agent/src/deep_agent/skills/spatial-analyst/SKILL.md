@@ -1,88 +1,39 @@
 ---
 name: spatial-analyst
-description: Geospatial query patterns for Trino, including Hebrew geographical extraction, per-location decision trees, polygon & point handling, proximity & directional filtering, and spatial join acceleration.
+description: Geospatial SQL in Trino — using the location-analyst plan, geometry placeholders, coordinate order, distance units and spatial join acceleration.
 ---
 # Spatial & Geographical SQL Reference for Trino
 
-## 1. Hebrew Location Extraction & Disambiguation Rules
+## 1. Who does what
 
-When analyzing user requests in Hebrew, apply these linguistic rules before resolving or searching:
+Places are handled by the `location-analyst` subagent (delegate with `task`; give it the question verbatim and the candidate tables). It:
+1. extracts and normalises Hebrew place names (prefixes, acronyms, aliases, teams/venues/people excluded),
+2. decides per place whether a verified categorical column answers the question or geometry is needed,
+3. resolves geometry only for spatial operations, with its real type (point / line / area — never a bounding box as a boundary),
+and returns a `LocationPlan`. Each usage has a `status`:
 
-### A. Preposition Stripping vs. Structural Words
-- **Strip grammatical prefixes**: `ב-`, `ל-`, `מ-`, `כ-`, `ו-` (e.g. `בבינת ג'בייל` → `בינת ג'בייל`, `מהר דב` → `הר דב`).
-- **NEVER strip structural words that belong to the proper place name**:
-  - `אל-` (e.g. `אל-ח'יאם`)
-  - `כפר` (e.g. `כפר קאסם`, `כפר כנא`)
-  - `נחל` (e.g. `נחל קישון`, `נחל עיראק`)
-  - `הר` (e.g. `הר דב`, `הר חרמון`)
-  - `מחנה` (e.g. `מחנה נחשונים`, `מחנה בלאטה`)
-  - `ואדי` (e.g. `ואדי עארה`)
+| status | meaning | what to do |
+|---|---|---|
+| `ready` | `predicate_sql` is checked and rendered | put it in WHERE (AND), qualify columns with your alias |
+| `ambiguous` | e.g. "near" without a distance, several places match | ask the user (`needs_clarification`) or state a justified assumption |
+| `needs_parent_judgment` | directional relations | choose the reference (center vs. extent) yourself and state it in `assumptions` |
+| `unresolved` / `unsupported` | value/column not verified, no geometry, wrong geometry type | do not filter on it; read `issues` |
 
-### B. Expand Acronyms & Abbreviations
-Expand geographical abbreviations before querying or resolving:
-- `ת״א` → `תל אביב`
-- `י-ם` → `ירושלים`
-- `איו״ש` → `יהודה ושומרון`
-- `ארה״ב` → `ארצות הברית`
+Never OR a categorical and a spatial predicate for the same place unless `combination_note` justifies it by the data (e.g. some rows only have coordinates).
 
-### C. Disambiguate Non-Geographical Entities (False Positives)
-- **Sports Teams**: `מכבי חיפה`, `הפועל ירושלים` → organization names, NOT location filters (unless the query asks about games taking place *in* the city).
-- **Restaurants / Venues**: `מסעדת אוסלו` → venue name, ignore for city extraction.
-- **Personal Names**: `גולן ושרון קבעו פגישה` → people's names, not regions.
+## 2. Geometry placeholders
 
-### D. Comprehensive Geographical Scope
-Locations are not just major cities. Recognize and extract:
-- Populated cities, towns, villages (`כפרים`), kibbutzim, moshavim.
-- Outposts, refugee camps (`מחנות פליטים`), military bases (`מחנות צבאיים`).
-- Mountains, peaks, hills, valleys, rivers, wadis.
-- Aggregate geopolitical regions (`עוטף עזה`, `גוש דן`, `דרום לבנון`, `בקעת הירדן`).
+Geometry never travels through the conversation. `predicate_sql` refers to it as a quoted placeholder,
+`ST_GeometryFromText('@khan_yunis_relation_1234_multipolygon_wkt@')`. Copy it exactly; `execute_trino_query`,
+`validate_sql_syntax` and the final-answer check substitute the real WKT, and the SQL shown to the user is the substituted one.
+An unknown placeholder is rejected with `INVALID_INPUT`.
 
----
-
-## 2. The Nuanced Per-Location Decision Strategy
-
-Evaluate **EACH location mentioned in the query independently**. A single query may involve multiple locations that should be handled differently.
-
-```
-For EACH location mentioned:
-
-1. Proximity or Directional Query? ("סביב", "מצפון ל-", "ברדיוס")
-   ↳ Coordinates are inherently required (great_circle_distance or lat/lon condition).
-
-2. Regional Area / Agglomeration? ("גוש דן", "עוטף עזה", "הגליל העליון")
-   ↳ Text columns rarely contain these aggregate areas.
-   ↳ Call `resolve_location_to_wkt` and filter coordinate columns with `ST_Contains`.
-
-3. Specific City or Settlement? ("חיפה", "חאן יונס", "כפר קאסם")
-   ↳ Inspect candidate table:
-     • If an administrative column exists (`city_name`, `settlement`) AND contains the value:
-       Prefer direct text equality (fast, indexed, avoids boundary edge clipping).
-     • If the table ONLY has coordinates (`lat`/`lon`, `geom`):
-       Call `resolve_location_to_wkt` and filter spatially.
-     • If the city value cannot be found (catalog, `search_column_values` for large_categorical columns):
-       Fall back to `resolve_location_to_wkt`.
-
-4. The "No Blind OR" Rule:
-   • Do NOT write `city = 'Haifa' OR ST_Contains(...)` blindly as a lazy habit.
-   • ONLY combine with OR if the data is genuinely hybrid (e.g. telemetry tables where 
-     some rows have manual city tags while others only have raw GPS sensor pings).
-```
-
----
-
-## 3. Handling Areas and Points
-
-`resolve_location_to_wkt(location_name)` geocodes a place (Hebrew names welcome) and returns **area geometries only**
-(`POLYGON` / `MULTIPOLYGON`, simplified to fit in SQL). It never returns a point. Use `data.sql_literal` — it is already
-a quoted SQL string literal — directly inside `ST_GeometryFromText(...)`.
-
-### A. Areas (cities, regions, districts)
 ```sql
 SELECT count(*) FROM "catalog"."schema"."events" e
 WHERE ST_Contains(ST_GeometryFromText('POLYGON((34.75 32.05, 34.85 32.05, 34.85 32.12, 34.75 32.12, 34.75 32.05))'),
                   ST_Point(e.lon, e.lat))
 ```
-On large tables, pre-filter with a cheap numeric bounding box first:
+On large tables, add a cheap numeric pre-filter from the feature's `bbox` (an extent, so only as an extra AND, never instead of the geometry):
 ```sql
 SELECT count(*) FROM "catalog"."schema"."events" e
 WHERE e.lat BETWEEN 32.05 AND 32.12
@@ -91,59 +42,38 @@ WHERE e.lat BETWEEN 32.05 AND 32.12
                   ST_Point(e.lon, e.lat))
 ```
 
-### B. Points (landmarks, peaks, bases, user-given coordinates)
-Points come from coordinates the user gives or from coordinate columns in a reference table — not from
-`resolve_location_to_wkt`. A point has zero area, so "in / at / near" a landmark means a radius
-(default ~500 m – 1 km; state the radius in `assumptions`):
+## 3. Distances
+
+- Point to point: `great_circle_distance(lat1, lon1, lat2, lon2)` — **latitude first**, result in **km**.
 ```sql
 SELECT count(*) FROM "catalog"."schema"."events" e
-WHERE great_circle_distance(e.lat, e.lon, 33.30, 35.75) <= 0.5
+WHERE great_circle_distance(e.lat, e.lon, 33.30, 35.75) <= 2
 ```
-```sql
-SELECT count(*) FROM "catalog"."schema"."events" e
-WHERE ST_Distance(to_spherical_geography(ST_Point(e.lon, e.lat)),
-                  to_spherical_geography(ST_Point(35.75, 33.30))) <= 500
-```
-If the landmark is only known by name, `resolve_location_to_wkt` gives the surrounding area polygon; use its
-centroid `ST_Centroid(ST_GeometryFromText(...))` as the point, and say so in `assumptions`.
+- `ST_Distance(to_spherical_geography(a), to_spherical_geography(b))` gives metres **only for points**.
+- `ST_Distance` / `ST_Buffer` on plain geometry work in **degrees** — never compare them with metres.
+- Distance to a boundary, river or area: the plan supplies a metre-accurate buffer polygon (built in Python) and an `ST_Contains` / `ST_Intersects` predicate. Do not rebuild it with degree buffers.
+- No distance given ("ליד", "באזור"): there is no universal default radius — ask, or state a justified assumption.
 
 **If the Utils-Server tools are available:** check a spatial expression with `trino_validate_spatial_expression`
-before putting it in a query — it reports whether the expression is valid and the functions exist on this Trino (with
-close-name suggestions for typos), and can evaluate it on one row of a table. `geo_create_buffer` turns a point +
-radius (true metres) into a polygon returned as GeoJSON; use it in SQL with `from_geojson_geometry('<geojson>')`.
+before putting it in a query. It reports whether the expression is valid and the functions exist on this Trino, with
+close-name suggestions for typos, and can evaluate it on one row of a table.
 
----
+## 4. Coordinate order & syntax
 
-## 4. Proximity & Directional Intent Patterns
+- **`ST_Point(lon, lat)`**: **LONGITUDE FIRST** (X = lon, Y = lat). WKT too: `'POINT(34.78 32.08)'` (Tel Aviv).
+- **`great_circle_distance(lat1, lon1, lat2, lon2)`** and **`bing_tile_at(lat, lon, zoom)`**: **LATITUDE FIRST**.
+- Israel sanity check: longitude ≈ 34–36, latitude ≈ 29–33. `lon: 32, lat: 34` means the columns are swapped.
+- Always `ST_GeometryFromText(wkt)` — `ST_GeomFromText()` / `ST_PolygonFromText()` do not exist in Trino.
+- `ST_Contains` works on `geometry`, **not** on `SphericalGeography`.
+- `ST_Point(NULL, …)` is NULL, so rows without coordinates never match a spatial predicate — say so when it matters.
 
-When the user asks for relative spatial relations, translate the intent into precise coordinate math:
+## 5. Directional relations ("מצפון ל…")
 
-| Phrasing | Semantic Meaning | Recommended SQL Pattern |
-|---|---|---|
-| **"ברדיוס X ק"מ מ..."** | Explicit radius distance | `great_circle_distance(lat, lon, target_lat, target_lon) <= X` |
-| **"סביב..." / "באזור..." (for a Point/City)** | Implicit proximity | For a Point: `great_circle_distance(...) <= 1.0` (1 km)<br>For a Polygon: `ST_Contains(...)` or buffer $\le 2\text{ km}$ |
-| **"מצפון ל..."** (North of) | Directional filter | `lat > target_lat` (with reasonable lon bounding box) |
-| **"מדרום ל..."** (South of) | Directional filter | `lat < target_lat` (with reasonable lon bounding box) |
-| **"ממזרח ל..." / "ממערב ל..."** | Directional filter | `lon > target_lon` / `lon < target_lon` |
+There is no automatic rendering. Decide whether the reference is the place's center or its whole extent (`bbox` from the plan), e.g. "north of Gaza" usually means north of its northern edge (`lat > max_lat`), not of its center. Add a longitude band only when the question implies one, and state the choice in `assumptions`.
 
----
+## 6. Spatial join acceleration
 
-## 5. Critical Coordinate Order & Syntax Rules
-
-- **`ST_Point(lon, lat)`**: **LONGITUDE FIRST** ($X = \text{lon}, Y = \text{lat}$).
-- **WKT format**: also **`POINT(lon lat)`** — e.g. `'POINT(34.78 32.08)'` (Tel Aviv).
-- **`great_circle_distance(lat1, lon1, lat2, lon2)`**: **LATITUDE FIRST**, and returns **km**.
-- **`bing_tile_at(lat, lon, zoom)`**: **LATITUDE FIRST**.
-- **Israel Sanity Check**: In Israel, Longitude $\approx 34\text{--}36$ and Latitude $\approx 29\text{--}33$. If coordinates show `lon: 32` and `lat: 34`, they are accidentally inverted!
-
-### Geometry Functions
-- **Always**: `ST_GeometryFromText(wkt_string)`
-- **Never**: `ST_GeomFromText()` or `ST_PolygonFromText()` — they do not exist in Trino.
-- `ST_Distance` on WGS84 geometries returns **degrees**, not meters. For meters, wrap both sides in `to_spherical_geography(...)`.
-- `ST_Contains` works on `geometry` (degrees), **NOT** on `SphericalGeography`.
-
-### Spatial Joins Acceleration
-Put `ST_Contains` directly in the `JOIN ... ON` clause so Trino invokes its internal spatial join optimization:
+Put `ST_Contains` directly in the `JOIN ... ON` clause so Trino uses its spatial join:
 ```sql
 SELECT z.zone_name, count(*) AS event_count
 FROM "catalog"."schema"."events" e

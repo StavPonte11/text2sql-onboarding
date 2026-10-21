@@ -91,10 +91,21 @@ def _match(answer_sql: str, executed: list[dict[str, Any]]) -> dict[str, Any] | 
     return None
 
 
-def _re_execute(answer_sql: str) -> tuple[VerificationStatus, dict[str, Any] | None, str | None]:
+def _resolve_geometries(sql: str, registry: dict[str, Any] | None) -> str:
+    """SQL with location-analyst geometry placeholders substituted (unchanged when there are none)."""
+    from deep_agent.geo.tools import substitute_geometries
+
+    return substitute_geometries(sql, registry or {})
+
+
+def _re_execute(answer_sql: str, registry: dict[str, Any] | None = None) -> tuple[VerificationStatus, dict[str, Any] | None, str | None]:
     row_cap = settings.DEEP_AGENT_MAX_ROWS
     try:
-        guarded = sql_guard.prepare(clean_sql(answer_sql), row_cap)
+        resolved = _resolve_geometries(clean_sql(answer_sql), registry)
+    except ValueError as e:
+        return "rejected", None, str(e)
+    try:
+        guarded = sql_guard.prepare(resolved, row_cap)
     except sql_guard.GuardError as e:
         return "rejected", None, str(e)
     res = execute_query_sync(guarded.sql, reuse_connection=True)
@@ -125,8 +136,28 @@ def best_effort_result(executed: list[dict[str, Any]], reason: str) -> dict[str,
             "result": _result_view(record), "error": reason}
 
 
-def verify_answer(answer: Any, executed: list[dict[str, Any]], stop_reason: str = "no structured answer") -> dict[str, Any]:
-    """Build `final_result` from the structured answer and the run's successful executions."""
+def verify_answer(
+    answer: Any, executed: list[dict[str, Any]], stop_reason: str = "no structured answer",
+    registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build `final_result` from the structured answer and the run's successful executions.
+
+    `registry` is the thread's geo_registry: geometry placeholders in the SQL are substituted for
+    re-execution and in the SQL shown to the user (data.sql stays runnable outside the agent).
+    """
+    return _display_sql(_verify(answer, executed, stop_reason, registry), registry)
+
+
+def _display_sql(result: dict[str, Any], registry: dict[str, Any] | None) -> dict[str, Any]:
+    if registry and result.get("sql"):
+        try:
+            result["sql"] = _resolve_geometries(result["sql"], registry)
+        except ValueError:
+            pass  # unknown placeholder: leave the SQL as submitted
+    return result
+
+
+def _verify(answer: Any, executed: list[dict[str, Any]], stop_reason: str, registry: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(answer, DeepAgentAnswer):
         return best_effort_result(executed, stop_reason)
 
@@ -138,7 +169,7 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]], stop_reason: str 
     if record is not None:
         return {**base, "status": "matched", "verified": True, "sql": record["submitted_sql"], "result": _result_view(record)}
 
-    status, record, error = _re_execute(answer.sql)
+    status, record, error = _re_execute(answer.sql, registry)
     if record is None:
         return {**base, "status": status, "verified": False, "sql": clean_sql(answer.sql), "result": None, "error": error}
     return {**base, "status": status, "verified": True, "sql": record["submitted_sql"], "result": _result_view(record)}
@@ -162,9 +193,9 @@ class AnswerVerificationMiddleware(AgentMiddleware):
         answer = state.get("structured_response")
         if not isinstance(answer, DeepAgentAnswer):
             # No answer this turn: fall back only to SQL that ran in this turn.
-            return {"final_result": best_effort_result(executed[state.get("turn_execution_start") or 0:],
-                                                       "no structured answer")}
-        return {"final_result": verify_answer(answer, executed)}
+            return {"final_result": _display_sql(best_effort_result(
+                executed[state.get("turn_execution_start") or 0:], "no structured answer"), state.get("geo_registry"))}
+        return {"final_result": verify_answer(answer, executed, registry=state.get("geo_registry"))}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.after_agent, state, runtime)

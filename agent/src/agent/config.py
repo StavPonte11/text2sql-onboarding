@@ -72,6 +72,13 @@ class AgentSettings(BaseSettings):
     JARVIS_MCP_NAMESPACE: str = "global"            # gateway namespace (provider slug) exposing Utils-Server
     JARVIS_API_KEY: str = ""                        # sent as "Authorization: ApiKey <key>"
     UTILS_MCP_TIMEOUT_S: float = Field(default=10.0, gt=0)
+    # location-analyst subagent (see deep_agent/geo/)
+    GEO_CANDIDATE_LIMIT: int = Field(default=5, gt=0)                 # geocoder candidates compared per lookup
+    GEO_AMBIGUITY_DISTANCE_KM: float = Field(default=5.0, gt=0)       # similarly-ranked candidates farther apart = ambiguous
+    GEO_AMBIGUITY_IMPORTANCE_RATIO: float = Field(default=0.8, gt=0, le=1)
+    GEO_MAX_WKT_CHARS: int = Field(default=100_000, gt=0)             # registry geometry size (never in prompts; Trino query.max-length is 1M)
+    GEO_MAX_SIMPLIFY_TOLERANCE_M: float = Field(default=100.0, gt=0)  # larger simplification would change matches -> error
+    GEO_PROXIMITY_DEFAULTS_M: dict[str, float] = {}                  # per entity_type "near" radius; empty = ask the user
     # Serving (see deep_agent/service.py)
     AGENT_ENGINE: Literal["legacy", "deep"] = "legacy"   # default engine for chat_with_agent (per-call `engine` overrides)
     DEEP_AGENT_CHECKPOINT_DB_URL: str | None = None       # postgresql://... for durable deep-agent threads; unset = in-memory
