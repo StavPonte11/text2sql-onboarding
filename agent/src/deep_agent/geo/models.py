@@ -35,7 +35,6 @@ class LocationEntity(BaseModel):
     mention_context: str = ""
     normalization_notes: list[str] = Field(default_factory=list)
     ambiguity: str | None = None
-    source: Literal["gazetteer", "model_hint"] = "gazetteer"
 
 
 class ExcludedMention(BaseModel):

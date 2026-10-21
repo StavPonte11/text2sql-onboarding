@@ -31,9 +31,9 @@ SUBAGENT_TOOLS = {
         t.get_sample_rows,
     ],
     "result-verifier": [t.execute_trino_query, t.get_sample_rows],
-    # + resolve_location, bound per build to the available geocoders (see build_subagents)
+    # + extract_locations (bound to the model) and resolve_location (bound to the geocoders), see build_subagents
     "location-analyst": [
-        geo.extract_locations, t.search_metadata, t.get_table_columns, t.get_column_profile,
+        t.search_metadata, t.get_table_columns, t.get_column_profile,
         t.search_column_values, t.get_column_distinct_values, t.get_sample_rows,
     ],
 }
@@ -81,7 +81,8 @@ def build_subagents(main_model: BaseChatModel, extra_tools: dict[str, list] | No
             # The gateway geocoder is consumed inside resolve_location (geometry stays out of the context).
             geocoder_tools = [x for x in extras if x.name == GATEWAY_GEOCODER]
             extras = [x for x in extras if x.name != GATEWAY_GEOCODER]
-            tools = [*tools, geo.make_resolve_location_tool(geo.build_geocoders(geocoder_tools))]
+            tools = [geo.make_extract_locations_tool(model or main_model), *tools,
+                     geo.make_resolve_location_tool(geo.build_geocoders(geocoder_tools))]
         spec = {
             "name": name,
             "description": SUBAGENT_DESCRIPTIONS[name],

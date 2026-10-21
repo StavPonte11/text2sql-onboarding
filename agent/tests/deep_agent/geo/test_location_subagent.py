@@ -27,7 +27,16 @@ COLUMNS = [{"name": "city", "type": "varchar", "semanticType": "categorical"},
 
 def _role(messages) -> str:
     text = system_text(messages)
-    return "location-analyst" if "You are location-analyst" in text else "main"
+    for role in ("location-extractor", "location-analyst"):
+        if f"You are {role}" in text:
+            return role
+    return "main"
+
+
+EXTRACTION = AIMessage("", tool_calls=[{"name": "LocationExtraction", "id": "e1", "args": {
+    "candidates": [{"mention": "באר שבע", "is_geographic": True, "reason": "city whose boundary bounds the events"}],
+    "locations": [{"original_mention": "באר שבע", "canonical_hebrew": "באר שבע", "english_name": "beer_sheva",
+                   "entity_type": "city", "normalization_notes": []}]}}])
 
 
 def _tool_payloads(messages, name):
@@ -36,6 +45,8 @@ def _tool_payloads(messages, name):
 
 def policy(messages):
     tool_msgs = [m for m in messages if m.type == "tool"]
+    if _role(messages) == "location-extractor":
+        return EXTRACTION
     if _role(messages) == "main":
         task = [m for m in tool_msgs if m.name == "task"]
         if not task:
@@ -83,6 +94,10 @@ async def test_location_analyst_end_to_end(policy_model):
             {"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "geo-e2e"}},
             context=DeepAgentContext(connection_id=1))
 
+    # Stage 1 ran the extractor model on the question verbatim, with its own prompt.
+    extractor_calls = [msgs for msgs in model.seen if _role(msgs) == "location-extractor"]
+    assert len(extractor_calls) == 1 and extractor_calls[0][-1].content == QUESTION
+
     # Stage 2 called the geocoder once, asking for a polygon (area needed).
     assert geocode.call_count == 1 and geocode.call_args.args[1] is True
 
@@ -105,7 +120,8 @@ async def test_location_analyst_end_to_end(policy_model):
     # location-analyst was offered exactly its tools (+ resolve_location, the plan tool and harness tools).
     sub_call = next(i for i, msgs in enumerate(model.seen) if _role(msgs) == "location-analyst")
     offered = set(model.bound_tool_names[sub_call])
-    expected = {t.name for t in SUBAGENT_TOOLS["location-analyst"]} | {"resolve_location", "LocationPlan"}
+    expected = {t.name for t in SUBAGENT_TOOLS["location-analyst"]} | {"extract_locations", "resolve_location",
+                                                                        "LocationPlan"}
     assert expected <= offered and "execute_trino_query" not in offered and "task" not in offered
 
 
@@ -126,7 +142,7 @@ def test_location_analyst_spec_and_gateway_geocoder_injection():
     specs = {s["name"]: s for s in build_subagents(MagicMock(), {"location-analyst": [gateway, reverse]})}
     spec = specs["location-analyst"]
     names = [t.name for t in spec["tools"]]
-    assert "resolve_location" in names and "get_location_by_coordinates" in names
+    assert {"extract_locations", "resolve_location", "get_location_by_coordinates"} <= set(names)
     assert "get_geocode_address" not in names  # consumed by resolve_location, not offered to the model
     assert "gateway:get_geocode_address" in next(t for t in spec["tools"] if t.name == "resolve_location").description
     assert spec["response_format"].schema.__name__ == "LocationPlan"

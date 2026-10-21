@@ -1,43 +1,78 @@
 """
-Stage 1 — Hebrew location extraction and normalisation (deterministic).
+Stage 1 — Hebrew location extraction and normalisation, by the model.
 
-Gazetteer forms are matched in the query with an optional Hebrew prefix chain (ו, ש/כש, ב/ל/מ/כ,
-ה) in front of them, longest form first so that "מחנה הפליטים ג'נין" wins over "ג'נין" and
-"דרום לבנון" over "לבנון". Each match is then checked against its context: sports teams,
-venue names and personal names are excluded; generic directional / operational words in front
-are dropped with a note.
+Which spans are places, and how each is normalised, is a contextual judgement (a team named
+after a city, a personal name that is also a region, a prefix letter that belongs to the name),
+so it is made by an LLM following the `location-extractor` prompt (guidelines + examples,
+Langfuse-managed as deep-agent/location-extractor). The model first lists every candidate it
+considered with its decision, then the entities.
 
-Mentions the gazetteer does not know are proposed by the location-analyst model as hints and
-normalised here: they must occur in the query, prefixes are stripped only when the remainder
-is a known form (a mechanical strip would corrupt names such as לוד), and the English name is
-validated as snake_case.
+This module never decides what is a place. It only checks the model's output before anyone
+relies on it:
+- every original_mention must occur in the query (a hallucinated mention is moved to
+  `excluded` with the reason);
+- english_name is coerced to lowercase snake_case; entity_type must be a known type;
+- duplicates (same canonical Hebrew + English name) are merged;
+- malformed output gets one corrective retry, then a clear failure.
 """
 
+import json
+import logging
 import re
-from dataclasses import dataclass
+from typing import Any
 
-from pydantic import BaseModel, Field
+from json_repair import repair_json
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from pydantic import BaseModel, Field, ValidationError
 
-from deep_agent.geo.gazetteer import (
-    AMBIGUOUS_ABBREVIATIONS, DIRECTION_WORDS, ENTRIES, GEOGRAPHIC_HEADS, OPERATIONAL_WORDS, TEAM_WORDS, VENUE_WORDS,
-    GazetteerEntry,
-)
 from deep_agent.geo.models import EntityType, ExcludedMention, ExtractionResult, LocationEntity
+from deep_agent.prompt_registry import load_prompt
 
-# One-to-one character substitutions, so spans in the normalised text are spans in the query.
+logger = logging.getLogger(__name__)
+
+PROMPT_KEY = "location-extractor"
+_ENTITY_TYPES = frozenset(EntityType.__args__)
+# One-to-one character substitutions (Hebrew geresh/gershayim, maqaf, typographic quotes), so a
+# mention typed with ״ matches a query typed with ".
 _PUNCT = str.maketrans({"״": '"', "“": '"', "”": '"', "׳": "'", "‘": "'", "’": "'", "`": "'",
                         "־": "-", "–": "-", "—": "-"})
-_PREFIX = r"(?:ו)?(?:ש|כש)?(?:[בלמכ])?(?:ה)?"
-_PREFIX_RE = re.compile(_PREFIX)
-_LOCATIVE = re.compile(r"^ו?(?:ש|כש)?[בלמ]")
-_PREFIX_NAMES = {"ו": "ו (and)", "ב": "ב (in)", "ל": "ל (to)", "מ": "מ (from)", "כ": "כ (as)", "ש": "ש (that)",
-                 "ה": "ה (the)"}
-_GENERIC_SECTOR = re.compile(r"^(?:ו?[בלמ]?)?ה?גזרה(?:\s+ה\S+)?$")
-_CONTEXT_CHARS = 25
+
+
+class CandidateDecision(BaseModel):
+    mention: str = Field(description="A span of the query you considered.")
+    is_geographic: bool = Field(description="True only if it is used as a geographic reference here.")
+    reason: str = Field(description="Short factual reason (e.g. 'sports team', 'date', 'city where it happened').")
+
+
+class ExtractedLocation(BaseModel):
+    original_mention: str = Field(description="Exact substring of the query, including any prefix.")
+    canonical_hebrew: str
+    english_name: str | None = Field(default=None, description="lowercase snake_case English name")
+    entity_type: str | None = None
+    mention_context: str = ""
+    normalization_notes: list[str] = Field(default_factory=list)
+    ambiguity: str | None = None
+
+
+class LocationExtraction(BaseModel):
+    """Submit the geographic entities of the query. Call exactly once."""
+
+    candidates: list[CandidateDecision] = Field(
+        default_factory=list, description="Every span considered, places and look-alikes, with the decision. Fill first.")
+    locations: list[ExtractedLocation] = Field(default_factory=list)
+
+
+class ExtractionError(RuntimeError):
+    pass
 
 
 def normalize_punctuation(text: str) -> str:
     return (text or "").translate(_PUNCT)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", normalize_punctuation(text)).strip()
 
 
 def to_snake_case(name: str | None) -> str | None:
@@ -48,186 +83,78 @@ def to_snake_case(name: str | None) -> str | None:
     return snake if re.search(r"[a-z]", snake) else None
 
 
-def _form_regex(form: str) -> str:
-    parts = []
-    for ch in normalize_punctuation(form):
-        if ch in " -":
-            parts.append(r"[\s-]")
-        elif ch == '"':
-            parts.append(r"(?:\"|'')")
-        else:
-            parts.append(re.escape(ch))
-    return "".join(parts)
+def _mention_span(query: str, mention: str) -> tuple[int, int] | None:
+    """Span of `mention` in `query`, tolerant only of punctuation variants and whitespace runs."""
+    if not mention.strip():
+        return None
+    parts = [re.escape(p) for p in _squash(mention).split(" ")]
+    m = re.search(r"\s+".join(parts), normalize_punctuation(query))
+    return m.span() if m else None
 
 
-@dataclass(frozen=True)
-class _Form:
-    text: str
-    kind: str          # canonical | abbreviation | variant | alias | person_risk | ambiguous_abbreviation
-    entry: GazetteerEntry | None
-    pattern: re.Pattern
-
-
-def _compile(text: str, kind: str, entry: GazetteerEntry | None) -> _Form:
-    pattern = re.compile(rf"(?<![\w\"'])(?P<prefix>{_PREFIX})(?P<name>{_form_regex(text)})(?![\w])")
-    return _Form(text, kind, entry, pattern)
-
-
-def _build_forms() -> list[_Form]:
-    forms = []
-    for entry in ENTRIES:
-        forms.append(_compile(entry.canonical_hebrew, "canonical", entry))
-        forms.extend(_compile(text, kind, entry) for text, kind in entry.forms.items())
-    forms.extend(_compile(abbr, "ambiguous_abbreviation", None) for abbr in AMBIGUOUS_ABBREVIATIONS)
-    return sorted(forms, key=lambda f: len(f.text), reverse=True)
-
-
-_FORMS = _build_forms()
-_BY_FORM = {normalize_punctuation(f.text): f for f in reversed(_FORMS)}
-
-
-def _strip_word_prefix(word: str, vocab: frozenset[str]) -> str | None:
-    """The vocabulary word under an optional prefix chain ('למזרח' -> 'מזרח'), else None."""
-    for i in range(0, min(4, len(word))):
-        if _PREFIX_RE.fullmatch(word[:i]) and word[i:] in vocab:
-            return word[i:]
-    return None
-
-
-def _previous_word(text: str, start: int) -> str:
-    words = re.findall(r"[\w\"'-]+", text[:start])
-    return words[-1] if words else ""
-
-
-def _context(query: str, start: int, end: int) -> str:
-    return query[max(0, start - _CONTEXT_CHARS):end + _CONTEXT_CHARS].strip()
-
-
-def _prefix_note(prefix: str) -> str:
-    return "stripped prefix " + " + ".join(_PREFIX_NAMES.get(ch, ch) for ch in prefix)
-
-
-def _exclusion(form: _Form, prefix: str, previous: str) -> str | None:
-    if not prefix:
-        if _strip_word_prefix(previous, TEAM_WORDS):
-            return f"part of a sports team / organisation name ('{previous} …')"
-        if _strip_word_prefix(previous, VENUE_WORDS):
-            return f"part of a venue or street name ('{previous} …')"
-    if form.kind == "person_risk" and not _LOCATIVE.match(prefix) and not _strip_word_prefix(previous, GEOGRAPHIC_HEADS):
-        return "common personal name without a locative prefix or geographic head word"
-    return None
-
-
-def _entity_from_match(query: str, form: _Form, prefix: str, start: int, end: int, previous: str) -> LocationEntity:
-    notes = [_prefix_note(prefix)] if prefix else []
-    mention = query[start:end]
-    if form.entry is None:  # ambiguous abbreviation: keep the mention, do not expand speculatively
-        options = AMBIGUOUS_ABBREVIATIONS[form.text]
-        return LocationEntity(
-            original_mention=mention, canonical_hebrew=normalize_punctuation(mention), english_name=None,
-            mention_context=_context(query, start, end), normalization_notes=notes,
-            ambiguity=f"ambiguous abbreviation; could be: {', '.join(options)}",
-        )
-    entry = form.entry
-    if form.kind != "canonical":
-        label = {"person_risk": "alias"}.get(form.kind, form.kind)
-        notes.append(f"{label} '{form.text}' → '{entry.canonical_hebrew}'")
-    direction = _strip_word_prefix(previous, DIRECTION_WORDS)
-    if direction and not entry.canonical_hebrew.startswith(direction):
-        notes.append(f"dropped generic directional modifier '{direction}'")
-    operational = _strip_word_prefix(previous, OPERATIONAL_WORDS)
-    if operational:
-        notes.append(f"dropped generic area word '{operational}'")
-    return LocationEntity(
-        original_mention=mention, canonical_hebrew=entry.canonical_hebrew, english_name=entry.english_name,
-        entity_type=entry.entity_type, mention_context=_context(query, start, end), normalization_notes=notes,
-        ambiguity=entry.ambiguity,
-    )
-
-
-class MentionHint(BaseModel):
-    """A place the model found in the query that the gazetteer may not know."""
-
-    mention: str = Field(description="Exact substring of the query, as written (with any prefix).")
-    canonical_hebrew: str | None = Field(default=None, description="Normalised Hebrew name, without grammatical prefixes.")
-    english_name: str | None = Field(default=None, description="English name; converted to snake_case.")
-    entity_type: str | None = None
-
-
-def _lookup(text: str) -> tuple[_Form, str] | None:
-    """Gazetteer form for `text`, allowing a prefix chain in front: (form, prefix)."""
-    norm = normalize_punctuation(text).strip()
-    for i in range(0, min(4, len(norm))):
-        if _PREFIX_RE.fullmatch(norm[:i]) and norm[i:] in _BY_FORM:
-            return _BY_FORM[norm[i:]], norm[:i]
-    return None
-
-
-def _from_hint(query: str, hint: MentionHint) -> LocationEntity | ExcludedMention:
-    mention = hint.mention.strip()
-    norm_query = normalize_punctuation(query)
-    start = norm_query.find(normalize_punctuation(mention))
-    if not mention or start < 0:
-        return ExcludedMention(mention=mention, reason="not found in the query")
-    end = start + len(mention)
-    if _GENERIC_SECTOR.match(normalize_punctuation(mention)):
-        return ExcludedMention(mention=mention, reason="generic operational sector, not a named place")
-
-    known = _lookup(mention) or (_lookup(hint.canonical_hebrew) if hint.canonical_hebrew else None)
-    if known and known[0].entry is not None:
-        form, prefix = known
-        entity = _entity_from_match(query, form, prefix, start, end, _previous_word(norm_query, start))
-        return entity.model_copy(update={"original_mention": query[start:end]})
-
-    allowed_types = set(EntityType.__args__)
-    canonical = normalize_punctuation(hint.canonical_hebrew or mention).strip()
-    notes = ["not in the gazetteer — model-proposed name, unverified until resolved"]
-    if canonical != normalize_punctuation(mention):
-        notes.append(f"model normalised '{mention}' → '{canonical}'")
-    english = to_snake_case(hint.english_name)
-    entity_type = hint.entity_type if hint.entity_type in allowed_types else None
-    return LocationEntity(
-        original_mention=query[start:end], canonical_hebrew=canonical, english_name=english,
-        entity_type=entity_type, mention_context=_context(query, start, end), normalization_notes=notes,
-        ambiguity=None if english else "no canonical English name available", source="model_hint",
-    )
-
-
-def extract_locations(query: str, hints: list[MentionHint] | None = None) -> ExtractionResult:
-    """Extract and normalise the geographic entities referenced in a Hebrew query."""
-    text = normalize_punctuation(query)
-    taken: list[tuple[int, int]] = []
-    found: list[tuple[int, LocationEntity]] = []
-    excluded: list[ExcludedMention] = []
-
-    for form in _FORMS:
-        for m in form.pattern.finditer(text):
-            start, end = m.span("name")
-            if any(start < e and s < end for s, e in taken):
-                continue
-            taken.append((start, end))
-            previous = _previous_word(text, m.start("prefix"))
-            reason = _exclusion(form, m.group("prefix"), previous)
-            if reason:
-                excluded.append(ExcludedMention(mention=query[start:end], reason=reason))
-                continue
-            found.append((start, _entity_from_match(query, form, m.group("prefix"), start, end, previous)))
-
-    for hint in hints or []:
-        start = text.find(normalize_punctuation(hint.mention.strip())) if hint.mention.strip() else -1
-        if start >= 0 and any(start < e and s < start + len(hint.mention.strip()) for s, e in taken):
-            continue  # already handled by the gazetteer (extracted or excluded)
-        result = _from_hint(query, hint)
-        if isinstance(result, ExcludedMention):
-            excluded.append(result)
-        else:
-            found.append((start, result))
-
+def validate_extraction(query: str, raw: LocationExtraction) -> ExtractionResult:
+    """Check the model's extraction against the query; never adds or reinterprets places."""
     locations: list[LocationEntity] = []
+    excluded = [ExcludedMention(mention=c.mention, reason=c.reason) for c in raw.candidates if not c.is_geographic]
     seen: set[tuple[str, str | None]] = set()
-    for _, entity in sorted(found, key=lambda item: item[0]):
-        key = (entity.canonical_hebrew, entity.english_name)
-        if key not in seen:
-            seen.add(key)
-            locations.append(entity)
+    for loc in raw.locations:
+        span = _mention_span(query, loc.original_mention)
+        if span is None:
+            logger.warning("Location extractor reported %r, which is not in the query", loc.original_mention)
+            excluded.append(ExcludedMention(mention=loc.original_mention,
+                                            reason="reported by the extractor but not found in the query — dropped"))
+            continue
+        english = to_snake_case(loc.english_name)
+        notes = list(loc.normalization_notes)
+        if english and loc.english_name and english != loc.english_name:
+            notes.append(f"english name normalised to snake_case ({loc.english_name!r} → {english!r})")
+        entity_type = loc.entity_type if loc.entity_type in _ENTITY_TYPES else None
+        if loc.entity_type and entity_type is None:
+            notes.append(f"unknown entity_type {loc.entity_type!r} dropped")
+        ambiguity = loc.ambiguity or (None if english else "no English name given")
+        key = (_squash(loc.canonical_hebrew), english)
+        if key in seen:
+            continue
+        seen.add(key)
+        locations.append(LocationEntity(
+            original_mention=query[span[0]:span[1]], canonical_hebrew=_squash(loc.canonical_hebrew),
+            english_name=english, entity_type=entity_type,
+            mention_context=loc.mention_context or query[max(0, span[0] - 25):span[1] + 25].strip(),
+            normalization_notes=notes, ambiguity=ambiguity,
+        ))
     return ExtractionResult(locations=locations, excluded=excluded)
+
+
+def _parse(message: AIMessage) -> LocationExtraction:
+    for call in message.tool_calls or []:
+        if call.get("name") == LocationExtraction.__name__:
+            return LocationExtraction.model_validate(call.get("args") or {})
+    text = message.text if isinstance(message.text, str) else str(message.content)
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        raise ValueError("no LocationExtraction tool call and no JSON object in the reply")
+    return LocationExtraction.model_validate(json.loads(repair_json(match.group(0))))
+
+
+async def extract_locations(
+    query: str, model: BaseChatModel, note: str | None = None, config: dict[str, Any] | None = None,
+) -> ExtractionResult:
+    """Run the model extractor on `query` (one corrective retry on malformed output)."""
+    if not query or not query.strip():
+        return ExtractionResult()
+    bound = model.bind_tools([LocationExtraction])
+    content = query if not note else f"{query}\n\n[Reviewer note: {note}]"
+    messages: list = [SystemMessage(load_prompt(PROMPT_KEY).text), HumanMessage(content)]
+    last_error: Exception | None = None
+    for _ in range(2):
+        reply = await bound.ainvoke(messages, config=config)
+        try:
+            return validate_extraction(query, _parse(reply))
+        except (ValueError, ValidationError) as exc:
+            last_error = exc
+            logger.warning("Location extractor returned malformed output: %s", exc)
+            call_id = next((c.get("id") for c in reply.tool_calls or []), None)
+            messages.append(reply)
+            feedback = f"Invalid output: {exc}. Call LocationExtraction again with valid arguments."
+            messages.append(ToolMessage(feedback, tool_call_id=call_id) if call_id else HumanMessage(feedback))
+    raise ExtractionError(f"location extractor output invalid after retry: {last_error}")

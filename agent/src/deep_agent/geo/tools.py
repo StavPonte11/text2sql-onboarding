@@ -7,15 +7,16 @@ from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.tools import ToolRuntime
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import BaseTool, StructuredTool, tool
+from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from agent.utils.sql import resolve_wkt_polygons
 from deep_agent.context import DeepAgentContext, geo_registry
 from deep_agent.envelope import fail, ok
-from deep_agent.geo.extract import MentionHint
+from deep_agent.geo.extract import ExtractionError
 from deep_agent.geo.extract import extract_locations as run_extraction
 from deep_agent.geo.models import LocationPlan
 from deep_agent.geo.plan import finalize_plan
@@ -47,26 +48,38 @@ def substitute_geometries(sql: str, registry: dict[str, Any]) -> str:
     return resolve_wkt_polygons(sql, {"coords": {t: geometries[t]["wkt"] for t in tokens}})
 
 
-@tool
-def extract_locations(query: str, hints: list[MentionHint] | None = None) -> str:
-    """
-    Stage 1: extract and normalise the geographic entities in a Hebrew query.
+class ExtractLocationsArgs(BaseModel):
+    query: str = Field(description="The user's question, verbatim.")
+    note: str | None = Field(
+        default=None, description="Optional reviewer note for a second pass, e.g. a span you think was missed or "
+                                  "misjudged and why. Omit on the first call.")
 
-    Deterministic: matches the gazetteer (canonical names, acronyms such as ת״א / איו״ש, spelling
-    variants, aliases such as ג'בל שייח' → הר חרמון) with grammatical prefixes stripped, and
-    excludes sports teams, venues and personal names. Pass in `hints` every other place you see in
-    the query that is used geographically (exact substring as `mention`, plus your canonical Hebrew
-    and English name); they are validated and marked source="model_hint".
 
-    Returns data.locations (original_mention, canonical_hebrew, english_name, entity_type,
-    mention_context, normalization_notes, ambiguity, source) and data.excluded (mention, reason).
-    An empty list is a valid answer.
+def make_extract_locations_tool(model: BaseChatModel) -> BaseTool:
+    """extract_locations backed by the model (location-extractor prompt) — see deep_agent.geo.extract."""
 
-    Args:
-        query: The user's question, verbatim.
-        hints: Places the gazetteer may not know.
-    """
-    return ok(run_extraction(query, hints).model_dump(exclude_none=True))
+    async def _extract(query: str, note: str | None = None, runtime: Runtime = None) -> str:
+        try:
+            result = await run_extraction(query, model, note, config=getattr(runtime, "config", None))
+        except ExtractionError as exc:
+            return fail("EXTRACTION_FAILED", str(exc))
+        except Exception as exc:  # model endpoint errors
+            return fail("EXTRACTION_FAILED", f"location extractor model call failed: {exc}")
+        return ok(result.model_dump(exclude_none=True))
+
+    return StructuredTool.from_function(
+        coroutine=_extract,
+        name="extract_locations",
+        description=(
+            "Stage 1: identify every geographic entity in a Hebrew query and normalise it. A dedicated extractor "
+            "model reasons over the context (places vs. teams, people, venues, dates; prefixes, abbreviations, "
+            "spelling, aliases, directional / operational modifiers). Returns data.locations (original_mention, "
+            "canonical_hebrew, english_name, entity_type, mention_context, normalization_notes, ambiguity) and "
+            "data.excluded (mention, reason). An empty list is valid. If you disagree with the result, call once "
+            "more with `note` explaining the span and why."
+        ),
+        args_schema=ExtractLocationsArgs,
+    )
 
 
 class ResolveLocationArgs(BaseModel):

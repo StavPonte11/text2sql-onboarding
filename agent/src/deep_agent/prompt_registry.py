@@ -2,7 +2,8 @@
 Prompt management for the Deep Agent.
 
 Prompts are Langfuse text prompts named `deep-agent/<key>` (system, schema-scout,
-value-resolver, result-verifier, location-analyst), fetched by label (DEEP_AGENT_PROMPT_LABEL, default
+value-resolver, result-verifier, location-analyst,
+location-extractor), fetched by label (DEEP_AGENT_PROMPT_LABEL, default
 "production") with the SDK's TTL cache. The packaged `prompts/<key>.md` files are the
 fallback when Langfuse is unreachable or the prompt doesn't exist, and the only source when
 DEEP_AGENT_LANGFUSE_PROMPTS is off (tests, offline dev).
@@ -27,7 +28,8 @@ from agent.config import settings
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-PROMPT_KEYS = ("system", "schema-scout", "value-resolver", "result-verifier", "location-analyst")
+PROMPT_KEYS = ("system", "schema-scout", "value-resolver", "result-verifier", "location-analyst",
+               "location-extractor")
 
 
 def langfuse_name(key: str) -> str:

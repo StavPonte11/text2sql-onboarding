@@ -1,183 +1,150 @@
+"""
+Stage 1 pipeline with a scripted model: the prompt the model gets, and how its output is checked.
+
+What counts as a place is the model's judgement — that is evaluated against the spec examples
+on a real LLM in test_extraction_live.py. These tests only cover the code around the model.
+"""
+
 import json
 
 import pytest
+from langchain_core.messages import AIMessage
 
-from deep_agent.geo.extract import MentionHint, extract_locations, normalize_punctuation, to_snake_case
-from deep_agent.geo.gazetteer import ENTRIES
-from deep_agent.geo.tools import extract_locations as extract_tool
+from deep_agent.geo.extract import (
+    ExtractionError, LocationExtraction, extract_locations, normalize_punctuation, to_snake_case, validate_extraction,
+)
+from deep_agent.geo.tools import make_extract_locations_tool
+from deep_agent.prompt_registry import local_prompt
+from tests.deep_agent.conftest import system_text
+from tests.deep_agent.geo.extraction_cases import REGRESSION
 
-
-def pairs(query, hints=None):
-    return [(loc.canonical_hebrew, loc.english_name) for loc in extract_locations(query, hints).locations]
-
-
-def excluded(query):
-    return {e.mention: e.reason for e in extract_locations(query).excluded}
-
-
-# --- Section 2.7 regression examples ---------------------------------------------------------------
-
-REGRESSION = {
-    "A two cities and a date": (
-        "כמה חיילים נפצעו בחאן יונס וברפיח במאי 2025",
-        [("חאן יונס", "khan_yunis"), ("רפיח", "rafah")],
-    ),
-    "B generic direction and acronyms": (
-        "הגענו למזרח ת״א ואז המשכנו לאיו״ש",
-        [("תל אביב", "tel_aviv"), ("יהודה ושומרון", "judea_and_samaria")],
-    ),
-    "C sports teams vs geography": (
-        "משחק של מכבי חיפה נגד הפועל ירושלים נדחה בגלל מזג האוויר בחיפה",
-        [("חיפה", "haifa")],
-    ),
-    "D personal names and a restaurant": (
-        "גולן ושרון קבעו פגישה במסעדת אוסלו",
-        [],
-    ),
-    "E arabic-derived names and a region": (
-        "כוחות צה״ל פעלו בליילה בבינת ג'ביל, במארון אר-ראס ובאל-ח'יאם בדרום לבנון",
-        [("בינת ג'בייל", "bint_jbeil"), ("מארון א-ראס", "maroun_al_ras"), ("אל-ח'יאם", "al_khiam"),
-         ("דרום לבנון", "south_lebanon")],
-    ),
-    "F settlements and natural features": (
-        "הם נסעו מכפר קאסם לכפר כנא דרך ואדי עארה ועצרו ליד נחל קישון",
-        [("כפר קאסם", "kafr_qasim"), ("כפר כנא", "kafr_kanna"), ("ואדי עארה", "wadi_ara"),
-         ("נחל קישון", "kishon_river")],
-    ),
-    "G refugee camps, a city and a military camp": (
-        "פעילות במחנה הפליטים ג'נין ובלטא ליד שכם, וגם במחנה נחשונים",
-        [("מחנה הפליטים ג'נין", "jenin_refugee_camp"), ("מחנה בלאטה", "balata_refugee_camp"), ("שכם", "nablus"),
-         ("מחנה נחשונים", "nahshonim_camp")],
-    ),
-    "H river, mountain and alias": (
-        "זיהו שיגורים מאזור נהר הליטני לכיוון הר דב וג'בל שייח'",
-        [("נהר הליטני", "litani_river"), ("הר דב", "har_dov"), ("הר חרמון", "mount_hermon")],
-    ),
-    "I operational sector vs named region": (
-        "כוחותינו הוקפצו לגזרה הצפונית ולגזרת עוטף עזה",
-        [("עוטף עזה", "gaza_envelope")],
-    ),
-}
+QUERY_E = REGRESSION["E arabic-derived names and a region"][0]
 
 
-@pytest.mark.parametrize("query, expected", REGRESSION.values(), ids=REGRESSION.keys())
-def test_regression_examples(query, expected):
-    assert pairs(query) == expected
+def reply(**args) -> AIMessage:
+    return AIMessage("", tool_calls=[{"name": "LocationExtraction", "id": "e1", "args": args}])
 
 
-def test_original_mentions_are_exact_substrings_without_prefixes():
-    query = REGRESSION["E arabic-derived names and a region"][0]
-    result = extract_locations(query)
-    assert [loc.original_mention for loc in result.locations] == ["בינת ג'ביל", "מארון אר-ראס", "אל-ח'יאם", "דרום לבנון"]
-    assert all(loc.original_mention in query for loc in result.locations)
+def loc(mention, canonical, english, entity_type="city", **kw):
+    return {"original_mention": mention, "canonical_hebrew": canonical, "english_name": english,
+            "entity_type": entity_type, **kw}
 
 
-def test_normalization_notes_record_each_decision():
-    b = {loc.english_name: loc.normalization_notes for loc in extract_locations(REGRESSION["B generic direction and acronyms"][0]).locations}
-    assert any("abbreviation" in n for n in b["tel_aviv"])
-    assert any("directional modifier 'מזרח'" in n for n in b["tel_aviv"])
-    assert any("ל (to)" in n for n in b["judea_and_samaria"])
-    h = {loc.english_name: loc.normalization_notes for loc in extract_locations(REGRESSION["H river, mountain and alias"][0]).locations}
-    assert any("alias" in n and "הר חרמון" in n for n in h["mount_hermon"])
-    i = extract_locations(REGRESSION["I operational sector vs named region"][0]).locations[0]
-    assert any("'גזרת'" in n for n in i.normalization_notes)
+def test_prompt_carries_the_guidelines_and_all_examples():
+    prompt = local_prompt("location-extractor")
+    for topic in ("Grammatical prefixes", "Abbreviations", "directional modifiers", "Spelling", "snake_case",
+                  "candidates", "not a list to match against"):
+        assert topic in prompt
+    for query, _ in REGRESSION.values():
+        assert query in prompt
 
 
-def test_exclusion_reasons():
-    c = excluded(REGRESSION["C sports teams vs geography"][0])
-    assert "sports team" in c["חיפה"] and "sports team" in c["ירושלים"]
-    d = excluded(REGRESSION["D personal names and a restaurant"][0])
-    assert set(d) == {"גולן", "שרון", "אוסלו"}
-    assert "venue" in d["אוסלו"] and "personal name" in d["גולן"]
+@pytest.mark.asyncio
+async def test_model_output_is_returned_after_validation(scripted_model):
+    model = scripted_model(reply(
+        candidates=[{"mention": "בליילה", "is_geographic": False, "reason": "time of day"},
+                    {"mention": "בבינת ג'ביל", "is_geographic": True, "reason": "town where forces operated"}],
+        locations=[loc("בבינת ג'ביל", "בינת ג'בייל", "bint_jbeil", "town",
+                       normalization_notes=["stripped ב", "spelling ג'ביל → ג'בייל"]),
+                   loc("בדרום לבנון", "דרום לבנון", "South Lebanon", "region")]))
+    result = await extract_locations(QUERY_E, model)
+
+    # The model saw the extractor prompt and the query verbatim.
+    assert "You are location-extractor" in system_text(model.seen[0])
+    assert model.seen[0][-1].content == QUERY_E
+    assert model.bound_tool_names[0] == ["LocationExtraction"]
+
+    assert [(x.canonical_hebrew, x.english_name) for x in result.locations] == [
+        ("בינת ג'בייל", "bint_jbeil"), ("דרום לבנון", "south_lebanon")]
+    south = result.locations[1]
+    assert "snake_case" in south.normalization_notes[-1] and south.mention_context
+    assert [(e.mention, e.reason) for e in result.excluded] == [("בליילה", "time of day")]
 
 
-def test_entity_types_and_distinct_camp_vs_city():
-    locs = {loc.english_name: loc for loc in extract_locations(REGRESSION["G refugee camps, a city and a military camp"][0]).locations}
-    assert locs["jenin_refugee_camp"].entity_type == "refugee_camp"
-    assert "jenin" not in locs  # the camp is not collapsed into the city
-    assert locs["nahshonim_camp"].entity_type == "military_base"
-    assert locs["nablus"].entity_type == "city"
+def test_hallucinated_mentions_are_dropped_not_trusted():
+    raw = LocationExtraction(locations=[loc("בעזה", "עזה", "gaza"), loc("ברפיח", "רפיח", "rafah")])
+    result = validate_extraction("כמה חיילים נפצעו ברפיח", raw)
+    assert [x.english_name for x in result.locations] == ["rafah"]
+    assert result.excluded[0].mention == "בעזה" and "not found in the query" in result.excluded[0].reason
 
 
-# --- Additional cases (section 7.1) ----------------------------------------------------------------
-
-@pytest.mark.parametrize("query, expected", [
-    ("ומבאר שבע הגיעו", [("באר שבע", "beer_sheva")]),                     # ו + מ
-    ("כשבחיפה ירד גשם", [("חיפה", "haifa")]),                              # כש + ב
-    ("נסענו ללוד ומשם ללוד", [("לוד", "lod")]),                            # name starting with ל is not stripped
-    ("ההגעה לירושלים ולת''א", [("ירושלים", "jerusalem"), ("תל אביב", "tel_aviv")]),  # '' as gershayim
-    ("הכוחות פעלו בג'נין ובמחנה הפליטים ג'נין", [("ג'נין", "jenin"), ("מחנה הפליטים ג'נין", "jenin_refugee_camp")]),
-    ("בין חיפה לעכו", [("חיפה", "haifa"), ("עכו", "acre")]),
-    ("אירועים במזרח ירושלים", [("מזרח ירושלים", "east_jerusalem")]),        # established directional name kept
-    ("אירועים בצפון ישראל", [("ישראל", "israel")]),                         # generic direction dropped
-    ("סיור ברמת הגולן ובגולן", [("רמת הגולן", "golan_heights")]),           # person-risk form with a locative prefix
-    ("מלון ירושלים בתל אביב", [("תל אביב", "tel_aviv")]),                  # venue name
-    ("ג'בל א-שייח' והחרמון", [("הר חרמון", "mount_hermon")]),               # two aliases, one entity
-    ("ביוני 2024 נמכרו 30 יחידות", []),                                    # dates / numbers
-    ("כמה הזמנות היו אתמול", []),
-    ("", []),
-])
-def test_additional_cases(query, expected):
-    assert pairs(query) == expected
+def test_mentions_match_across_punctuation_variants():
+    query = "הגענו למזרח ת״א ואז המשכנו לאיו״ש"
+    raw = LocationExtraction(locations=[loc('ת"א', "תל אביב", "tel_aviv"),
+                                        loc("לאיו''ש", "יהודה ושומרון", "judea_and_samaria", "region")])
+    result = validate_extraction(query, raw)
+    assert [x.original_mention for x in result.locations] == ["ת״א"]  # exact query substring is reported
+    raw = LocationExtraction(locations=[loc("לאיו״ש", "יהודה ושומרון", "judea_and_samaria", "region")])
+    assert validate_extraction(query, raw).locations[0].original_mention == "לאיו״ש"
 
 
-def test_ambiguous_abbreviation_is_not_expanded():
-    [loc] = extract_locations("ההפגנה בר\"ה").locations
-    assert loc.canonical_hebrew == 'ר"ה' and loc.english_name is None
-    assert "ראש העין" in loc.ambiguity and "ראש השנה" in loc.ambiguity
-
-
-def test_gaza_city_vs_strip_ambiguity_is_recorded():
-    [loc] = extract_locations("ירי מעזה").locations
-    assert loc.english_name == "gaza" and "Gaza Strip" in loc.ambiguity
-
-
-def test_model_hints_are_validated():
-    query = "כמה תקריות היו בבית שאן ובחיפה"
-    result = extract_locations(query, [
-        MentionHint(mention="בבית שאן", canonical_hebrew="בית שאן", english_name="Beit She'an", entity_type="city"),
-        MentionHint(mention="בחיפה", canonical_hebrew="חיפה", english_name="haifa"),   # already covered
-        MentionHint(mention="בנצרת", canonical_hebrew="נצרת"),                          # not in the query
-        MentionHint(mention="הגזרה הצפונית"),                                            # not in the query either
+def test_types_names_and_duplicates_are_checked():
+    query = "ג'בל שייח' והחרמון וגם בעיר החדשה"
+    raw = LocationExtraction(locations=[
+        loc("ג'בל שייח'", "הר חרמון", "Mount Hermon", "mountain"),
+        loc("והחרמון", "הר חרמון", "mount_hermon", "mountain"),          # same entity twice
+        loc("בעיר החדשה", "העיר החדשה", "העיר", "spaceship"),            # Hebrew english name, unknown type
     ])
-    locs = {loc.canonical_hebrew: loc for loc in result.locations}
-    assert list(locs) == ["בית שאן", "חיפה"]
-    hint = locs["בית שאן"]
-    assert hint.source == "model_hint" and hint.english_name == "beit_she_an" and hint.entity_type == "city"
-    assert hint.original_mention == "בבית שאן"
-    assert {e.mention for e in result.excluded} == {"בנצרת", "הגזרה הצפונית"}
+    result = validate_extraction(query, raw)
+    assert [x.english_name for x in result.locations] == ["mount_hermon", None]
+    odd = result.locations[1]
+    assert odd.entity_type is None and odd.ambiguity == "no English name given"
+    assert any("unknown entity_type" in n for n in odd.normalization_notes)
 
 
-def test_hint_generic_sector_and_unknown_type_are_rejected():
-    result = extract_locations("הוקפצו לגזרה הצפונית ולמעלה", [
-        MentionHint(mention="לגזרה הצפונית"), MentionHint(mention="ולמעלה", entity_type="spaceship")])
-    assert [e.reason for e in result.excluded] == ["generic operational sector, not a named place"]
-    [loc] = result.locations
-    assert loc.entity_type is None and loc.english_name is None and loc.ambiguity
+@pytest.mark.asyncio
+async def test_empty_query_makes_no_model_call(scripted_model):
+    model = scripted_model()
+    assert (await extract_locations("  ", model)).locations == []
+    assert model.seen == []
 
 
-def test_hint_for_known_variant_uses_the_gazetteer():
-    result = extract_locations("פעילות בבלאטה", [MentionHint(mention="בבלאטה", english_name="balata")])
-    [loc] = result.locations
-    assert loc.english_name == "balata_refugee_camp" and loc.source == "gazetteer"
+@pytest.mark.asyncio
+async def test_no_locations_is_valid(scripted_model):
+    model = scripted_model(reply(candidates=[{"mention": "גולן", "is_geographic": False, "reason": "person"}],
+                                 locations=[]))
+    result = await extract_locations("גולן ושרון קבעו פגישה במסעדת אוסלו", model)
+    assert result.locations == [] and result.excluded[0].reason == "person"
 
 
-def test_snake_case_and_punctuation():
+@pytest.mark.asyncio
+async def test_malformed_output_gets_one_corrective_retry(scripted_model):
+    model = scripted_model(reply(locations=[{"canonical_hebrew": "רפיח"}]),       # missing original_mention
+                           reply(locations=[loc("ברפיח", "רפיח", "rafah")]))
+    result = await extract_locations("נפצעו ברפיח", model)
+    assert [x.english_name for x in result.locations] == ["rafah"]
+    retry_messages = model.seen[1]
+    assert retry_messages[-1].type == "tool" and "Invalid output" in retry_messages[-1].text
+
+
+@pytest.mark.asyncio
+async def test_persistent_malformed_output_fails_clearly(scripted_model):
+    model = scripted_model(AIMessage("I think it's Rafah"), AIMessage("still no json"))
+    with pytest.raises(ExtractionError):
+        await extract_locations("נפצעו ברפיח", model)
+
+
+@pytest.mark.asyncio
+async def test_json_text_reply_is_accepted(scripted_model):
+    model = scripted_model(AIMessage('```json\n{"locations": [{"original_mention": "ברפיח", '
+                                     '"canonical_hebrew": "רפיח", "english_name": "rafah"}]}\n```'))
+    result = await extract_locations("נפצעו ברפיח", model)
+    assert result.locations[0].english_name == "rafah"
+
+
+@pytest.mark.asyncio
+async def test_tool_envelope_note_and_failures(scripted_model):
+    model = scripted_model(reply(locations=[loc("ברפיח", "רפיח", "rafah")]), AIMessage("x"), AIMessage("y"))
+    tool = make_extract_locations_tool(model)
+    out = json.loads(await tool.ainvoke({"query": "נפצעו ברפיח", "note": "check רפיח"}))
+    assert out["ok"] and out["data"]["locations"][0]["english_name"] == "rafah"
+    assert "[Reviewer note: check רפיח]" in model.seen[0][-1].content
+    failed = json.loads(await tool.ainvoke({"query": "נפצעו ברפיח"}))
+    assert failed["ok"] is False and failed["error"]["category"] == "EXTRACTION_FAILED"
+
+
+def test_snake_case_and_punctuation_helpers():
     assert to_snake_case("Maroun al-Ras") == "maroun_al_ras"
     assert to_snake_case("  Tel  Aviv ") == "tel_aviv"
     assert to_snake_case("חיפה") is None
     assert normalize_punctuation("ת״א ג׳נין") == "ת\"א ג'נין"
-
-
-def test_gazetteer_identifiers_are_unique_snake_case():
-    names = [e.english_name for e in ENTRIES]
-    assert len(names) == len(set(names))
-    assert all(to_snake_case(n) == n for n in names)
-
-
-def test_tool_returns_envelope():
-    payload = json.loads(extract_tool.invoke({"query": REGRESSION["A two cities and a date"][0]}))
-    assert payload["ok"] is True
-    assert [loc["english_name"] for loc in payload["data"]["locations"]] == ["khan_yunis", "rafah"]
-    empty = json.loads(extract_tool.invoke({"query": "כמה הזמנות"}))
-    assert empty["data"] == {"locations": [], "excluded": []}
