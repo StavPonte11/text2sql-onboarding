@@ -13,6 +13,8 @@ export interface EvalRunFull {
   pass_rate: number;
   fail_rate: number;
   total_questions: number;
+  /** Questions with a result so far (set while the run is in progress) */
+  completed_questions?: number | null;
   duration_seconds: number | null;
   triggered_by: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';

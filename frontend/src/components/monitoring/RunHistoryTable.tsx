@@ -19,6 +19,54 @@ const RENAMED_DIMENSIONS: Record<string, string> = {
 
 const dimensionLabel = (dim: string) => (RENAMED_DIMENSIONS[dim] ?? dim).replace(/_/g, ' ');
 
+/** Pass rate over the questions finished so far, e.g. "40% so far" */
+function livePassRate(perQuestion: { status: string }[] | undefined): string {
+  const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
+  if (!finished.length) return 'Calculating…';
+  const passed = finished.filter((q) => q.status === 'pass').length;
+  return `${Math.round((passed / finished.length) * 100)}% so far`;
+}
+
+/** "Evaluating 36 of 58 questions" with a bar, shown while a run is in progress */
+function RunProgress({ completed, total }: { completed: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  return (
+    <div className="card" style={{ padding: '14px 18px' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 13,
+          fontWeight: 600,
+          marginBottom: 8,
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#f59e0b' }}>
+          <Spinner size={13} color="#f59e0b" />
+          Evaluating {completed} of {total} questions
+        </span>
+        <span style={{ color: 'var(--text-secondary)' }}>{pct}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={completed}
+        aria-valuemin={0}
+        aria-valuemax={total}
+        style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: '#f59e0b',
+            transition: 'width 0.4s ease',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
   const stopMut = useStopEvalRun();
@@ -93,6 +141,13 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
         {report && (
           <div className="run-detail-content">
+            {report.status === 'running' && (
+              <RunProgress
+                completed={report.completed_questions ?? 0}
+                total={report.total_questions}
+              />
+            )}
+
             {/* Summary */}
             <div className="card summary-grid">
               {[
@@ -113,7 +168,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   label: 'Pass Rate',
                   value:
                     report.status === 'running'
-                      ? 'Calculating…'
+                      ? livePassRate(report.per_question)
                       : `${Math.round(report.pass_rate * 100)}%`,
                   color:
                     report.status === 'running'
@@ -122,7 +177,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         ? '#10b981'
                         : '#ef4444',
                 },
-                { label: 'Questions', value: report.total_questions, color: 'var(--text-primary)' },
+                {
+                  label: 'Questions',
+                  value:
+                    report.status === 'running'
+                      ? `${report.completed_questions ?? 0}/${report.total_questions}`
+                      : report.total_questions,
+                  color: 'var(--text-primary)',
+                },
                 {
                   label: 'Duration',
                   value: report.duration_seconds ? `${report.duration_seconds}s` : '—',
@@ -558,6 +620,11 @@ export function RunHistoryTable({
                       >
                         <Spinner size={12} color="#f59e0b" />
                         Evaluating…
+                        {run.completed_questions != null && run.total_questions > 0 && (
+                          <span title="Questions finished so far">
+                            {run.completed_questions}/{run.total_questions}
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span

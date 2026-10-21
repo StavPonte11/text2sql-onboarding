@@ -36,6 +36,7 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -43,6 +44,7 @@ from app.routers.evaluation import (
     _call_run_new_evaluation,
     _map_and_save_run_metrics,
     execute_single_table_eval,
+    save_case_results,
 )
 from app.services.jeen_metadata import fetch_jeen_sql_pairs
 from app.services.langfuse_client import langfuse_client
@@ -352,8 +354,24 @@ def _run_dataset_pipeline(
                 "dataset_name": dataset_name,
                 "connection_id": connection_id,
             }
+            saved_question_ids: set[str] = set()
+
+            def save_progress(job: dict) -> None:
+                """Store each finished question as it comes in, so the report shows it."""
+                new_ids = save_case_results(
+                    run_id,
+                    job.get("completed_cases") or [],
+                    session,
+                    skip_question_ids=saved_question_ids,
+                )
+                if new_ids:
+                    session.commit()
+                    saved_question_ids.update(new_ids)
+
             eval_resp = _call_run_new_evaluation(
-                req, is_cancelled=lambda: _is_run_cancelled(run_id)
+                req,
+                is_cancelled=lambda: _is_run_cancelled(run_id),
+                on_progress=save_progress,
             )
 
             # Check if run was cancelled while evaluation was in progress
@@ -737,6 +755,16 @@ def list_runs(
         query = query.where(EvalRun.connection_id == connection_id)
 
     results = session.exec(query).all()
+    running_ids = [run.id for run, _ in results if run.status == EvalStatus.running]
+    completed_counts: dict[str, int] = {}
+    if running_ids:
+        completed_counts = dict(
+            session.exec(
+                select(EvalResult.run_id, func.count())
+                .where(EvalResult.run_id.in_(running_ids))
+                .group_by(EvalResult.run_id)
+            ).all()
+        )
     runs = []
     for run, table_name in results:
         if table_name:
@@ -754,6 +782,9 @@ def list_runs(
             update={
                 "table_name": t_name,
                 "connection_name": run.connection_name,
+                "completed_questions": completed_counts.get(run.id, 0)
+                if run.status == EvalStatus.running
+                else None,
             },
         )
         runs.append(read)
@@ -894,6 +925,28 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
             }
             for r in results
         ]
+        if (
+            run.status == EvalStatus.running
+            and run.connection_id
+            and run.triggered_by != "bird"
+        ):
+            # Finished questions first, then the ones still being evaluated
+            done = {r.question_id for r in results}
+            per_question += [
+                {
+                    "question_id": q.id,
+                    "question": q.question,
+                    "score": None,
+                    "status": "pending",
+                    "failure_type": None,
+                }
+                for q in session.exec(
+                    select(GoldenQuestion).where(
+                        GoldenQuestion.connection_id == run.connection_id
+                    )
+                ).all()
+                if q.id not in done
+            ]
 
     failure_breakdown = run.failure_breakdown or (
         {"evaluation_failed": run.total_questions or len(per_question)}
@@ -908,6 +961,8 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
         "total_questions": run.total_questions or len(per_question),
+        # questions with a result so far (equals total_questions once completed)
+        "completed_questions": len(results),
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,

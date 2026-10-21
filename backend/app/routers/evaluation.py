@@ -253,34 +253,66 @@ def _map_and_save_run_metrics(
     }
     session.add(run)
 
-    # Only insert EvalResult rows for question_ids that are valid FK references
-    # (i.e. exist in golden_questions). External benchmark cases (e.g. BIRD) won't match.
-    if eval_resp.cases:
+    # Replace any per-question rows saved while the run was in progress
+    for existing in session.exec(
+        select(EvalResult).where(EvalResult.run_id == run_id)
+    ).all():
+        session.delete(existing)
+    save_case_results(run_id, eval_resp.cases, session)
 
-        def _clean_qid(qid: str) -> str:
-            return qid.split(":")[-1] if ":" in qid else qid
 
-        case_ids = [_clean_qid(c.question_id) for c in eval_resp.cases]
-        valid_ids = set(
-            session.exec(
-                select(GoldenQuestion.id).where(GoldenQuestion.id.in_(case_ids))
-            ).all()
+def save_case_results(
+    run_id: str,
+    cases: list,
+    session: Session,
+    skip_question_ids: set[str] | None = None,
+) -> set[str]:
+    """
+    Add an EvalResult row per case (pass = contains accuracy above threshold).
+
+    Only question_ids that are valid FK references (exist in golden_questions)
+    are saved; external benchmark cases (e.g. BIRD) won't match. Cases are
+    RunDatasetCaseResultDTOs or their dicts. Returns the question ids saved.
+    """
+
+    def _field(case, name, default=None):
+        return (
+            case.get(name, default)
+            if isinstance(case, dict)
+            else getattr(case, name, default)
         )
-        for case in eval_resp.cases:
-            target_id = _clean_qid(case.question_id)
-            if target_id in valid_ids:
-                score = case.scores.get("contains_accuracy", 0.0)
-                status = "pass" if score >= settings.EVAL_THRESHOLD else "fail"
-                error_type = None if status == "pass" else case.error
-                session.add(
-                    EvalResult(
-                        run_id=run_id,
-                        question_id=target_id,
-                        score=score,
-                        status=status,
-                        error_type=error_type,
-                    )
-                )
+
+    def _clean_qid(qid: str) -> str:
+        return qid.split(":")[-1] if ":" in qid else qid
+
+    skip = skip_question_ids or set()
+    pending = {
+        _clean_qid(_field(c, "question_id")): c
+        for c in cases or []
+        if _clean_qid(_field(c, "question_id")) not in skip
+    }
+    if not pending:
+        return set()
+
+    valid_ids = set(
+        session.exec(
+            select(GoldenQuestion.id).where(GoldenQuestion.id.in_(list(pending)))
+        ).all()
+    )
+    for target_id in valid_ids:
+        case = pending[target_id]
+        score = (_field(case, "scores") or {}).get("contains_accuracy", 0.0)
+        status = "pass" if score >= settings.EVAL_THRESHOLD else "fail"
+        session.add(
+            EvalResult(
+                run_id=run_id,
+                question_id=target_id,
+                score=score,
+                status=status,
+                error_type=None if status == "pass" else _field(case, "error"),
+            )
+        )
+    return valid_ids
 
 
 class EvaluationCancelledError(Exception):
@@ -288,13 +320,18 @@ class EvaluationCancelledError(Exception):
 
 
 def _call_run_new_evaluation(
-    req: dict, is_cancelled: Callable[[], bool] | None = None
+    req: dict,
+    is_cancelled: Callable[[], bool] | None = None,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> "RunDatasetResponse":
     """Run an evaluation on the evaluation service and return its response.
 
     Submits a background job and polls it until it finishes, so a run of any
     length never depends on one HTTP request staying open. Falls back to the
     blocking run-new-evaluation endpoint on services without the jobs API.
+
+    on_progress(job) is called with every job status while it runs (it carries
+    completed_items, total_items and completed_cases).
 
     Raises EvaluationCancelledError when is_cancelled() turns true, TimeoutError
     after EVALUATION_TIMEOUT_SECONDS, RuntimeError when the job fails, and
@@ -368,6 +405,12 @@ def _call_run_new_evaluation(
             return RunDatasetResponse(**job["result"])
         if job["status"] == "failed":
             raise RuntimeError(f"Evaluation job failed: {job.get('error')}")
+
+        if on_progress is not None:
+            try:
+                on_progress(job)
+            except Exception as exc:
+                logger.warning(f"[Eval] Saving progress of job {job_id} failed: {exc}")
 
         progress = (job.get("completed_items"), job.get("total_items"))
         if progress != last_progress:

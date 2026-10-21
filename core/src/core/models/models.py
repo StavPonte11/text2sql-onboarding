@@ -206,6 +206,8 @@ class EvalRunRead(SQLModel):
     regression_delta: float | None
     promotion_run_id: str | None = None
     created_at: datetime
+    # Questions with a result so far (filled for running runs)
+    completed_questions: int | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
