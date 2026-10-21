@@ -18,7 +18,6 @@ import type {
   QueryFeedback,
   QueryFeedbackCreate,
   Table,
-  TableCreate,
   TableHealth,
   TableProfile,
   UserScope,
@@ -59,10 +58,8 @@ export const tablesApi = {
   list: (params?: { status?: string; owner_id?: string; search?: string }) =>
     api.get<Table[]>('/tables', { params }).then((r) => r.data),
   get: (id: string) => api.get<Table>(`/tables/${id}`).then((r) => r.data),
-  create: (payload: TableCreate) => api.post<Table>('/tables', payload).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<Table>(`/tables/${id}/status`, null, { params: { status } }).then((r) => r.data),
-  syncSchema: (id: string) => api.post<Table>(`/tables/${id}/sync-schema`).then((r) => r.data),
 };
 
 // ── Enrichment ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { App, Select } from 'antd';
@@ -8,8 +8,6 @@ import {
   Code2,
   Database,
   ExternalLink,
-  Eye,
-  EyeOff,
   History,
   Loader2,
   PlayCircle,
@@ -26,7 +24,6 @@ import { orchestrationApi } from '../api/orchestration';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import { ScheduleManager } from '../components/monitoring/ScheduleManager';
-import { isSpider2Table } from '../config/constants';
 import {
   useConnectionQuestions,
   useCreateConnectionQuestion,
@@ -58,9 +55,6 @@ function TableFilters({
   activeOwners,
   setActiveOwners,
   onClear,
-  showSpider2,
-  onToggleSpider2,
-  spider2Pending,
 }: {
   search: string;
   setSearch: (v: string) => void;
@@ -71,9 +65,6 @@ function TableFilters({
   activeOwners: string[];
   setActiveOwners: (v: string[]) => void;
   onClear: () => void;
-  showSpider2: boolean;
-  onToggleSpider2: () => void;
-  spider2Pending: boolean;
 }) {
   return (
     <div className="table-filters">
@@ -123,22 +114,6 @@ function TableFilters({
         />
       </div>
 
-      <button
-        className={`btn btn--sm table-filters__spider2-toggle${showSpider2 ? ' table-filters__spider2-toggle--active' : ''}`}
-        onClick={onToggleSpider2}
-        disabled={spider2Pending}
-        title={showSpider2 ? 'Hide Spider2 tables' : 'Show Spider2 tables'}
-      >
-        {spider2Pending ? (
-          <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} />
-        ) : showSpider2 ? (
-          <Eye size={13} />
-        ) : (
-          <EyeOff size={13} />
-        )}
-        Spider2
-      </button>
-
       <button className="btn btn--ghost btn--sm" onClick={onClear}>
         Clear Filters
       </button>
@@ -149,16 +124,10 @@ function TableFilters({
 // ── Run trigger panel ──────────────────────────────────────────────────────────
 function RunTriggerPanel({
   onLaunch,
-  showSpider2,
-  onToggleSpider2,
-  spider2Pending,
   connections,
   loadingConnections,
 }: {
   onLaunch?: () => void;
-  showSpider2: boolean;
-  onToggleSpider2: () => void;
-  spider2Pending: boolean;
   connections: any[];
   loadingConnections: boolean;
 }) {
@@ -175,7 +144,7 @@ function RunTriggerPanel({
 
   useEffect(() => {
     setVisibleCount(50);
-  }, [search, activeStatuses, activeOwners, showSpider2]);
+  }, [search, activeStatuses, activeOwners]);
 
   useEffect(() => {
     if (!sentinel) return;
@@ -224,7 +193,6 @@ function RunTriggerPanel({
 
     return tables.filter((t: Table) => {
       if (selectedCatalog && t.catalog?.toLowerCase() !== selectedCatalog) return false;
-      if (!showSpider2 && isSpider2Table(t)) return false;
       if (activeStatuses.length > 0 && !activeStatuses.includes(t.status)) return false;
       const owner = (t as any).owner_id;
       if (activeOwners.length > 0 && !activeOwners.includes(owner)) return false;
@@ -233,7 +201,7 @@ function RunTriggerPanel({
       const haystack = `${t.name} ${t.schema_name} ${serviceCatalog}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [tables, search, activeStatuses, activeOwners, showSpider2, selectedConnection, connections]);
+  }, [tables, search, activeStatuses, activeOwners, selectedConnection, connections]);
 
   const displayedTables = useMemo(() => {
     return filteredTables.slice(0, visibleCount);
@@ -331,9 +299,6 @@ function RunTriggerPanel({
           activeOwners={activeOwners}
           setActiveOwners={setActiveOwners}
           onClear={clearFilters}
-          showSpider2={showSpider2}
-          onToggleSpider2={onToggleSpider2}
-          spider2Pending={spider2Pending}
         />
       )}
 
@@ -1014,16 +979,20 @@ function DatasetRunPanel({
           className="btn btn--secondary"
           style={{ flex: 1, justifyContent: 'center' }}
           disabled={triggerDatasetMut.isPending || !!runningDataset || !selectedConnection}
-          title={!selectedConnection ? 'Please select a catalog connection' : undefined}
-          onClick={() => handleLaunch('spider2')}
+          title={
+            !selectedConnection
+              ? 'Please select a catalog connection'
+              : 'Runs the public BIRD text-to-SQL benchmark questions for this connection. The connection must hold a BIRD database and be named after it (e.g. movie_platform).'
+          }
+          onClick={() => handleLaunch('bird')}
         >
-          {triggerDatasetMut.isPending && runningDataset === 'spider2' ? (
+          {triggerDatasetMut.isPending && runningDataset === 'bird' ? (
             <>
               <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Launching…
             </>
           ) : (
             <>
-              <PlayCircle size={16} /> Run Spider2 Dataset
+              <PlayCircle size={16} /> Run Public Benchmark
             </>
           )}
         </button>
@@ -1056,15 +1025,6 @@ export function EvaluationsPage() {
   const [runningDataset, setRunningDataset] = useState<string | null>(null);
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
   const stopRunMut = useStopEvalRun();
-  const [showSpider2, setShowSpider2] = useState(false);
-  const [spider2Pending, startSpider2Transition] = useTransition();
-
-  const handleToggleSpider2 = () => {
-    startSpider2Transition(() => {
-      setShowSpider2((v) => !v);
-    });
-  };
-
   // Shared connections state (same pattern as Agent Sandbox)
   const [connections, setConnections] = useState<any[]>([]);
   const [loadingConnections, setLoadingConnections] = useState(false);
@@ -1082,13 +1042,6 @@ export function EvaluationsPage() {
         setLoadingConnections(false);
       });
   }, []);
-
-  // All tables — used to build spider2 table ID set for run history filtering
-  const { data: allTables = [] } = useTables();
-  const spider2TableIds = useMemo(
-    () => new Set(allTables.filter(isSpider2Table).map((t: any) => t.id)),
-    [allTables],
-  );
 
   // Poll the specific run's details if we have a running run
   const { data: runningRunData } = useQuery({
@@ -1127,7 +1080,8 @@ export function EvaluationsPage() {
     { key: 'run', label: 'Run Controls', icon: <PlayCircle size={14} /> },
   ];
 
-  const datasetLabel = runningDataset === 'text2sql_production' ? 'Production Dataset' : 'Spider2';
+  const datasetLabel =
+    runningDataset === 'text2sql_production' ? 'Production Dataset' : 'Public Benchmark (BIRD)';
 
   return (
     <div className="page">
@@ -1219,10 +1173,7 @@ export function EvaluationsPage() {
             title="Execution History"
             sub="All evaluation runs across tables — click any row to view full report"
           />
-          <RunHistoryTable
-            limit={100}
-            excludeTableIds={showSpider2 ? undefined : spider2TableIds}
-          />
+          <RunHistoryTable limit={100} />
         </div>
       )}
 
@@ -1262,9 +1213,6 @@ export function EvaluationsPage() {
             <div style={{ marginTop: '16px' }}>
               <RunTriggerPanel
                 onLaunch={switchToHistory}
-                showSpider2={showSpider2}
-                onToggleSpider2={handleToggleSpider2}
-                spider2Pending={spider2Pending}
                 connections={connections}
                 loadingConnections={loadingConnections}
               />

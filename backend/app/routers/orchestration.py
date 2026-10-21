@@ -17,6 +17,7 @@ import requests
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
+    DifficultyLevel,
     EnrichmentVersion,
     EvalResult,
     EvalRun,
@@ -30,6 +31,7 @@ from core.models.models import (
     EvaluationScheduleRead,
     EvaluationScheduleUpdate,
     GoldenQuestion,
+    QuestionType,
     Table,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -38,11 +40,11 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.routers.evaluation import (
-    RunDatasetResponse,
-    _build_questions_payload,
+    _call_run_new_evaluation,
     _map_and_save_run_metrics,
     execute_single_table_eval,
 )
+from app.services.jeen_metadata import fetch_jeen_sql_pairs
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -312,6 +314,12 @@ def trigger_evaluation_run(
     return read_runs
 
 
+def _is_run_cancelled(run_id: str) -> bool:
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        return run is not None and run.status == EvalStatus.cancelled
+
+
 def _run_dataset_pipeline(
     dataset_name: str, run_id: str, connection_id: int | None = None
 ):
@@ -344,13 +352,9 @@ def _run_dataset_pipeline(
                 "dataset_name": dataset_name,
                 "connection_id": connection_id,
             }
-            resp = requests.post(
-                f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-new-evaluation",
-                json=req,
-                timeout=600,
+            eval_resp = _call_run_new_evaluation(
+                req, is_cancelled=lambda: _is_run_cancelled(run_id)
             )
-            resp.raise_for_status()
-            eval_resp = RunDatasetResponse(**resp.json())
 
             # Check if run was cancelled while evaluation was in progress
             session.refresh(run)
@@ -382,6 +386,19 @@ def _run_dataset_pipeline(
                 if run.status != EvalStatus.cancelled:
                     run.status = EvalStatus.failed
                     run.score = 0.0
+                    run.fail_rate = 1.0
+                    run.pass_rate = 0.0
+                    err_msg = str(e)
+                    if isinstance(e, requests.ConnectionError):
+                        err_msg = (
+                            f"Could not reach the evaluation service at "
+                            f"{settings.EVALUATION_SERVICE_URL}: {e}"
+                        )
+                    run.failure_breakdown = {
+                        "evaluation_failed": run.total_questions or 1,
+                        "error_message": err_msg,
+                        "message": err_msg,
+                    }
                     session.add(run)
                     session.commit()
             except Exception as db_err:
@@ -389,7 +406,7 @@ def _run_dataset_pipeline(
 
 
 @router.post("/run-dataset", response_model=EvalRunRead, status_code=202)
-def trigger_dataset_run(
+async def trigger_dataset_run(
     dataset_name: str,
     background_tasks: BackgroundTasks,
     connection_id: int | None = Query(default=None),
@@ -429,69 +446,89 @@ def trigger_dataset_run(
 
     # 1. Sync production dataset if requested
     if dataset_name == "text2sql_production":
-        # First priority: check for golden questions directly associated with this connection
-        conn_questions = session.exec(
+        # Fetch golden questions directly from Jeen metadata ONLY
+        jeen_pairs: list[dict] = []
+        try:
+            jeen_pairs = await fetch_jeen_sql_pairs(conn_id)
+        except Exception as e:
+            logger.warning(
+                f"[Eval] Failed to fetch golden questions from Jeen for connection {conn_id}: {e}"
+            )
+
+        if not jeen_pairs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
+            )
+
+        existing_db_questions = session.exec(
             select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
         ).all()
+        by_question_text = {q.question.strip(): q for q in existing_db_questions}
 
-        if conn_questions:
-            all_questions_payload = [
-                {
-                    "question_id": q.id,
-                    "question_text": q.question,
-                    "expected_sql": q.expected_sql,
-                    "connection_id": conn_id,
-                    "connection_name": conn_name,
-                    "difficulty": q.difficulty.value
-                    if hasattr(q.difficulty, "value")
-                    else str(q.difficulty),
-                    "question_type": q.question_type.value
-                    if hasattr(q.question_type, "value")
-                    else str(q.question_type),
-                }
-                for q in conn_questions
-            ]
-            total_q_count = len(conn_questions)
-        else:
-            # Fallback: check if there are catalog tables matching connection_name
-            matching_tables = []
-            if conn_name:
-                matching_tables = session.exec(
-                    select(Table).where(Table.catalog.ilike(f"%{conn_name}%"))
-                ).all()
+        conn_questions: list[GoldenQuestion] = []
+        for item in jeen_pairs:
+            q_text = (item.get("question") or "").strip()
+            sql = (
+                item.get("sql_statement")
+                or item.get("query")
+                or item.get("expected_sql")
+                or ""
+            ).strip()
+            if not q_text:
+                continue
 
-            if matching_tables:
-                prod_table_ids = [t.id for t in matching_tables]
-                prod_qs = session.exec(
-                    select(GoldenQuestion).where(
-                        GoldenQuestion.table_id.in_(prod_table_ids)
-                    )
-                ).all()
-                all_questions_payload = []
-                for table in matching_tables:
-                    qs_for_table = [q for q in prod_qs if q.table_id == table.id]
-                    all_questions_payload.extend(
-                        _build_questions_payload(qs_for_table, table)
-                    )
-                total_q_count = len(prod_qs)
+            if q_text in by_question_text:
+                q = by_question_text[q_text]
+                if sql and q.expected_sql != sql:
+                    q.expected_sql = sql
+                    session.add(q)
+                conn_questions.append(q)
             else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}). Please configure golden questions for this connection first.",
+                q = GoldenQuestion(
+                    connection_id=conn_id,
+                    question=q_text,
+                    expected_sql=sql,
+                    difficulty=DifficultyLevel.simple,
+                    question_type=QuestionType.simple,
                 )
+                session.add(q)
+                conn_questions.append(q)
 
-    elif dataset_name == "spider2":
-        all_questions_payload = []
-        spider2_tables = session.exec(
-            select(Table).where(Table.owner_id == "spider2")
-        ).all()
-        s2_ids = [t.id for t in spider2_tables]
-        if s2_ids:
-            total_q_count = len(
-                session.exec(
-                    select(GoldenQuestion).where(GoldenQuestion.table_id.in_(s2_ids))
-                ).all()
-            )
+        session.commit()
+        for q in conn_questions:
+            session.refresh(q)
+
+        all_questions_payload = [
+            {
+                "question_id": q.id,
+                "question_text": q.question,
+                "expected_sql": q.expected_sql,
+                "connection_id": conn_id,
+                "connection_name": conn_name,
+                "difficulty": q.difficulty.value
+                if hasattr(q.difficulty, "value")
+                else str(q.difficulty),
+                "question_type": q.question_type.value
+                if hasattr(q.question_type, "value")
+                else str(q.question_type),
+            }
+            for q in conn_questions
+        ]
+        total_q_count = len(conn_questions)
+
+    elif dataset_name == "bird":
+        # BIRD-Verified benchmark: the evaluation service loads the questions of
+        # the BIRD database this connection holds (matched by connection name)
+        # and syncs them to Langfuse itself; the question count is known only
+        # once the run completes.
+        pass
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dataset '{dataset_name}'. Use 'text2sql_production' or 'bird'.",
+        )
 
     actual_dataset_to_run = (
         f"text2sql_connection_{conn_id}"
@@ -537,7 +574,7 @@ def trigger_dataset_run(
 
 
 @router.post("/run-connection", response_model=EvalRunRead, status_code=202)
-def trigger_connection_run(
+async def trigger_connection_run(
     background_tasks: BackgroundTasks,
     connection_id: int = Query(...),
     connection_name: str | None = Query(default=None),
@@ -568,26 +605,56 @@ def trigger_connection_run(
     )
     trig_by = triggered_by if isinstance(triggered_by, str) else "user"
 
-    # 1. Fetch all golden questions for this connection
-    questions = session.exec(
-        select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
-    ).all()
-
-    # Fallback to catalog name matching if no direct questions assigned
-    if not questions and conn_name:
-        tables = session.exec(
-            select(Table).where(Table.catalog.ilike(f"%{conn_name}%"))
-        ).all()
-        t_ids = [t.id for t in tables]
-        if t_ids:
-            questions = session.exec(
-                select(GoldenQuestion).where(GoldenQuestion.table_id.in_(t_ids))
+    # 1. Fetch all golden questions for this connection from Jeen metadata
+    questions: list[GoldenQuestion] = []
+    try:
+        jeen_pairs = await fetch_jeen_sql_pairs(conn_id)
+        if jeen_pairs:
+            existing_db_questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
             ).all()
+            by_question_text = {q.question.strip(): q for q in existing_db_questions}
+
+            for item in jeen_pairs:
+                q_text = (item.get("question") or "").strip()
+                sql = (
+                    item.get("sql_statement")
+                    or item.get("query")
+                    or item.get("expected_sql")
+                    or ""
+                ).strip()
+                if not q_text:
+                    continue
+
+                if q_text in by_question_text:
+                    q = by_question_text[q_text]
+                    if sql and q.expected_sql != sql:
+                        q.expected_sql = sql
+                        session.add(q)
+                    questions.append(q)
+                else:
+                    q = GoldenQuestion(
+                        connection_id=conn_id,
+                        question=q_text,
+                        expected_sql=sql,
+                        difficulty=DifficultyLevel.simple,
+                        question_type=QuestionType.simple,
+                    )
+                    session.add(q)
+                    questions.append(q)
+
+            session.commit()
+            for q in questions:
+                session.refresh(q)
+    except Exception as e:
+        logger.warning(
+            f"[Eval] Failed to fetch golden questions from Jeen for connection {conn_id}: {e}"
+        )
 
     if not questions:
         raise HTTPException(
             status_code=404,
-            detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}). Please configure golden questions for this connection before running evaluation.",
+            detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
         )
 
     # 2. Sync to Langfuse dataset if available
@@ -783,24 +850,38 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     ).all()
     question_map = {q.id: q.question for q in questions}
 
-    if not results and run.table_id:
-        table_questions = session.exec(
-            select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
-        ).all()
+    # Benchmark (BIRD) questions aren't golden questions of the connection, so
+    # never fall back to listing the connection's own questions for them
+    if (
+        not results
+        and (run.table_id or run.connection_id)
+        and run.triggered_by != "bird"
+    ):
+        if run.table_id:
+            fallback_questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
+            ).all()
+        else:
+            fallback_questions = session.exec(
+                select(GoldenQuestion).where(
+                    GoldenQuestion.connection_id == run.connection_id
+                )
+            ).all()
         is_running = run.status == EvalStatus.running
+        err_msg = (
+            (run.failure_breakdown or {}).get("error_message")
+            or (run.failure_breakdown or {}).get("message")
+            or ("evaluation_failed" if run.status == EvalStatus.failed else "failed")
+        )
         per_question = [
             {
                 "question_id": q.id,
                 "question": q.question,
                 "score": None if is_running else 0.0,
                 "status": "pending" if is_running else "fail",
-                "failure_type": None
-                if is_running
-                else (
-                    "evaluation_failed" if run.status == EvalStatus.failed else "failed"
-                ),
+                "failure_type": None if is_running else err_msg,
             }
-            for q in table_questions
+            for q in fallback_questions
         ]
     else:
         per_question = [

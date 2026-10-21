@@ -49,11 +49,20 @@ def test_execute_single_table_eval_success(mock_session):
     mock_exec_result.all.return_value = [mock_q1]
     mock_session.exec.return_value = mock_exec_result
 
-    with patch("app.routers.evaluation.requests.post") as mock_post:
-        # Mock successful evaluation service response
-        mock_post_response = MagicMock()
+    with patch("app.routers.evaluation.requests.post") as mock_post, patch(
+        "app.routers.evaluation.requests.get"
+    ) as mock_get_job, patch(
+        "app.routers.evaluation.settings.EVALUATION_POLL_INTERVAL_SECONDS", 0
+    ):
+        # Evaluation service accepts the job, then reports it completed
+        mock_post_response = MagicMock(status_code=202)
         mock_post_response.raise_for_status.return_value = None
+        mock_post_response.json.return_value = {"job_id": "job-1", "status": "running"}
         mock_post.return_value = mock_post_response
+        mock_get_job.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"status": "completed", "result": {}}),
+        )
         
         with patch("app.routers.evaluation.langfuse_client.ensure_dataset_synced"):
             with patch("app.routers.evaluation._map_and_save_run_metrics") as mock_map:
@@ -70,9 +79,10 @@ def test_execute_single_table_eval_success(mock_session):
                     
                     score = execute_single_table_eval(table_id, run_id, mock_session, connection_id=89)
                     
-                    # Verify requests.post was called with correct payload
+                    # Verify the job was submitted with the correct payload
                     mock_post.assert_called_once()
                     args, kwargs = mock_post.call_args
+                    assert args[0].endswith("/run-new-evaluation/jobs")
                     assert "json" in kwargs
                     assert kwargs["json"]["dataset_name"] == f"text2sql_sandbox_{table_id}"
                     assert kwargs["json"]["connection_id"] == 89

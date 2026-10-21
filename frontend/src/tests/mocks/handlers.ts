@@ -150,16 +150,6 @@ export const handlers = [
     return HttpResponse.json(tables[tableIndex]);
   }),
 
-  http.post(`${API_BASE_URL}/tables/:id/sync-schema`, ({ params }) => {
-    const { id } = params;
-    const table = tables.find((t) => t.id === id);
-    if (!table) {
-      return new HttpResponse(null, { status: 404, statusText: 'Table not found' });
-    }
-    table.updated_at = new Date().toISOString();
-    return HttpResponse.json(table);
-  }),
-
   // ── Enrichment API ─────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/tables/:id/enrichment/latest`, ({ params }) => {
     return HttpResponse.json({

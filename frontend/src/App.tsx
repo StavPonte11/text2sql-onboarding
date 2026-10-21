@@ -9,7 +9,6 @@ import { AuthProvider } from './components/layout/AuthProvider';
 import { ScopeBanner } from './components/layout/ScopeBanner';
 import { Sidebar } from './components/layout/Sidebar';
 import { MonitoringPage } from './components/monitoring/MonitoringPage';
-import { OnboardingWizard } from './components/wizard/OnboardingWizard';
 import { AdminPanelPage } from './pages/AdminPanelPage';
 import { AgentTestingPage } from './pages/AgentTestingPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
@@ -124,14 +123,6 @@ function AppLayout() {
           <Route path="/tables" element={<Navigate to="/connections" replace />} />
           <Route path="/tables/:id" element={<Navigate to="/connections" replace />} />
           <Route path="/tables/:id/:tab" element={<Navigate to="/connections" replace />} />
-          <Route
-            path="/wizard"
-            element={
-              <ProtectedRoute>
-                <OnboardingWizard />
-              </ProtectedRoute>
-            }
-          />
           <Route
             path="/monitoring"
             element={

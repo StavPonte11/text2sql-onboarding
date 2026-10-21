@@ -14,6 +14,8 @@ On fail  → table.status = sandbox   + alert created
 """
 
 import logging
+import time
+from collections.abc import Callable
 from datetime import datetime
 
 import requests
@@ -67,6 +69,8 @@ class AccuracyStatsDTO(BaseModel):
     schema_hallucination: float
     dialect_error: float
     composite_score: float
+    # evaluator → number of questions it could judge (e.g. golden SQL ran)
+    evaluated_counts: dict[str, int] = {}
 
 
 class FailureCategoryDTO(BaseModel):
@@ -106,6 +110,8 @@ class RunDatasetCaseResultDTO(BaseModel):
     succeeded: bool
     error: str | None = None
     scores: dict[str, float]
+    # evaluators that could not judge this question (e.g. its golden SQL failed)
+    not_applicable: list[str] = []
 
 
 class RunDatasetResponse(BaseModel):
@@ -184,8 +190,16 @@ def _map_and_save_run_metrics(
         run.pass_rate = 0.0
         run.fail_rate = 1.0
     else:
-        run.pass_rate = 1.0 - eval_resp.failure_rate
-        run.fail_rate = eval_resp.failure_rate
+        # A question passes when its result contains the expected result
+        # (the primary metric), not merely when its SQL executed
+        passed_count = sum(
+            1
+            for c in eval_resp.cases
+            if c.scores.get("contains_accuracy", 0.0) >= settings.EVAL_THRESHOLD
+        )
+        total = len(eval_resp.cases) or eval_resp.total_cases
+        run.pass_rate = round(passed_count / total, 4)
+        run.fail_rate = round(1.0 - run.pass_rate, 4)
     if eval_resp.total_cases > 0 or not run.total_questions:
         run.total_questions = eval_resp.total_cases
     run.duration_seconds = eval_resp.duration_seconds
@@ -219,7 +233,7 @@ def _map_and_save_run_metrics(
     session.add(run)
 
     # Only insert EvalResult rows for question_ids that are valid FK references
-    # (i.e. exist in golden_questions). External benchmark cases (e.g. Spider2) won't match.
+    # (i.e. exist in golden_questions). External benchmark cases (e.g. BIRD) won't match.
     if eval_resp.cases:
 
         def _clean_qid(qid: str) -> str:
@@ -248,24 +262,98 @@ def _map_and_save_run_metrics(
                 )
 
 
-def _call_run_new_evaluation(req: dict) -> "RunDatasetResponse":
-    """POST to the evaluation service run-new-evaluation endpoint.
+class EvaluationCancelledError(Exception):
+    """The run was cancelled while its evaluation job was still running."""
 
-    Raises requests.HTTPError on a non-2xx response.
-    Returns a parsed RunDatasetResponse.
+
+def _call_run_new_evaluation(
+    req: dict, is_cancelled: Callable[[], bool] | None = None
+) -> "RunDatasetResponse":
+    """Run an evaluation on the evaluation service and return its response.
+
+    Submits a background job and polls it until it finishes, so a run of any
+    length never depends on one HTTP request staying open. Falls back to the
+    blocking run-new-evaluation endpoint on services without the jobs API.
+
+    Raises EvaluationCancelledError when is_cancelled() turns true, TimeoutError
+    after EVALUATION_TIMEOUT_SECONDS, RuntimeError when the job fails, and
+    requests exceptions when the service is unreachable.
     """
     if "connection_id" not in req or req.get("connection_id") is None:
         raise ValueError(
             "connection_id is required to run evaluation and must be chosen by user."
         )
 
-    resp = requests.post(
-        f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/run-new-evaluation",
-        json=req,
-        timeout=600,
+    base_url = f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation"
+    submit = requests.post(f"{base_url}/run-new-evaluation/jobs", json=req, timeout=60)
+    if submit.status_code in (404, 405):
+        logger.warning(
+            "[Eval] Evaluation service has no jobs API — using the blocking endpoint"
+        )
+        resp = requests.post(
+            f"{base_url}/run-new-evaluation",
+            json=req,
+            timeout=settings.EVALUATION_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return RunDatasetResponse(**resp.json())
+    submit.raise_for_status()
+    job_id = submit.json()["job_id"]
+    logger.info(
+        f"[Eval] Submitted evaluation job {job_id} for {req.get('dataset_name')}"
     )
-    resp.raise_for_status()
-    return RunDatasetResponse(**resp.json())
+
+    deadline = time.monotonic() + settings.EVALUATION_TIMEOUT_SECONDS
+    poll_errors = 0
+    last_progress = None
+    while True:
+        if is_cancelled is not None and is_cancelled():
+            raise EvaluationCancelledError(job_id)
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"Evaluation job {job_id} did not finish within "
+                f"{int(settings.EVALUATION_TIMEOUT_SECONDS)}s"
+            )
+        time.sleep(settings.EVALUATION_POLL_INTERVAL_SECONDS)
+
+        try:
+            poll = requests.get(f"{base_url}/jobs/{job_id}", timeout=30)
+        except requests.RequestException as exc:
+            poll = None
+            error = str(exc)
+        if poll is not None and poll.status_code == 404:
+            raise RuntimeError(
+                f"Evaluation job {job_id} no longer exists — the evaluation service "
+                f"was probably restarted while it ran."
+            )
+        if poll is None or poll.status_code >= 500:
+            poll_errors += 1
+            if poll is not None:
+                error = f"HTTP {poll.status_code}"
+            logger.warning(
+                f"[Eval] Polling job {job_id} failed ({poll_errors}/"
+                f"{settings.EVALUATION_POLL_MAX_ERRORS}): {error}"
+            )
+            if poll_errors >= settings.EVALUATION_POLL_MAX_ERRORS:
+                raise RuntimeError(
+                    f"Lost contact with the evaluation service while polling job {job_id}: {error}"
+                )
+            continue
+        poll.raise_for_status()
+        poll_errors = 0
+
+        job = poll.json()
+        if job["status"] == "completed":
+            return RunDatasetResponse(**job["result"])
+        if job["status"] == "failed":
+            raise RuntimeError(f"Evaluation job failed: {job.get('error')}")
+
+        progress = (job.get("completed_items"), job.get("total_items"))
+        if progress != last_progress:
+            logger.info(
+                f"[Eval] Job {job_id}: {progress[0]}/{progress[1]} questions evaluated"
+            )
+            last_progress = progress
 
 
 def _call_run_single_dataset(req: dict) -> "RunDatasetResponse":
@@ -399,9 +487,7 @@ def _run_production_dataset_eval(
     connection_id: int | None = None,
 ) -> float:
     prod_tables = session.exec(
-        select(Table)
-        .where(Table.status == TableStatus.production)
-        .where(Table.owner_id != "spider2")
+        select(Table).where(Table.status == TableStatus.production)
     ).all()
 
     if not prod_tables:
@@ -561,9 +647,7 @@ def _run_regression_eval(
     connection_id: int | None = None,
 ) -> float:
     prod_tables = session.exec(
-        select(Table)
-        .where(Table.status == TableStatus.production)
-        .where(Table.owner_id != "spider2")
+        select(Table).where(Table.status == TableStatus.production)
     ).all()
     all_production_questions: list[GoldenQuestion] = []
     for table in prod_tables:

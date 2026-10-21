@@ -2,15 +2,570 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Text2SQL Studio API",
-    "description": "Data Intelligence module \u2014 Evaluation Orchestration & Monitoring",
+    "description": "Data Intelligence module — Evaluation Orchestration & Monitoring",
     "version": "2.0.0"
   },
   "paths": {
-    "/tables": {
+    "/api/tables/{table_id}/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Get Table Health",
+        "operationId": "get_table_health_api_tables__table_id__health_get",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TableHealthRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tables/{table_id}/health/recompute": {
+      "post": {
+        "tags": ["health"],
+        "summary": "Recompute Health",
+        "operationId": "recompute_health_api_tables__table_id__health_recompute_post",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TableHealthRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health/all": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Get All Health",
+        "description": "Returns the latest health record for every table (used in the table list view).",
+        "operationId": "get_all_health_api_health_all_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": { "$ref": "#/components/schemas/TableHealthRead" },
+                  "type": "array",
+                  "title": "Response Get All Health Api Health All Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health/esca": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Get Esca Health",
+        "operationId": "get_esca_health_api_health_esca_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          }
+        }
+      }
+    },
+    "/api/admin/login": {
+      "post": {
+        "tags": ["admin_auth"],
+        "summary": "Login",
+        "description": "Validate that the supplied email belongs to an active admin in security.users.\nReturns the user record on success; raises 403 when the user is not an admin.",
+        "operationId": "login_api_admin_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/SecurityUserRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tables/pending": {
+      "get": {
+        "tags": ["admin_approval"],
+        "summary": "Get Pending Tables",
+        "description": "Get all tables in 'verified' status (awaiting admin approval).",
+        "operationId": "get_pending_tables_api_admin_tables_pending_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": { "type": "object" },
+                  "type": "array",
+                  "title": "Response Get Pending Tables Api Admin Tables Pending Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tables/{table_id}/approve": {
+      "post": {
+        "tags": ["admin_approval"],
+        "summary": "Approve Table",
+        "description": "Approve a verified table for production.\n\nActions:\n  1. Set table.status = production\n  2. Sync its golden questions to the shared 'text2sql_production' Langfuse dataset",
+        "operationId": "approve_table_api_admin_tables__table_id__approve_post",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tables/{table_id}/reject": {
+      "post": {
+        "tags": ["admin_approval"],
+        "summary": "Reject Table",
+        "description": "Reject a verified table, returning it to sandbox.",
+        "operationId": "reject_table_api_admin_tables__table_id__reject_post",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RejectionNote" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/chat": {
+      "post": {
+        "tags": ["agent"],
+        "summary": "Chat",
+        "description": "Start a new agent session or resume an interrupted one.\n\n- First call: provide `query` (and optionally `allowed_tables`, `allowed_statuses`, `extractors`).\n- Resume call: provide `thread_id` + `resume_value` (`{\"approved\": true}` or\n  `{\"approved\": false, \"feedback\": \"...\"}`).\n\nThe backend forwards the request to the agent MCP service and returns the\nstructured result. The frontend only deals with this endpoint.",
+        "operationId": "chat_api_agent_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ChatRequest" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ChatResponse" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/tables": {
+      "get": {
+        "tags": ["agent"],
+        "summary": "Get Agent Tables",
+        "description": "Internal endpoint for the agent and evaluation service to fetch available tables\nwithout requiring user SSO authentication.",
+        "operationId": "get_agent_tables_api_agent_tables_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "$ref": "#/components/schemas/TableStatus" }, { "type": "null" }],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/TableRead" },
+                  "title": "Response Get Agent Tables Api Agent Tables Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/stream/{thread_id}": {
+      "get": {
+        "tags": ["agent"],
+        "summary": "Stream Agent Execution",
+        "description": "Subscribe to Redis PubSub for agent graph execution events and yield them as SSE.",
+        "operationId": "stream_agent_execution_api_agent_stream__thread_id__get",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Thread Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/traces/{trace_id}": {
+      "get": {
+        "tags": ["agent"],
+        "summary": "Get Trace Timeline",
+        "description": "Fetch trace from Langfuse and normalize observations for frontend timeline.",
+        "operationId": "get_trace_timeline_api_agent_traces__trace_id__get",
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Trace Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/suggest_fixes": {
+      "post": {
+        "tags": ["agent"],
+        "summary": "Suggest Fixes",
+        "description": "Generate quick fixes during HITL interruption via MCP.",
+        "operationId": "suggest_fixes_api_agent_suggest_fixes_post",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SuggestFixesRequest" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/connections": {
+      "get": {
+        "tags": ["agent"],
+        "summary": "List Connections",
+        "description": "Fetch list of connections from the Jeen MCP.",
+        "operationId": "list_connections_api_agent_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          }
+        }
+      }
+    },
+    "/api/agent/connections/{connection_id}/tables": {
+      "get": {
+        "tags": ["agent"],
+        "summary": "List Connection Tables",
+        "description": "Fetch all tables for a given connection from Jeen MCP (list_tables_rich).",
+        "operationId": "list_connection_tables_api_agent_connections__connection_id__tables_get",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/query/execute": {
+      "post": {
+        "tags": ["query"],
+        "summary": "Execute Query",
+        "description": "Execute a SQL query against Trino and return the results.",
+        "operationId": "execute_query_api_query_execute_post",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/QueryRequest" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/QueryResponse" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login/{provider}": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Login",
+        "operationId": "login_api_v1_auth_login__provider__get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Provider" }
+          },
+          {
+            "name": "next_url",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Next Url" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/callback/{provider}": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Auth Callback",
+        "operationId": "auth_callback_api_v1_auth_callback__provider__get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Provider" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Logout",
+        "operationId": "logout_api_v1_auth_logout_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/config": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Get Auth Config",
+        "operationId": "get_auth_config_api_v1_auth_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AuthConfigRead" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Get Me",
+        "operationId": "get_me_api_v1_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/SecurityUserRead" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/tables": {
       "get": {
         "tags": ["tables"],
         "summary": "List Tables",
-        "operationId": "list_tables_tables_get",
+        "operationId": "list_tables_api_tables_get",
         "parameters": [
           {
             "name": "status",
@@ -48,7 +603,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/TableRead" },
-                  "title": "Response List Tables Tables Get"
+                  "title": "Response List Tables Api Tables Get"
                 }
               }
             }
@@ -62,40 +617,13 @@
             }
           }
         }
-      },
-      "post": {
-        "tags": ["tables"],
-        "summary": "Create Table",
-        "operationId": "create_table_tables_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/TableCreate" } }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TableRead" } }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
       }
     },
-    "/tables/{table_id}": {
+    "/api/tables/{table_id}": {
       "get": {
         "tags": ["tables"],
         "summary": "Get Table",
-        "operationId": "get_table_tables__table_id__get",
+        "operationId": "get_table_api_tables__table_id__get",
         "parameters": [
           {
             "name": "table_id",
@@ -122,43 +650,12 @@
         }
       }
     },
-    "/tables/{table_id}/sync-schema": {
-      "post": {
-        "tags": ["tables"],
-        "summary": "Sync Table Schema",
-        "operationId": "sync_table_schema_tables__table_id__sync_schema_post",
-        "parameters": [
-          {
-            "name": "table_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Table Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TableRead" } }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tables/{table_id}/status": {
+    "/api/tables/{table_id}/status": {
       "patch": {
         "tags": ["tables"],
         "summary": "Update Table Status",
         "description": "Update a table's status.",
-        "operationId": "update_table_status_tables__table_id__status_patch",
+        "operationId": "update_table_status_api_tables__table_id__status_patch",
         "parameters": [
           {
             "name": "table_id",
@@ -191,12 +688,123 @@
         }
       }
     },
-    "/tables/{table_id}/enrichment": {
+    "/api/tables/{table_id}/foreign-keys": {
+      "get": {
+        "tags": ["tables"],
+        "summary": "Get Foreign Keys",
+        "description": "Get all custom foreign key mappings for a table.",
+        "operationId": "get_foreign_keys_api_tables__table_id__foreign_keys_get",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ForeignKeyMappingRead" },
+                  "title": "Response Get Foreign Keys Api Tables  Table Id  Foreign Keys Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["tables"],
+        "summary": "Create Foreign Key",
+        "description": "Create or update a foreign key mapping for a specific column in the table.",
+        "operationId": "create_foreign_key_api_tables__table_id__foreign_keys_post",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ForeignKeyMappingCreate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ForeignKeyMappingRead" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tables/{table_id}/foreign-keys/{fk_id}": {
+      "delete": {
+        "tags": ["tables"],
+        "summary": "Delete Foreign Key",
+        "description": "Delete a specific foreign key mapping.",
+        "operationId": "delete_foreign_key_api_tables__table_id__foreign_keys__fk_id__delete",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          },
+          {
+            "name": "fk_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Fk Id" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tables/{table_id}/enrichment": {
       "post": {
         "tags": ["enrichment"],
         "summary": "Create Enrichment",
         "description": "Save a new enrichment version for a table.\n\nIf the table is currently in 'production' and the new enrichment\nchanges the table_description or schema fields, the table is\nautomatically moved to 'degraded'.\n\nThis forces a full re-evaluation cycle before the table can be\npromoted to production again.",
-        "operationId": "create_enrichment_tables__table_id__enrichment_post",
+        "operationId": "create_enrichment_api_tables__table_id__enrichment_post",
         "parameters": [
           {
             "name": "table_id",
@@ -229,11 +837,11 @@
         }
       }
     },
-    "/tables/{table_id}/enrichment/latest": {
+    "/api/tables/{table_id}/enrichment/latest": {
       "get": {
         "tags": ["enrichment"],
         "summary": "Get Latest Enrichment",
-        "operationId": "get_latest_enrichment_tables__table_id__enrichment_latest_get",
+        "operationId": "get_latest_enrichment_api_tables__table_id__enrichment_latest_get",
         "parameters": [
           {
             "name": "table_id",
@@ -260,11 +868,11 @@
         }
       }
     },
-    "/tables/{table_id}/questions": {
+    "/api/tables/{table_id}/questions": {
       "get": {
         "tags": ["golden-questions"],
         "summary": "List Questions",
-        "operationId": "list_questions_tables__table_id__questions_get",
+        "operationId": "list_questions_api_tables__table_id__questions_get",
         "parameters": [
           {
             "name": "table_id",
@@ -281,7 +889,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/GoldenQuestionRead" },
-                  "title": "Response List Questions Tables  Table Id  Questions Get"
+                  "title": "Response List Questions Api Tables  Table Id  Questions Get"
                 }
               }
             }
@@ -299,7 +907,7 @@
       "post": {
         "tags": ["golden-questions"],
         "summary": "Create Question",
-        "operationId": "create_question_tables__table_id__questions_post",
+        "operationId": "create_question_api_tables__table_id__questions_post",
         "parameters": [
           {
             "name": "table_id",
@@ -336,11 +944,11 @@
         }
       }
     },
-    "/tables/{table_id}/questions/upload": {
+    "/api/tables/{table_id}/questions/upload": {
       "post": {
         "tags": ["golden-questions"],
         "summary": "Upload Questions",
-        "operationId": "upload_questions_tables__table_id__questions_upload_post",
+        "operationId": "upload_questions_api_tables__table_id__questions_upload_post",
         "parameters": [
           {
             "name": "table_id",
@@ -354,7 +962,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Body_upload_questions_tables__table_id__questions_upload_post"
+                "$ref": "#/components/schemas/Body_upload_questions_api_tables__table_id__questions_upload_post"
               }
             }
           }
@@ -375,11 +983,11 @@
         }
       }
     },
-    "/tables/{table_id}/questions/{question_id}": {
+    "/api/tables/{table_id}/questions/{question_id}": {
       "delete": {
         "tags": ["golden-questions"],
         "summary": "Delete Question",
-        "operationId": "delete_question_tables__table_id__questions__question_id__delete",
+        "operationId": "delete_question_api_tables__table_id__questions__question_id__delete",
         "parameters": [
           {
             "name": "table_id",
@@ -407,11 +1015,168 @@
         }
       }
     },
-    "/eval/readiness": {
+    "/api/connections/{connection_id}/questions": {
+      "get": {
+        "tags": ["connection-golden-questions"],
+        "summary": "List Connection Questions",
+        "description": "List all golden questions for a catalog connection from Jeen metadata.",
+        "operationId": "list_connection_questions_api_connections__connection_id__questions_get",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/GoldenQuestionRead" },
+                  "title": "Response List Connection Questions Api Connections  Connection Id  Questions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["connection-golden-questions"],
+        "summary": "Create Connection Question",
+        "description": "Add or upsert a golden question into Jeen metadata and local DB.",
+        "operationId": "create_connection_question_api_connections__connection_id__questions_post",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/GoldenQuestionCreate" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GoldenQuestionRead" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/questions/{question_id}": {
+      "put": {
+        "tags": ["connection-golden-questions"],
+        "summary": "Update Connection Question",
+        "description": "Update a golden question in Jeen metadata and local DB.",
+        "operationId": "update_connection_question_api_connections__connection_id__questions__question_id__put",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Question Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/GoldenQuestionCreate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GoldenQuestionRead" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["connection-golden-questions"],
+        "summary": "Delete Connection Question",
+        "description": "Delete a golden question associated with a connection.",
+        "operationId": "delete_connection_question_api_connections__connection_id__questions__question_id__delete",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Question Id" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/eval/readiness": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Readiness",
-        "operationId": "get_readiness_eval_readiness_get",
+        "operationId": "get_readiness_api_eval_readiness_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -420,17 +1185,26 @@
         }
       }
     },
-    "/tables/{table_id}/eval/run": {
+    "/api/tables/{table_id}/eval/run": {
       "post": {
         "tags": ["evaluation"],
         "summary": "Trigger Eval",
-        "operationId": "trigger_eval_tables__table_id__eval_run_post",
+        "operationId": "trigger_eval_api_tables__table_id__eval_run_post",
         "parameters": [
           {
             "name": "table_id",
             "in": "path",
             "required": true,
             "schema": { "type": "string", "title": "Table Id" }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "integer" }, { "type": "null" }],
+              "title": "Connection Id"
+            }
           }
         ],
         "responses": {
@@ -451,11 +1225,11 @@
         }
       }
     },
-    "/tables/{table_id}/eval/runs": {
+    "/api/tables/{table_id}/eval/runs": {
       "get": {
         "tags": ["evaluation"],
         "summary": "List Runs",
-        "operationId": "list_runs_tables__table_id__eval_runs_get",
+        "operationId": "list_runs_api_tables__table_id__eval_runs_get",
         "parameters": [
           {
             "name": "table_id",
@@ -472,7 +1246,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvalRunRead" },
-                  "title": "Response List Runs Tables  Table Id  Eval Runs Get"
+                  "title": "Response List Runs Api Tables  Table Id  Eval Runs Get"
                 }
               }
             }
@@ -488,11 +1262,11 @@
         }
       }
     },
-    "/eval/runs/all": {
+    "/api/eval/runs/all": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get All Eval Runs",
-        "operationId": "get_all_eval_runs_eval_runs_all_get",
+        "operationId": "get_all_eval_runs_api_eval_runs_all_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -501,7 +1275,7 @@
                 "schema": {
                   "items": { "$ref": "#/components/schemas/EvalRunRead" },
                   "type": "array",
-                  "title": "Response Get All Eval Runs Eval Runs All Get"
+                  "title": "Response Get All Eval Runs Api Eval Runs All Get"
                 }
               }
             }
@@ -509,11 +1283,11 @@
         }
       }
     },
-    "/eval/batch/{promotion_run_id}": {
+    "/api/eval/batch/{promotion_run_id}": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Batch Runs",
-        "operationId": "get_batch_runs_eval_batch__promotion_run_id__get",
+        "operationId": "get_batch_runs_api_eval_batch__promotion_run_id__get",
         "parameters": [
           {
             "name": "promotion_run_id",
@@ -530,7 +1304,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvalRunRead" },
-                  "title": "Response Get Batch Runs Eval Batch  Promotion Run Id  Get"
+                  "title": "Response Get Batch Runs Api Eval Batch  Promotion Run Id  Get"
                 }
               }
             }
@@ -546,11 +1320,11 @@
         }
       }
     },
-    "/eval/{run_id}": {
+    "/api/eval/{run_id}": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Run",
-        "operationId": "get_run_eval__run_id__get",
+        "operationId": "get_run_api_eval__run_id__get",
         "parameters": [
           {
             "name": "run_id",
@@ -577,11 +1351,11 @@
         }
       }
     },
-    "/eval/{run_id}/results": {
+    "/api/eval/{run_id}/results": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Results",
-        "operationId": "get_results_eval__run_id__results_get",
+        "operationId": "get_results_api_eval__run_id__results_get",
         "parameters": [
           {
             "name": "run_id",
@@ -598,7 +1372,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvalResultRead" },
-                  "title": "Response Get Results Eval  Run Id  Results Get"
+                  "title": "Response Get Results Api Eval  Run Id  Results Get"
                 }
               }
             }
@@ -614,11 +1388,11 @@
         }
       }
     },
-    "/eval/{run_id}/report": {
+    "/api/eval/{run_id}/report": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Run Report",
-        "operationId": "get_run_report_eval__run_id__report_get",
+        "operationId": "get_run_report_api_eval__run_id__report_get",
         "parameters": [
           {
             "name": "run_id",
@@ -643,12 +1417,12 @@
         }
       }
     },
-    "/eval/{run_id}/regression-diff": {
+    "/api/eval/{run_id}/regression-diff": {
       "get": {
         "tags": ["evaluation"],
         "summary": "Get Regression Diff",
-        "description": "For a promotion-regression run, return questions that passed the baseline\nbut failed in the regression \u2014 true regressions introduced by the new candidate table.",
-        "operationId": "get_regression_diff_eval__run_id__regression_diff_get",
+        "description": "For a promotion-regression run, return questions that passed the baseline\nbut failed in the regression — true regressions introduced by the new candidate table.",
+        "operationId": "get_regression_diff_api_eval__run_id__regression_diff_get",
         "parameters": [
           {
             "name": "run_id",
@@ -673,18 +1447,104 @@
         }
       }
     },
-    "/evaluations/run": {
+    "/api/extractors": {
+      "get": {
+        "tags": ["extractors"],
+        "summary": "List Extractors",
+        "description": "List all registered HTTP extractors.",
+        "operationId": "list_extractors_api_extractors_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": { "$ref": "#/components/schemas/HttpExtractorRead" },
+                  "type": "array",
+                  "title": "Response List Extractors Api Extractors Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["extractors"],
+        "summary": "Create Extractor",
+        "description": "Register a new HTTP extractor.",
+        "operationId": "create_extractor_api_extractors_post",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/HttpExtractorCreate" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/HttpExtractorRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/extractors/{extractor_id}": {
+      "delete": {
+        "tags": ["extractors"],
+        "summary": "Delete Extractor",
+        "description": "Delete an HTTP extractor by ID.",
+        "operationId": "delete_extractor_api_extractors__extractor_id__delete",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Extractor Id" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/run": {
       "post": {
         "tags": ["evaluation-orchestration"],
         "summary": "Trigger Evaluation Run",
         "description": "Trigger evaluation for one or more tables.",
-        "operationId": "trigger_evaluation_run_evaluations_run_post",
+        "operationId": "trigger_evaluation_run_api_evaluations_run_post",
         "parameters": [
           {
             "name": "triggered_by",
             "in": "query",
             "required": false,
             "schema": { "type": "string", "default": "user", "title": "Triggered By" }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "integer" }, { "type": "null" }],
+              "title": "Connection Id"
+            }
           }
         ],
         "requestBody": {
@@ -703,7 +1563,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvalRunRead" },
-                  "title": "Response Trigger Evaluation Run Evaluations Run Post"
+                  "title": "Response Trigger Evaluation Run Api Evaluations Run Post"
                 }
               }
             }
@@ -719,11 +1579,115 @@
         }
       }
     },
-    "/evaluations/runs": {
+    "/api/evaluations/run-dataset": {
+      "post": {
+        "tags": ["evaluation-orchestration"],
+        "summary": "Trigger Dataset Run",
+        "operationId": "trigger_dataset_run_api_evaluations_run_dataset_post",
+        "parameters": [
+          {
+            "name": "dataset_name",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "title": "Dataset Name" }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "integer" }, { "type": "null" }],
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "connection_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Connection Name"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EvalRunRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/run-connection": {
+      "post": {
+        "tags": ["evaluation-orchestration"],
+        "summary": "Trigger Connection Run",
+        "operationId": "trigger_connection_run_api_evaluations_run_connection_post",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "title": "Connection Id" }
+          },
+          {
+            "name": "connection_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Connection Name"
+            }
+          },
+          {
+            "name": "dataset_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Dataset Name"
+            }
+          },
+          {
+            "name": "triggered_by",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "default": "user", "title": "Triggered By" }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EvalRunRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/runs": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "List Runs",
-        "operationId": "list_runs_evaluations_runs_get",
+        "operationId": "list_runs_api_evaluations_runs_get",
         "parameters": [
           {
             "name": "limit",
@@ -748,6 +1712,15 @@
             "in": "query",
             "required": false,
             "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Table Id" }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "integer" }, { "type": "null" }],
+              "title": "Connection Id"
+            }
           }
         ],
         "responses": {
@@ -758,7 +1731,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvalRunRead" },
-                  "title": "Response List Runs Evaluations Runs Get"
+                  "title": "Response List Runs Api Evaluations Runs Get"
                 }
               }
             }
@@ -774,11 +1747,11 @@
         }
       }
     },
-    "/evaluations/runs/{run_id}": {
+    "/api/evaluations/runs/{run_id}": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "Get Run",
-        "operationId": "get_run_evaluations_runs__run_id__get",
+        "operationId": "get_run_api_evaluations_runs__run_id__get",
         "parameters": [
           {
             "name": "run_id",
@@ -805,12 +1778,76 @@
         }
       }
     },
-    "/evaluations/runs/{run_id}/report": {
+    "/api/evaluations/runs/{run_id}/cancel": {
+      "post": {
+        "tags": ["evaluation-orchestration"],
+        "summary": "Stop Eval Run",
+        "description": "Stop/cancel an in-progress evaluation run.",
+        "operationId": "stop_eval_run_api_evaluations_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Run Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EvalRunRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/runs/{run_id}/stop": {
+      "post": {
+        "tags": ["evaluation-orchestration"],
+        "summary": "Stop Eval Run",
+        "description": "Stop/cancel an in-progress evaluation run.",
+        "operationId": "stop_eval_run_api_evaluations_runs__run_id__stop_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Run Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EvalRunRead" } }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/runs/{run_id}/report": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "Get Run Report",
-        "description": "Full structured report \u2014 matches the evaluation_pipeline.md format.",
-        "operationId": "get_run_report_evaluations_runs__run_id__report_get",
+        "description": "Full structured report — matches the evaluation_pipeline.md format.",
+        "operationId": "get_run_report_api_evaluations_runs__run_id__report_get",
         "parameters": [
           {
             "name": "run_id",
@@ -835,11 +1872,11 @@
         }
       }
     },
-    "/evaluations/schedules": {
+    "/api/evaluations/schedules": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "List Schedules",
-        "operationId": "list_schedules_evaluations_schedules_get",
+        "operationId": "list_schedules_api_evaluations_schedules_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -848,7 +1885,7 @@
                 "schema": {
                   "items": { "$ref": "#/components/schemas/EvaluationScheduleRead" },
                   "type": "array",
-                  "title": "Response List Schedules Evaluations Schedules Get"
+                  "title": "Response List Schedules Api Evaluations Schedules Get"
                 }
               }
             }
@@ -858,7 +1895,7 @@
       "post": {
         "tags": ["evaluation-orchestration"],
         "summary": "Create Schedule",
-        "operationId": "create_schedule_evaluations_schedules_post",
+        "operationId": "create_schedule_api_evaluations_schedules_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -887,11 +1924,11 @@
         }
       }
     },
-    "/evaluations/schedules/{schedule_id}": {
+    "/api/evaluations/schedules/{schedule_id}": {
       "put": {
         "tags": ["evaluation-orchestration"],
         "summary": "Update Schedule",
-        "operationId": "update_schedule_evaluations_schedules__schedule_id__put",
+        "operationId": "update_schedule_api_evaluations_schedules__schedule_id__put",
         "parameters": [
           {
             "name": "schedule_id",
@@ -930,7 +1967,7 @@
       "delete": {
         "tags": ["evaluation-orchestration"],
         "summary": "Delete Schedule",
-        "operationId": "delete_schedule_evaluations_schedules__schedule_id__delete",
+        "operationId": "delete_schedule_api_evaluations_schedules__schedule_id__delete",
         "parameters": [
           {
             "name": "schedule_id",
@@ -952,12 +1989,12 @@
         }
       }
     },
-    "/evaluations/analytics/trends": {
+    "/api/evaluations/analytics/trends": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "Get Trends",
         "description": "Score and pass_rate over time. Returns one data point per completed run.",
-        "operationId": "get_trends_evaluations_analytics_trends_get",
+        "operationId": "get_trends_api_evaluations_analytics_trends_get",
         "parameters": [
           {
             "name": "days",
@@ -988,12 +2025,12 @@
         }
       }
     },
-    "/evaluations/analytics/tables": {
+    "/api/evaluations/analytics/tables": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "Get Table Analytics",
         "description": "Per-table performance ranking.",
-        "operationId": "get_table_analytics_evaluations_analytics_tables_get",
+        "operationId": "get_table_analytics_api_evaluations_analytics_tables_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1002,12 +2039,12 @@
         }
       }
     },
-    "/evaluations/compare": {
+    "/api/evaluations/compare": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "Compare Runs",
         "description": "Side-by-side comparison of two eval runs.",
-        "operationId": "compare_runs_evaluations_compare_get",
+        "operationId": "compare_runs_api_evaluations_compare_get",
         "parameters": [
           {
             "name": "run1",
@@ -1038,11 +2075,11 @@
         }
       }
     },
-    "/evaluations/alerts": {
+    "/api/evaluations/alerts": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "List Alerts",
-        "operationId": "list_alerts_evaluations_alerts_get",
+        "operationId": "list_alerts_api_evaluations_alerts_get",
         "parameters": [
           {
             "name": "acknowledged",
@@ -1068,7 +2105,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/EvaluationAlertRead" },
-                  "title": "Response List Alerts Evaluations Alerts Get"
+                  "title": "Response List Alerts Api Evaluations Alerts Get"
                 }
               }
             }
@@ -1084,11 +2121,11 @@
         }
       }
     },
-    "/evaluations/alerts/{alert_id}/acknowledge": {
+    "/api/evaluations/alerts/{alert_id}/acknowledge": {
       "post": {
         "tags": ["evaluation-orchestration"],
         "summary": "Acknowledge Alert",
-        "operationId": "acknowledge_alert_evaluations_alerts__alert_id__acknowledge_post",
+        "operationId": "acknowledge_alert_api_evaluations_alerts__alert_id__acknowledge_post",
         "parameters": [
           {
             "name": "alert_id",
@@ -1117,12 +2154,12 @@
         }
       }
     },
-    "/evaluations/system-health": {
+    "/api/evaluations/system-health": {
       "get": {
         "tags": ["evaluation-orchestration"],
         "summary": "System Health",
         "description": "Aggregate system health for the control center dashboard.",
-        "operationId": "system_health_evaluations_system_health_get",
+        "operationId": "system_health_api_evaluations_system_health_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1131,11 +2168,11 @@
         }
       }
     },
-    "/tables/{table_id}/publish": {
+    "/api/tables/{table_id}/publish": {
       "post": {
         "tags": ["publish"],
         "summary": "Publish Table",
-        "operationId": "publish_table_tables__table_id__publish_post",
+        "operationId": "publish_table_api_tables__table_id__publish_post",
         "parameters": [
           {
             "name": "table_id",
@@ -1160,11 +2197,11 @@
         }
       }
     },
-    "/scopes": {
+    "/api/scopes": {
       "get": {
         "tags": ["scopes"],
         "summary": "List Scopes",
-        "operationId": "list_scopes_scopes_get",
+        "operationId": "list_scopes_api_scopes_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1173,7 +2210,7 @@
                 "schema": {
                   "items": { "$ref": "#/components/schemas/UserScopeRead" },
                   "type": "array",
-                  "title": "Response List Scopes Scopes Get"
+                  "title": "Response List Scopes Api Scopes Get"
                 }
               }
             }
@@ -1183,7 +2220,7 @@
       "post": {
         "tags": ["scopes"],
         "summary": "Create Scope",
-        "operationId": "create_scope_scopes_post",
+        "operationId": "create_scope_api_scopes_post",
         "requestBody": {
           "content": {
             "application/json": { "schema": { "$ref": "#/components/schemas/UserScopeCreate" } }
@@ -1208,11 +2245,11 @@
         }
       }
     },
-    "/scopes/{scope_id}/activate": {
+    "/api/scopes/{scope_id}/activate": {
       "post": {
         "tags": ["scopes"],
         "summary": "Activate Scope",
-        "operationId": "activate_scope_scopes__scope_id__activate_post",
+        "operationId": "activate_scope_api_scopes__scope_id__activate_post",
         "parameters": [
           {
             "name": "scope_id",
@@ -1239,11 +2276,11 @@
         }
       }
     },
-    "/audit/queries": {
+    "/api/audit/queries": {
       "get": {
         "tags": ["audit"],
         "summary": "List Audit Queries",
-        "operationId": "list_audit_queries_audit_queries_get",
+        "operationId": "list_audit_queries_api_audit_queries_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1272,7 +2309,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/AuditQueryRead" },
-                  "title": "Response List Audit Queries Audit Queries Get"
+                  "title": "Response List Audit Queries Api Audit Queries Get"
                 }
               }
             }
@@ -1288,11 +2325,11 @@
         }
       }
     },
-    "/tables/{table_id}/profile": {
+    "/api/tables/{table_id}/profile": {
       "get": {
         "tags": ["profiling"],
         "summary": "Get Table Profile",
-        "operationId": "get_table_profile_tables__table_id__profile_get",
+        "operationId": "get_table_profile_api_tables__table_id__profile_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1319,12 +2356,12 @@
         }
       }
     },
-    "/tables/all/profile/run": {
+    "/api/tables/all/profile/run": {
       "post": {
         "tags": ["profiling"],
         "summary": "Run All Profiles",
-        "description": "Triggers profiling for all registered tables. \nIdeal for Airflow DAGs to keep profiles up-to-date.",
-        "operationId": "run_all_profiles_tables_all_profile_run_post",
+        "description": "Triggers profiling for all registered tables.\nIdeal for Airflow DAGs to keep profiles up-to-date.",
+        "operationId": "run_all_profiles_api_tables_all_profile_run_post",
         "parameters": [
           {
             "name": "force",
@@ -1349,12 +2386,12 @@
         }
       }
     },
-    "/tables/{table_id}/profile/run": {
+    "/api/tables/{table_id}/profile/run": {
       "post": {
         "tags": ["profiling"],
         "summary": "Run Table Profile",
         "description": "Trigger a new profiling run against Trino.\nReturns immediately (202) while profiling runs in the background.\nRespects a 24h cache unless force=True.",
-        "operationId": "run_table_profile_tables__table_id__profile_run_post",
+        "operationId": "run_table_profile_api_tables__table_id__profile_run_post",
         "parameters": [
           {
             "name": "table_id",
@@ -1367,6 +2404,12 @@
             "in": "query",
             "required": false,
             "schema": { "type": "boolean", "default": false, "title": "Force" }
+          },
+          {
+            "name": "resume_from_partial",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": false, "title": "Resume From Partial" }
           }
         ],
         "responses": {
@@ -1387,11 +2430,41 @@
         }
       }
     },
-    "/tables/{table_id}/profile/columns": {
+    "/api/tables/{table_id}/profile/terminate": {
+      "post": {
+        "tags": ["profiling"],
+        "summary": "Terminate Table Profile",
+        "description": "Terminates a running Temporal profiling workflow for the given table.",
+        "operationId": "terminate_table_profile_api_tables__table_id__profile_terminate_post",
+        "parameters": [
+          {
+            "name": "table_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Table Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tables/{table_id}/profile/columns": {
       "get": {
         "tags": ["profiling"],
         "summary": "Get Column Profiles",
-        "operationId": "get_column_profiles_tables__table_id__profile_columns_get",
+        "operationId": "get_column_profiles_api_tables__table_id__profile_columns_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1408,7 +2481,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/ColumnProfileRead" },
-                  "title": "Response Get Column Profiles Tables  Table Id  Profile Columns Get"
+                  "title": "Response Get Column Profiles Api Tables  Table Id  Profile Columns Get"
                 }
               }
             }
@@ -1424,11 +2497,11 @@
         }
       }
     },
-    "/tables/{table_id}/columns/{column}/profile": {
+    "/api/tables/{table_id}/columns/{column}/profile": {
       "get": {
         "tags": ["profiling"],
         "summary": "Get Single Column Profile",
-        "operationId": "get_single_column_profile_tables__table_id__columns__column__profile_get",
+        "operationId": "get_single_column_profile_api_tables__table_id__columns__column__profile_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1461,12 +2534,12 @@
         }
       }
     },
-    "/tables/{table_id}/profile/context": {
+    "/api/tables/{table_id}/profile/context": {
       "get": {
         "tags": ["profiling"],
         "summary": "Get Profile Context",
         "description": "Returns a compact, LLM-ready context blob built from the latest\ncompleted profile. Used by the TextToSQL context builder for\nsystem-prompt injection, enrichment suggestions, and join suggestions.",
-        "operationId": "get_profile_context_tables__table_id__profile_context_get",
+        "operationId": "get_profile_context_api_tables__table_id__profile_context_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1482,7 +2555,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "title": "Response Get Profile Context Tables  Table Id  Profile Context Get"
+                  "title": "Response Get Profile Context Api Tables  Table Id  Profile Context Get"
                 }
               }
             }
@@ -1498,12 +2571,12 @@
         }
       }
     },
-    "/tables/{table_id}/cross-profile": {
+    "/api/tables/{table_id}/cross-profile": {
       "post": {
         "tags": ["profiling"],
         "summary": "Cross Profile",
         "description": "Discover cross-table join suggestions based on profiling statistics.",
-        "operationId": "cross_profile_tables__table_id__cross_profile_post",
+        "operationId": "cross_profile_api_tables__table_id__cross_profile_post",
         "parameters": [
           {
             "name": "table_id",
@@ -1520,7 +2593,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/CrossTableProfileRead" },
-                  "title": "Response Cross Profile Tables  Table Id  Cross Profile Post"
+                  "title": "Response Cross Profile Api Tables  Table Id  Cross Profile Post"
                 }
               }
             }
@@ -1538,7 +2611,7 @@
       "get": {
         "tags": ["profiling"],
         "summary": "Get Cross Profiles",
-        "operationId": "get_cross_profiles_tables__table_id__cross_profile_get",
+        "operationId": "get_cross_profiles_api_tables__table_id__cross_profile_get",
         "parameters": [
           {
             "name": "table_id",
@@ -1555,7 +2628,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/CrossTableProfileRead" },
-                  "title": "Response Get Cross Profiles Tables  Table Id  Cross Profile Get"
+                  "title": "Response Get Cross Profiles Api Tables  Table Id  Cross Profile Get"
                 }
               }
             }
@@ -1571,11 +2644,11 @@
         }
       }
     },
-    "/feedback": {
+    "/api/feedback": {
       "post": {
         "tags": ["feedback"],
         "summary": "Submit Feedback",
-        "operationId": "submit_feedback_feedback_post",
+        "operationId": "submit_feedback_api_feedback_post",
         "requestBody": {
           "content": {
             "application/json": { "schema": { "$ref": "#/components/schemas/QueryFeedbackCreate" } }
@@ -1600,11 +2673,11 @@
         }
       }
     },
-    "/feedback/table/{table_id}": {
+    "/api/feedback/table/{table_id}": {
       "get": {
         "tags": ["feedback"],
         "summary": "Get Table Feedback",
-        "operationId": "get_table_feedback_feedback_table__table_id__get",
+        "operationId": "get_table_feedback_api_feedback_table__table_id__get",
         "parameters": [
           {
             "name": "table_id",
@@ -1627,7 +2700,7 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/QueryFeedbackRead" },
-                  "title": "Response Get Table Feedback Feedback Table  Table Id  Get"
+                  "title": "Response Get Table Feedback Api Feedback Table  Table Id  Get"
                 }
               }
             }
@@ -1643,11 +2716,11 @@
         }
       }
     },
-    "/feedback/query/{query_id}": {
+    "/api/feedback/query/{query_id}": {
       "get": {
         "tags": ["feedback"],
         "summary": "Get Query Feedback",
-        "operationId": "get_query_feedback_feedback_query__query_id__get",
+        "operationId": "get_query_feedback_api_feedback_query__query_id__get",
         "parameters": [
           {
             "name": "query_id",
@@ -1664,240 +2737,10 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/QueryFeedbackRead" },
-                  "title": "Response Get Query Feedback Feedback Query  Query Id  Get"
+                  "title": "Response Get Query Feedback Api Feedback Query  Query Id  Get"
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tables/{table_id}/health": {
-      "get": {
-        "tags": ["health"],
-        "summary": "Get Table Health",
-        "operationId": "get_table_health_tables__table_id__health_get",
-        "parameters": [
-          {
-            "name": "table_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Table Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TableHealthRead" } }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tables/{table_id}/health/recompute": {
-      "post": {
-        "tags": ["health"],
-        "summary": "Recompute Health",
-        "operationId": "recompute_health_tables__table_id__health_recompute_post",
-        "parameters": [
-          {
-            "name": "table_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Table Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TableHealthRead" } }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/health/all": {
-      "get": {
-        "tags": ["health"],
-        "summary": "Get All Health",
-        "description": "Returns the latest health record for every table (used in the table list view).",
-        "operationId": "get_all_health_health_all_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": { "$ref": "#/components/schemas/TableHealthRead" },
-                  "type": "array",
-                  "title": "Response Get All Health Health All Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/login": {
-      "post": {
-        "tags": ["admin_auth"],
-        "summary": "Login",
-        "description": "Validate that the supplied email belongs to an active admin in security.users.\nReturns the user record on success; raises 403 when the user is not an admin.",
-        "operationId": "login_admin_login_post",
-        "requestBody": {
-          "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/SecurityUserRead" } }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/tables/pending": {
-      "get": {
-        "tags": ["admin_approval"],
-        "summary": "Get Pending Tables",
-        "description": "Get all tables in 'verified' status (awaiting admin approval).",
-        "operationId": "get_pending_tables_admin_tables_pending_get",
-        "parameters": [
-          {
-            "name": "X-Admin-Email",
-            "in": "header",
-            "required": true,
-            "schema": { "type": "string", "title": "X-Admin-Email" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": { "type": "object" },
-                  "title": "Response Get Pending Tables Admin Tables Pending Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/tables/{table_id}/approve": {
-      "post": {
-        "tags": ["admin_approval"],
-        "summary": "Approve Table",
-        "description": "Approve a verified table for production.\n\nActions:\n  1. Set table.status = production\n  2. Sync its golden questions to the shared 'text2sql_production' Langfuse dataset",
-        "operationId": "approve_table_admin_tables__table_id__approve_post",
-        "parameters": [
-          {
-            "name": "table_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Table Id" }
-          },
-          {
-            "name": "X-Admin-Email",
-            "in": "header",
-            "required": true,
-            "schema": { "type": "string", "title": "X-Admin-Email" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/tables/{table_id}/reject": {
-      "post": {
-        "tags": ["admin_approval"],
-        "summary": "Reject Table",
-        "description": "Reject a verified table, returning it to sandbox.",
-        "operationId": "reject_table_admin_tables__table_id__reject_post",
-        "parameters": [
-          {
-            "name": "table_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Table Id" }
-          },
-          {
-            "name": "X-Admin-Email",
-            "in": "header",
-            "required": true,
-            "schema": { "type": "string", "title": "X-Admin-Email" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/RejectionNote" } }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
           },
           "422": {
             "description": "Validation Error",
@@ -1912,8 +2755,8 @@
     },
     "/health": {
       "get": {
-        "summary": "Health",
-        "operationId": "health_health_get",
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2015,11 +2858,99 @@
         ],
         "title": "AuditQueryRead"
       },
-      "Body_upload_questions_tables__table_id__questions_upload_post": {
+      "AuthConfigRead": {
+        "properties": {
+          "ENABLE_KEYCLOAK": { "type": "boolean", "title": "Enable Keycloak" },
+          "ENABLE_GOOGLE": { "type": "boolean", "title": "Enable Google" }
+        },
+        "type": "object",
+        "required": ["ENABLE_KEYCLOAK", "ENABLE_GOOGLE"],
+        "title": "AuthConfigRead"
+      },
+      "Body_upload_questions_api_tables__table_id__questions_upload_post": {
         "properties": { "file": { "type": "string", "format": "binary", "title": "File" } },
         "type": "object",
         "required": ["file"],
-        "title": "Body_upload_questions_tables__table_id__questions_upload_post"
+        "title": "Body_upload_questions_api_tables__table_id__questions_upload_post"
+      },
+      "ChatRequest": {
+        "properties": {
+          "query": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Query" },
+          "thread_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Thread Id"
+          },
+          "resume_value": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/QueryApproval" },
+              { "type": "string" },
+              { "type": "object" },
+              { "type": "null" }
+            ],
+            "title": "Resume Value"
+          },
+          "allowed_tables": {
+            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
+            "title": "Allowed Tables"
+          },
+          "allowed_statuses": {
+            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
+            "title": "Allowed Statuses"
+          },
+          "extractors": {
+            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
+            "title": "Extractors"
+          },
+          "active_skills": {
+            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
+            "title": "Active Skills"
+          },
+          "execution_mode": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Execution Mode"
+          },
+          "hitl_enabled": { "type": "boolean", "title": "Hitl Enabled", "default": true },
+          "connection_id": { "type": "integer", "title": "Connection Id" }
+        },
+        "type": "object",
+        "required": ["connection_id"],
+        "title": "ChatRequest"
+      },
+      "ChatResponse": {
+        "properties": {
+          "thread_id": { "type": "string", "title": "Thread Id" },
+          "status": { "type": "string", "title": "Status" },
+          "interrupt_details": {
+            "anyOf": [{ "type": "object" }, { "type": "null" }],
+            "title": "Interrupt Details"
+          },
+          "summary": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Summary" },
+          "raw_data_ref": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Raw Data Ref"
+          },
+          "sql_query": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Sql Query"
+          },
+          "sql_explanation": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Sql Explanation"
+          },
+          "schema_plan": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Schema Plan"
+          },
+          "trace_id": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Trace Id" },
+          "execution_path": {
+            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
+            "title": "Execution Path"
+          },
+          "is_unanswerable": { "type": "boolean", "title": "Is Unanswerable", "default": false }
+        },
+        "type": "object",
+        "required": ["thread_id", "status"],
+        "title": "ChatResponse"
       },
       "ColumnProfileRead": {
         "properties": {
@@ -2170,6 +3101,14 @@
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Dataset Id"
           },
+          "connection_id": {
+            "anyOf": [{ "type": "integer" }, { "type": "null" }],
+            "title": "Connection Id"
+          },
+          "connection_name": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Connection Name"
+          },
           "score": { "type": "number", "title": "Score" },
           "pass_rate": { "type": "number", "title": "Pass Rate" },
           "fail_rate": { "type": "number", "title": "Fail Rate" },
@@ -2229,7 +3168,7 @@
       },
       "EvalStatus": {
         "type": "string",
-        "enum": ["running", "completed", "failed"],
+        "enum": ["running", "completed", "failed", "cancelled"],
         "title": "EvalStatus"
       },
       "EvaluationAlertRead": {
@@ -2331,15 +3270,57 @@
         "type": "object",
         "title": "EvaluationScheduleUpdate"
       },
+      "ExtractorStatus": {
+        "type": "string",
+        "enum": ["draft", "sandbox", "verified", "production", "degraded"],
+        "title": "ExtractorStatus"
+      },
       "FeedbackRating": {
         "type": "string",
         "enum": ["positive", "negative"],
         "title": "FeedbackRating"
       },
+      "ForeignKeyMappingCreate": {
+        "properties": {
+          "source_column": { "type": "string", "title": "Source Column" },
+          "target_table_id": { "type": "string", "title": "Target Table Id" },
+          "target_column": { "type": "string", "title": "Target Column" }
+        },
+        "type": "object",
+        "required": ["source_column", "target_table_id", "target_column"],
+        "title": "ForeignKeyMappingCreate"
+      },
+      "ForeignKeyMappingRead": {
+        "properties": {
+          "id": { "type": "string", "title": "Id" },
+          "table_id": { "type": "string", "title": "Table Id" },
+          "source_column": { "type": "string", "title": "Source Column" },
+          "target_table_id": { "type": "string", "title": "Target Table Id" },
+          "target_column": { "type": "string", "title": "Target Column" },
+          "created_at": { "type": "string", "format": "date-time", "title": "Created At" },
+          "updated_at": { "type": "string", "format": "date-time", "title": "Updated At" }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "table_id",
+          "source_column",
+          "target_table_id",
+          "target_column",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ForeignKeyMappingRead"
+      },
       "GoldenQuestionCreate": {
         "properties": {
           "question": { "type": "string", "title": "Question" },
           "expected_sql": { "type": "string", "title": "Expected Sql" },
+          "connection_id": {
+            "anyOf": [{ "type": "integer" }, { "type": "null" }],
+            "title": "Connection Id"
+          },
+          "table_id": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Table Id" },
           "difficulty": { "$ref": "#/components/schemas/DifficultyLevel", "default": "simple" },
           "question_type": { "$ref": "#/components/schemas/QuestionType", "default": "simple" },
           "coverage_tags": {
@@ -2354,11 +3335,15 @@
       "GoldenQuestionRead": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
-          "table_id": { "type": "string", "title": "Table Id" },
           "question": { "type": "string", "title": "Question" },
           "expected_sql": { "type": "string", "title": "Expected Sql" },
           "difficulty": { "$ref": "#/components/schemas/DifficultyLevel" },
           "question_type": { "$ref": "#/components/schemas/QuestionType" },
+          "connection_id": {
+            "anyOf": [{ "type": "integer" }, { "type": "null" }],
+            "title": "Connection Id"
+          },
+          "table_id": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Table Id" },
           "coverage_tags": {
             "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
             "title": "Coverage Tags"
@@ -2366,16 +3351,7 @@
           "created_at": { "type": "string", "format": "date-time", "title": "Created At" }
         },
         "type": "object",
-        "required": [
-          "id",
-          "table_id",
-          "question",
-          "expected_sql",
-          "difficulty",
-          "question_type",
-          "coverage_tags",
-          "created_at"
-        ],
+        "required": ["id", "question", "expected_sql", "difficulty", "question_type", "created_at"],
         "title": "GoldenQuestionRead"
       },
       "HTTPValidationError": {
@@ -2394,6 +3370,37 @@
         "enum": ["good", "warning", "critical"],
         "title": "HealthStatus"
       },
+      "HttpExtractorCreate": {
+        "properties": {
+          "name": { "type": "string", "title": "Name" },
+          "url": { "type": "string", "title": "Url" },
+          "description": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Description"
+          },
+          "status": { "$ref": "#/components/schemas/ExtractorStatus", "default": "draft" }
+        },
+        "type": "object",
+        "required": ["name", "url"],
+        "title": "HttpExtractorCreate"
+      },
+      "HttpExtractorRead": {
+        "properties": {
+          "id": { "type": "string", "title": "Id" },
+          "name": { "type": "string", "title": "Name" },
+          "url": { "type": "string", "title": "Url" },
+          "description": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Description"
+          },
+          "status": { "$ref": "#/components/schemas/ExtractorStatus" },
+          "created_at": { "type": "string", "format": "date-time", "title": "Created At" },
+          "updated_at": { "type": "string", "format": "date-time", "title": "Updated At" }
+        },
+        "type": "object",
+        "required": ["id", "name", "url", "description", "status", "created_at", "updated_at"],
+        "title": "HttpExtractorRead"
+      },
       "LoginRequest": {
         "properties": { "email": { "type": "string", "title": "Email" } },
         "type": "object",
@@ -2402,8 +3409,17 @@
       },
       "ProfilingStatus": {
         "type": "string",
-        "enum": ["pending", "running", "completed", "failed"],
+        "enum": ["pending", "running", "completed", "failed", "canceled"],
         "title": "ProfilingStatus"
+      },
+      "QueryApproval": {
+        "properties": {
+          "approved": { "type": "boolean", "title": "Approved" },
+          "feedback": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Feedback" }
+        },
+        "type": "object",
+        "required": ["approved"],
+        "title": "QueryApproval"
       },
       "QueryFeedbackCreate": {
         "properties": {
@@ -2448,6 +3464,25 @@
         ],
         "title": "QueryFeedbackRead"
       },
+      "QueryRequest": {
+        "properties": { "sql": { "type": "string", "title": "Sql" } },
+        "type": "object",
+        "required": ["sql"],
+        "title": "QueryRequest"
+      },
+      "QueryResponse": {
+        "properties": {
+          "success": { "type": "boolean", "title": "Success" },
+          "rows": { "items": { "items": {}, "type": "array" }, "type": "array", "title": "Rows" },
+          "columns": { "items": { "type": "string" }, "type": "array", "title": "Columns" },
+          "row_count": { "type": "integer", "title": "Row Count" },
+          "execution_time_ms": { "type": "number", "title": "Execution Time Ms" },
+          "error": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Error" }
+        },
+        "type": "object",
+        "required": ["success", "rows", "columns", "row_count", "execution_time_ms", "error"],
+        "title": "QueryResponse"
+      },
       "QuestionType": {
         "type": "string",
         "enum": ["simple", "complex", "join", "geo", "aggregate", "time_series"],
@@ -2466,18 +3501,31 @@
           "name": { "type": "string", "title": "Name" },
           "is_active": { "type": "boolean", "title": "Is Active" },
           "is_admin": { "type": "boolean", "title": "Is Admin" },
+          "provider": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Provider" },
           "created_at": { "type": "string", "format": "date-time", "title": "Created At" },
           "updated_at": { "type": "string", "format": "date-time", "title": "Updated At" }
         },
         "type": "object",
-        "required": ["id", "email", "name", "is_active", "is_admin", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "email",
+          "name",
+          "is_active",
+          "is_admin",
+          "provider",
+          "created_at",
+          "updated_at"
+        ],
         "title": "SecurityUserRead"
       },
-      "TableCreate": {
-        "properties": { "oasis_source_id": { "type": "string", "title": "Oasis Source Id" } },
+      "SuggestFixesRequest": {
+        "properties": {
+          "thread_id": { "type": "string", "title": "Thread Id" },
+          "category": { "type": "string", "title": "Category" }
+        },
         "type": "object",
-        "required": ["oasis_source_id"],
-        "title": "TableCreate"
+        "required": ["thread_id", "category"],
+        "title": "SuggestFixesRequest"
       },
       "TableHealthRead": {
         "properties": {
@@ -2526,8 +3574,11 @@
         "properties": {
           "id": { "type": "string", "title": "Id" },
           "table_id": { "type": "string", "title": "Table Id" },
-          "version": { "type": "integer", "title": "Version" },
           "status": { "$ref": "#/components/schemas/ProfilingStatus" },
+          "is_partial": {
+            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "title": "Is Partial"
+          },
           "row_count": {
             "anyOf": [{ "type": "integer" }, { "type": "null" }],
             "title": "Row Count"
@@ -2553,10 +3604,6 @@
             "title": "Duplicate Rate"
           },
           "sample_data": { "anyOf": [{}, { "type": "null" }], "title": "Sample Data" },
-          "auto_insights": {
-            "anyOf": [{ "items": { "type": "string" }, "type": "array" }, { "type": "null" }],
-            "title": "Auto Insights"
-          },
           "profile_json": { "anyOf": [{}, { "type": "null" }], "title": "Profile Json" },
           "cached_until": {
             "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }],
@@ -2569,7 +3616,6 @@
         "required": [
           "id",
           "table_id",
-          "version",
           "status",
           "row_count",
           "sample_size",
@@ -2578,7 +3624,6 @@
           "null_rate_avg",
           "duplicate_rate",
           "sample_data",
-          "auto_insights",
           "profile_json",
           "cached_until",
           "created_at",
@@ -2596,10 +3641,6 @@
           "oasis_source_id": { "type": "string", "title": "Oasis Source Id" },
           "catalog": { "type": "string", "title": "Catalog" },
           "service": { "type": "string", "title": "Service" },
-          "openmetadata_json": {
-            "anyOf": [{ "type": "object" }, { "type": "null" }],
-            "title": "Openmetadata Json"
-          },
           "created_at": { "type": "string", "format": "date-time", "title": "Created At" },
           "updated_at": { "type": "string", "format": "date-time", "title": "Updated At" }
         },
@@ -2613,7 +3654,6 @@
           "oasis_source_id",
           "catalog",
           "service",
-          "openmetadata_json",
           "created_at",
           "updated_at"
         ],

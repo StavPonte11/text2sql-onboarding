@@ -1,43 +1,5 @@
 /* EvaluationsPage styles */
 
-/* Spider2 visibility toggle inside the filters row */
-.table-filters__spider2-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 12px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition:
-    color 0.15s,
-    border-color 0.15s,
-    background 0.15s;
-}
-
-.table-filters__spider2-toggle:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.table-filters__spider2-toggle:disabled {
-  opacity: 0.65;
-  cursor: default;
-}
-
-.table-filters__spider2-toggle--active {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: rgba(var(--accent-rgb, 99, 102, 241), 0.08);
-}
-
 .run-trigger-panel__actions {
   display: flex;
   gap: 8px;

@@ -35,7 +35,6 @@ class Table(SQLModel, table=True):
     oasis_source_id: str
     catalog: str = Field(default="dataverse")
     service: str = Field(default="trino_ingestion")
-    openmetadata_json: Any | None = Field(default=None, sa_column=Column(JSON))
     embedding: Any | None = Field(default=None, sa_column=Column(Vector(768)))
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -54,7 +53,6 @@ class TableRead(SQLModel):
     oasis_source_id: str
     catalog: str
     service: str
-    openmetadata_json: dict | None
     created_at: datetime
     updated_at: datetime
 

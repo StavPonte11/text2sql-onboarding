@@ -32,8 +32,7 @@ def get_trino_connection(catalog: str | None = None, schema: str | None = None):
 
     Args:
         catalog: Override the default catalog (settings.TRINO_CATALOG).
-                 Pass a table's specific catalog to run queries in the right context
-                 (e.g. Spider2 Snowflake catalogs instead of the default 'minio').
+                 Pass a table's specific catalog to run queries in the right context.
         schema:  Override the default schema (settings.TRINO_SCHEMA).
     """
     auth = None

@@ -1,111 +1,27 @@
-import base64
 import logging
 from datetime import datetime
 
-import httpx
 from core.db.engine import get_session
-from core.embeddings import get_embedding as core_get_embedding
 from core.models.models import (
-    EnrichmentVersion,
     ForeignKeyMapping,
     ForeignKeyMappingCreate,
     ForeignKeyMappingRead,
     GoldenQuestion,
     Table,
-    TableCreate,
     TableRead,
     TableStatus,
     UserScope,
 )
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
-from app.config import settings
 from app.routers.evaluation import PRODUCTION_DATASET_NAME, _build_questions_payload
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
 
 
-_cached_om_token: str | None = None
-
-
-def get_om_token(force_refresh: bool = False) -> str:
-    global _cached_om_token
-    if _cached_om_token and not force_refresh:
-        return _cached_om_token
-
-    try:
-        b64_password = base64.b64encode(
-            settings.OPENMETADATA_ADMIN_PASSWORD.encode()
-        ).decode()
-        r = httpx.post(
-            f"{settings.OPENMETADATA_URL}/api/v1/users/login",
-            json={"email": settings.OPENMETADATA_ADMIN_EMAIL, "password": b64_password},
-            timeout=10.0,
-            verify=settings.OPENMETADATA_VERIFY_SSL,
-        )
-        r.raise_for_status()
-        token = r.json().get("accessToken") or r.json().get("token", "")
-        if token:
-            _cached_om_token = token
-            return token
-    except Exception as e:
-        logger.warning(f"Failed to dynamically log in to OpenMetadata: {e}")
-
-    return settings.OPENMETADATA_TOKEN
-
-
-def om_get_request(url: str) -> httpx.Response:
-    token = get_om_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    response = httpx.get(
-        url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL
-    )
-
-    if response.status_code == 401:
-        logger.info(
-            "OpenMetadata request returned 401. Retrying with a refreshed token..."
-        )
-        token = get_om_token(force_refresh=True)
-        headers = {"Authorization": f"Bearer {token}"}
-        response = httpx.get(
-            url, headers=headers, timeout=10.0, verify=settings.OPENMETADATA_VERIFY_SSL
-        )
-
-    return response
-
-
 router = APIRouter(prefix="/tables", tags=["tables"])
-
-
-def get_fqn_from_source_id(oasis_source_id: str, default_fqn: str | None = None) -> str:
-    if settings.TRINO_SERVICE_URL:
-        try:
-            url = f"{settings.TRINO_SERVICE_URL.rstrip('/')}/stages/get_stage_trino_full_name_by_ids?stage_name=pipeline&get_valid_table=true"
-            response = httpx.post(
-                url, json=[oasis_source_id], timeout=10.0, verify=False
-            )
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0:
-                return f"{settings.OPENMETADATA_SERVICE_NAME}.{data[0]}"
-        except Exception as e:
-            logger.warning(f"Failed to fetch FQN from TRINO_SERVICE_URL: {e}")
-    return default_fqn if default_fqn else oasis_source_id
-
-
-def get_table_fqn(table: Table) -> str:
-    return f"{table.service}.{table.catalog}.{table.schema_name}.{table.name}"
-
-
-def get_embedding(text: str) -> list[float] | None:
-    return core_get_embedding(
-        text=text,
-        embedder_url=settings.EMBEDDER_URL,
-        embedder_model=settings.EMBEDDER_MODEL,
-        embedder_key=settings.EMBEDDER_KEY,
-    )
 
 
 @router.get("", response_model=list[TableRead])
@@ -140,214 +56,6 @@ def get_table(table_id: str, session: Session = Depends(get_session)):
     table = session.get(Table, table_id)
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
-    return table
-
-
-@router.post("", response_model=TableRead, status_code=201)
-def create_table(payload: TableCreate, session: Session = Depends(get_session)):
-    # Get the FQN using the helper function
-    fqn = get_fqn_from_source_id(payload.oasis_source_id)
-
-    try:
-        # Instead of sending oasis_source_id into the URL, send the FQN
-        url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        response = om_get_request(url)
-        response.raise_for_status()
-        data = response.json()
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Table '{fqn}' not found in metadata repository.",
-            )
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"Failed to fetch table metadata: {e!s}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to fetch table metadata: {e!s}"
-        )
-
-    # Handle both old and new data structures
-    metadata = data.get("metadata", data)
-    name = metadata.get("name", data.get("name"))
-    schema_name = (
-        metadata.get("databaseSchema", {}).get("name")
-        if "databaseSchema" in metadata
-        else data.get("databaseSchema", {}).get("name")
-    )
-    service_name = (
-        metadata.get("service", {}).get("name")
-        if "service" in metadata
-        else data.get("service", {}).get("name")
-    )
-    catalog_name = (
-        metadata.get("database", {}).get("name")
-        if "database" in metadata
-        else data.get("database", {}).get("name")
-    )
-
-    description = metadata.get("description", data.get("description", ""))
-    om_columns = metadata.get("columns", data.get("columns", []))
-
-    # Generate embedding
-    text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
-    embedding = get_embedding(text_to_embed)
-
-    # Create the table
-    table = Table(
-        name=name,
-        schema_name=schema_name,
-        catalog=catalog_name,
-        service=service_name,
-        owner_id="system",
-        oasis_source_id=payload.oasis_source_id,
-        openmetadata_json=data,
-        embedding=embedding,
-    )
-    session.add(table)
-    session.commit()
-
-    # Extract columns in the format expected by the frontend
-    def parse_columns(cols):
-        parsed = []
-        for c in cols:
-            col_def = {
-                "name": c.get("name"),
-                "description": c.get("description") or "",
-                "dataType": c.get("dataType"),
-                "is_geo": False,
-                "is_time": False,
-            }
-            if "children" in c:
-                col_def["children"] = parse_columns(c["children"])
-            parsed.append(col_def)
-        return parsed
-
-    columns = parse_columns(om_columns)
-    new_enrichment = EnrichmentVersion(
-        table_id=table.id,
-        version=1,
-        data={"table_description": description, "columns": columns},
-    )
-    session.add(new_enrichment)
-    session.commit()
-
-    session.refresh(table)
-
-    return table
-
-
-@router.post("/{table_id}/sync-schema", response_model=TableRead)
-def sync_table_schema(table_id: str, session: Session = Depends(get_session)):
-    table = session.get(Table, table_id)
-    if not table:
-        raise HTTPException(status_code=404, detail="Table not found")
-
-    if not table.oasis_source_id:
-        raise HTTPException(status_code=400, detail="Table has no oasis_source_id")
-
-    # Get the FQN using the helper function, get the updated from open and if not exist get the last table fqn in the database
-    fqn = get_fqn_from_source_id(
-        table.oasis_source_id, default_fqn=get_table_fqn(table)
-    )
-
-    try:
-        url = f"{settings.OPENMETADATA_URL}/api/v1/tables/name/{fqn}?fields=columns"
-        response = om_get_request(url)
-        response.raise_for_status()
-        data = response.json()
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Table '{fqn}' not found in metadata repository.",
-            )
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"Failed to refetch table metadata: {e!s}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to refetch table metadata: {e!s}"
-        )
-
-    # Handle both old and new data structures
-    metadata = data.get("metadata", data)
-    name = metadata.get("name", data.get("name"))
-    schema_name = (
-        metadata.get("databaseSchema", {}).get("name")
-        if "databaseSchema" in metadata
-        else data.get("databaseSchema", {}).get("name")
-    )
-    service_name = (
-        metadata.get("service", {}).get("name")
-        if "service" in metadata
-        else data.get("service", {}).get("name")
-    )
-    catalog_name = (
-        metadata.get("database", {}).get("name")
-        if "database" in metadata
-        else data.get("database", {}).get("name")
-    )
-
-    description = metadata.get("description", data.get("description", ""))
-    om_columns = metadata.get("columns", data.get("columns", []))
-
-    # Generate embedding
-    text_to_embed = f"Table name: {name}\nSchema: {schema_name}\nDescription: {description}\nColumns: {', '.join([c.get('name', '') for c in om_columns])}"
-    embedding = get_embedding(text_to_embed)
-    if embedding:
-        table.embedding = embedding
-
-    # Update the table
-    table.name = name
-    table.schema_name = schema_name
-    table.catalog = catalog_name
-    table.service = service_name
-    table.openmetadata_json = data
-    table.updated_at = datetime.now()
-
-    session.add(table)
-
-    # Create/Update Enrichment
-    # Extract columns in the format expected by the frontend
-    def parse_columns(cols):
-        parsed = []
-        for c in cols:
-            col_def = {
-                "name": c.get("name"),
-                "description": c.get("description") or "",
-                "dataType": c.get("dataType"),
-                "is_geo": False,
-                "is_time": False,
-            }
-            if "children" in c:
-                col_def["children"] = parse_columns(c["children"])
-            parsed.append(col_def)
-        return parsed
-
-    columns = parse_columns(om_columns)
-
-    # Bump version
-    existing_enrichment = session.exec(
-        select(EnrichmentVersion)
-        .where(EnrichmentVersion.table_id == table_id)
-        .order_by(col(EnrichmentVersion.version).desc())
-    ).first()
-    next_version = (existing_enrichment.version + 1) if existing_enrichment else 1
-
-    new_enrichment = EnrichmentVersion(
-        table_id=table_id,
-        version=next_version,
-        data={"table_description": description, "columns": columns},
-    )
-    session.add(new_enrichment)
-
-    session.commit()
-    session.refresh(table)
-
     return table
 
 

@@ -40,33 +40,6 @@ def test_health_endpoint(client):
 
 
 # ── Tables API Tests ──────────────────────────────────────────────────────────
-@patch("app.routers.tables.httpx.get")
-@patch("app.routers.tables.get_fqn_from_source_id")
-def test_create_table(mock_fqn, mock_get, client, db_session):
-    mock_fqn.return_value = "local_trino.minio.ecommerce.ecommerce_orders"
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = MOCK_OM_METADATA
-    mock_get.return_value = mock_response
-
-    payload = {"oasis_source_id": "test-source-id-123"}
-    response = client.post("/api/tables", json=payload)
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["name"] == "ecommerce_orders"
-    assert data["schema_name"] == "ecommerce"
-    assert data["catalog"] == "minio"
-    assert data["service"] == "local_trino"
-    assert data["oasis_source_id"] == "test-source-id-123"
-
-    # Verify database persistence
-    table = db_session.get(Table, data["id"])
-    assert table is not None
-    assert table.status == TableStatus.draft
-
-
 def test_list_tables(client, db_session):
     # Add dummy tables to database
     t1 = Table(
@@ -282,3 +255,59 @@ def test_execute_query_failure(mock_settings, mock_get_conn, client):
     assert data["row_count"] == 0
     assert data["error"] is not None
     assert "Syntax error" in data["error"]
+
+
+# ── Connection Golden Questions via Jeen Metadata ──────────────────────────────
+@patch("app.routers.questions.fetch_jeen_sql_pairs")
+def test_list_connection_questions_from_jeen(mock_fetch_jeen, client):
+    mock_fetch_jeen.return_value = [
+        {
+            "question": "What are sales by category?",
+            "sql_statement": "SELECT category, SUM(amount) FROM sales GROUP BY category",
+            "category": "sales",
+        }
+    ]
+    response = client.get("/api/connections/89/questions")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["question"] == "What are sales by category?"
+    assert "SELECT category" in data[0]["expected_sql"]
+    assert data[0]["connection_id"] == 89
+
+
+@patch("app.routers.questions.save_jeen_sql_pair")
+def test_create_and_update_connection_question(mock_save_jeen, client):
+    mock_save_jeen.return_value = {"status": "ok"}
+
+    # Create
+    payload = {
+        "question": "How many orders were placed today?",
+        "expected_sql": "SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE",
+        "difficulty": "simple",
+        "question_type": "simple",
+    }
+    response = client.post("/api/connections/89/questions", json=payload)
+    assert response.status_code == 201
+    created = response.json()
+    assert created["question"] == payload["question"]
+    assert created["expected_sql"] == payload["expected_sql"]
+    assert created["connection_id"] == 89
+    mock_save_jeen.assert_called_once()
+
+    # Update
+    qid = created["id"]
+    update_payload = {
+        "question": "How many orders were placed today?",
+        "expected_sql": "SELECT COUNT(*) FROM orders WHERE date(created_at) = CURRENT_DATE",
+        "difficulty": "medium",
+        "question_type": "aggregate",
+    }
+    update_resp = client.put(
+        f"/api/connections/89/questions/{qid}", json=update_payload
+    )
+    assert update_resp.status_code == 200
+    updated = update_resp.json()
+    assert updated["id"] == qid
+    assert updated["expected_sql"] == update_payload["expected_sql"]
+    assert updated["difficulty"] == "medium"
