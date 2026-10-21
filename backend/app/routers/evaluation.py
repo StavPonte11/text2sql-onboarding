@@ -36,7 +36,7 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlmodel import Session, desc, select
 
 from app.config import settings
@@ -48,6 +48,13 @@ from app.services.langfuse_client import langfuse_client
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evaluation"])
+
+
+# Score names used before the rename → current names
+_RENAMED_SCORES = {
+    "schema_hallucination": "schema_validity",
+    "dialect_error": "dialect_validity",
+}
 
 
 class LatencyStatsDTO(BaseModel):
@@ -66,11 +73,25 @@ class AccuracyStatsDTO(BaseModel):
     sql_exact_match: float
     time_shift_score: float
     component_match: float
-    schema_hallucination: float
-    dialect_error: float
+    # 1 = good: no hallucinated tables/columns / SQL valid for its dialect
+    schema_validity: float = 0.0
+    dialect_validity: float = 0.0
     composite_score: float
     # evaluator → number of questions it could judge (e.g. golden SQL ran)
     evaluated_counts: dict[str, int] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_names(cls, data):
+        """Evaluation services before the rename reported these two scores
+        as schema_hallucination / dialect_error (same meaning: 1 = good)."""
+        if isinstance(data, dict):
+            data = dict(data)
+            for old, new in _RENAMED_SCORES.items():
+                legacy = data.pop(old, None)
+                if legacy is not None and new not in data:
+                    data[new] = legacy
+        return data
 
 
 class FailureCategoryDTO(BaseModel):
@@ -227,8 +248,8 @@ def _map_and_save_run_metrics(
         "exact_match": eval_resp.accuracy.sql_exact_match,
         "time_shift_score": eval_resp.accuracy.time_shift_score,
         "component_match": eval_resp.accuracy.component_match,
-        "schema_hallucination": eval_resp.accuracy.schema_hallucination,
-        "dialect_error": eval_resp.accuracy.dialect_error,
+        "schema_validity": eval_resp.accuracy.schema_validity,
+        "dialect_validity": eval_resp.accuracy.dialect_validity,
     }
     session.add(run)
 

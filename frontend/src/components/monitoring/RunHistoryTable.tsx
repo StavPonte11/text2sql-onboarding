@@ -10,6 +10,15 @@ import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 
 import './RunHistoryTable.css';
 
+// Runs saved before the rename store these two scores under their old names
+// (same meaning: 1 = good)
+const RENAMED_DIMENSIONS: Record<string, string> = {
+  schema_hallucination: 'schema_validity',
+  dialect_error: 'dialect_validity',
+};
+
+const dimensionLabel = (dim: string) => (RENAMED_DIMENSIONS[dim] ?? dim).replace(/_/g, ' ');
+
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
   const stopMut = useStopEvalRun();
@@ -191,7 +200,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   ([dim, val]) => (
                     <div key={dim} className="dimension-item">
                       <div className="dimension-item__header">
-                        <span className="dimension-item__label">{dim.replace(/_/g, ' ')}</span>
+                        <span className="dimension-item__label">{dimensionLabel(dim)}</span>
                         <span
                           className="dimension-item__score"
                           style={{ color: val >= 0.5 ? '#10b981' : '#ef4444' }}

@@ -29,7 +29,7 @@ def _result_payload():
         "latency": dict(p50=1, p95=1, p99=1, average=1, minimum=1, maximum=1, total_samples=1),
         "accuracy": dict(
             execution_accuracy=1, contains_accuracy=1, sql_exact_match=0, time_shift_score=1,
-            component_match=1, schema_hallucination=1, dialect_error=1, composite_score=1,
+            component_match=1, schema_validity=1, dialect_validity=1, composite_score=1,
         ),
         "failure_analysis": dict(
             total_failures=0, failure_rate=0, agent_crash_count=0, agent_crash_rate=0,
@@ -100,3 +100,14 @@ def test_falls_back_to_blocking_endpoint_without_jobs_api():
 def test_requires_connection_id():
     with pytest.raises(ValueError):
         _call_run_new_evaluation({"dataset_name": "x"})
+
+
+def test_older_evaluation_service_score_names_are_still_accepted():
+    from app.routers.evaluation import AccuracyStatsDTO
+
+    legacy = dict(
+        execution_accuracy=1, contains_accuracy=1, sql_exact_match=0, time_shift_score=1,
+        component_match=1, schema_hallucination=0.4, dialect_error=0.9, composite_score=1,
+    )
+    stats = AccuracyStatsDTO(**legacy)
+    assert (stats.schema_validity, stats.dialect_validity) == (0.4, 0.9)
