@@ -21,6 +21,7 @@ from typing import Any
 import shapely
 
 from agent.config import settings
+from deep_agent.geo.extract import squash, validate_locations
 from deep_agent.geo.geometry import LINEAR, POLYGONAL, PUNCTUAL, GeometryError, metric_buffer, to_wkt
 from deep_agent.geo.models import LocationPlan, LocationUsage
 from deep_agent.geo.resolve import placeholder
@@ -259,11 +260,25 @@ class _Finalizer:
             self.directional(usage, feature)
 
 
-def finalize_plan(plan: LocationPlan, registry: dict[str, Any], observed: str) -> tuple[LocationPlan, dict[str, dict]]:
-    """Validated, rendered copy of `plan` and the derived geometries to add to the registry."""
+def finalize_plan(
+    plan: LocationPlan, registry: dict[str, Any], observed: str, query: str | None = None,
+) -> tuple[LocationPlan, dict[str, dict]]:
+    """Validated, rendered copy of `plan` and the derived geometries to add to the registry.
+
+    With `query` (the question the subagent was given), stage-1 locations are validated first
+    and every usage must refer to one of the surviving locations.
+    """
     plan = plan.model_copy(deep=True)
+    if query is not None:
+        plan.locations, plan.excluded = validate_locations(query, plan.locations, plan.excluded)
+    known = {squash(loc.canonical_hebrew) for loc in plan.locations}
     finalizer = _Finalizer(registry, observed)
     for usage in plan.usages:
+        if query is not None and squash(usage.canonical_hebrew) not in known:
+            usage.status, usage.predicate_sql, usage.geometry_sql = "unresolved", None, None
+            usage.issues = [f"'{usage.canonical_hebrew}' is not one of the extracted locations — add it to "
+                            "`locations` (it must occur in the question) or drop the usage"]
+            continue
         finalizer.run(usage)
 
     by_mention: dict[str, set[str]] = {}

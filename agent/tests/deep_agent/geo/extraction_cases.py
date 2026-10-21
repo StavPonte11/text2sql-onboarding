@@ -2,7 +2,7 @@
 Extraction evaluation set: the nine spec examples (section 2.7) plus additional cases (section 7.1).
 
 Each case: (query, expected [(canonical_hebrew, english_name), ...] in order of appearance).
-Used by the prompt check (the nine examples are in the extractor prompt) and the live LLM evaluation.
+Used by the prompt check (the nine examples are in the location-analyst prompt) and the live LLM evaluation.
 """
 
 REGRESSION = {

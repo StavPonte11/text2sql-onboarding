@@ -1,9 +1,9 @@
 """
 Contracts between the three location stages and the parent agent.
 
-    extract_locations  -> LocationEntity        (what was mentioned, normalised)
-    resolve_location   -> ResolvedFeature       (which real-world feature, which geometry)
-    LocationPlan       -> LocationUsage         (how each location is used in SQL)
+    LocationPlan.locations -> LocationEntity    (stage 1: what was mentioned, normalised — the model's reasoning)
+    resolve_location       -> ResolvedFeature   (stage 2: which real-world feature, which geometry)
+    LocationPlan.usages    -> LocationUsage     (stage 3: how each location is used in SQL)
 
 Geometry lives only in ResolvedFeature registry entries (graph state `geo_features`);
 the model refers to it by `feature_ref`, and the SQL that embeds it is rendered
@@ -27,24 +27,22 @@ GeometryType = Literal[
 
 
 class LocationEntity(BaseModel):
-    original_mention: str = Field(description="Exact substring of the user query.")
-    canonical_hebrew: str
+    original_mention: str = Field(description="Exact substring of the question, including any prefix (ובכפר קאסם).")
+    canonical_hebrew: str = Field(description="Normalised Hebrew name (prefixes stripped, abbreviations expanded, "
+                                              "spelling corrected).")
     english_name: str | None = Field(
-        default=None, description="lowercase snake_case identifier; a name, not a unique feature id")
-    entity_type: EntityType | None = None
-    mention_context: str = ""
-    normalization_notes: list[str] = Field(default_factory=list)
-    ambiguity: str | None = None
+        default=None, description="lowercase snake_case English name; a name, not a unique feature id")
+    entity_type: str | None = Field(default=None, description="One of: " + ", ".join(EntityType.__args__))
+    mention_context: str = Field(default="", description="Short excerpt around the mention.")
+    normalization_notes: list[str] = Field(
+        default_factory=list, description="Short factual notes on each change (prefix, abbreviation, spelling, "
+                                          "alias, modifier dropped).")
+    ambiguity: str | None = Field(default=None, description="Material unresolved ambiguity, else null.")
 
 
 class ExcludedMention(BaseModel):
-    mention: str
-    reason: str
-
-
-class ExtractionResult(BaseModel):
-    locations: list[LocationEntity] = Field(default_factory=list)
-    excluded: list[ExcludedMention] = Field(default_factory=list)
+    mention: str = Field(description="A look-alike span that is not a geographic reference here.")
+    reason: str = Field(description="Short reason, e.g. 'sports team', 'personal name', 'date', 'generic sector'.")
 
 
 class ResolvedFeature(BaseModel):
@@ -111,8 +109,14 @@ class LocationUsage(BaseModel):
 class LocationPlan(BaseModel):
     """Submit the location plan for the parent agent. Call exactly once, when done."""
 
-    usages: list[LocationUsage] = Field(default_factory=list)
-    excluded: list[ExcludedMention] = Field(default_factory=list)
+    locations: list[LocationEntity] = Field(
+        default_factory=list, description="Stage 1: every geographic entity of the question, in order of appearance. "
+                                          "Empty when there is none.")
+    excluded: list[ExcludedMention] = Field(
+        default_factory=list, description="Stage 1: look-alikes you rejected (teams, people, venues, dates, sectors).")
+    usages: list[LocationUsage] = Field(
+        default_factory=list, description="Stage 3: how each location is used in SQL; canonical_hebrew must match a "
+                                          "location above.")
     combination_note: str | None = Field(
         default=None,
         description="How the usages combine (AND by default). Explain any OR — it must be justified by the data model.")

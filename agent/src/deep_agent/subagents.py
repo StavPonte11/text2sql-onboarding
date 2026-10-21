@@ -31,7 +31,7 @@ SUBAGENT_TOOLS = {
         t.get_sample_rows,
     ],
     "result-verifier": [t.execute_trino_query, t.get_sample_rows],
-    # + extract_locations (bound to the model) and resolve_location (bound to the geocoders), see build_subagents
+    # + resolve_location, bound per build to the available geocoders (see build_subagents)
     "location-analyst": [
         t.search_metadata, t.get_table_columns, t.get_column_profile,
         t.search_column_values, t.get_column_distinct_values, t.get_sample_rows,
@@ -52,7 +52,7 @@ SUBAGENT_DESCRIPTIONS = {
         "Give it the question, the SQL and a summary of the result. Returns PASS/FAIL with evidence."
     ),
     "location-analyst": (
-        "Handles every place / geography in a question: extracts and normalises Hebrew place names, decides per "
+        "Handles every place / geography in a question: identifies and normalises Hebrew place names, decides per "
         "place whether a verified categorical column answers it or geometry is needed, resolves geometry only then, "
         "and returns a JSON LocationPlan with ready predicate_sql fragments (geometry as '@..._wkt@' placeholders "
         "that execute_trino_query substitutes). Give it the user's question verbatim and the candidate table(s)."
@@ -81,8 +81,7 @@ def build_subagents(main_model: BaseChatModel, extra_tools: dict[str, list] | No
             # The gateway geocoder is consumed inside resolve_location (geometry stays out of the context).
             geocoder_tools = [x for x in extras if x.name == GATEWAY_GEOCODER]
             extras = [x for x in extras if x.name != GATEWAY_GEOCODER]
-            tools = [geo.make_extract_locations_tool(model or main_model), *tools,
-                     geo.make_resolve_location_tool(geo.build_geocoders(geocoder_tools))]
+            tools = [*tools, geo.make_resolve_location_tool(geo.build_geocoders(geocoder_tools))]
         spec = {
             "name": name,
             "description": SUBAGENT_DESCRIPTIONS[name],

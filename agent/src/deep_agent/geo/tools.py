@@ -7,8 +7,7 @@ from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.tools import ToolRuntime
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -16,8 +15,6 @@ from pydantic import BaseModel, Field
 from agent.utils.sql import resolve_wkt_polygons
 from deep_agent.context import DeepAgentContext, geo_registry
 from deep_agent.envelope import fail, ok
-from deep_agent.geo.extract import ExtractionError
-from deep_agent.geo.extract import extract_locations as run_extraction
 from deep_agent.geo.models import LocationPlan
 from deep_agent.geo.plan import finalize_plan
 from deep_agent.geo.resolve import GATEWAY_GEOCODER, GatewayGeocoder, Geocoder, NominatimGeocoder, resolve
@@ -48,48 +45,14 @@ def substitute_geometries(sql: str, registry: dict[str, Any]) -> str:
     return resolve_wkt_polygons(sql, {"coords": {t: geometries[t]["wkt"] for t in tokens}})
 
 
-class ExtractLocationsArgs(BaseModel):
-    query: str = Field(description="The user's question, verbatim.")
-    note: str | None = Field(
-        default=None, description="Optional reviewer note for a second pass, e.g. a span you think was missed or "
-                                  "misjudged and why. Omit on the first call.")
-
-
-def make_extract_locations_tool(model: BaseChatModel) -> BaseTool:
-    """extract_locations backed by the model (location-extractor prompt) — see deep_agent.geo.extract."""
-
-    async def _extract(query: str, note: str | None = None, runtime: Runtime = None) -> str:
-        try:
-            result = await run_extraction(query, model, note, config=getattr(runtime, "config", None))
-        except ExtractionError as exc:
-            return fail("EXTRACTION_FAILED", str(exc))
-        except Exception as exc:  # model endpoint errors
-            return fail("EXTRACTION_FAILED", f"location extractor model call failed: {exc}")
-        return ok(result.model_dump(exclude_none=True))
-
-    return StructuredTool.from_function(
-        coroutine=_extract,
-        name="extract_locations",
-        description=(
-            "Stage 1: identify every geographic entity in a Hebrew query and normalise it. A dedicated extractor "
-            "model reasons over the context (places vs. teams, people, venues, dates; prefixes, abbreviations, "
-            "spelling, aliases, directional / operational modifiers). Returns data.locations (original_mention, "
-            "canonical_hebrew, english_name, entity_type, mention_context, normalization_notes, ambiguity) and "
-            "data.excluded (mention, reason). An empty list is valid. If you disagree with the result, call once "
-            "more with `note` explaining the span and why."
-        ),
-        args_schema=ExtractLocationsArgs,
-    )
-
-
 class ResolveLocationArgs(BaseModel):
-    canonical_hebrew: str = Field(description="canonical_hebrew from extract_locations.")
+    canonical_hebrew: str = Field(description="The location's canonical_hebrew from your extraction.")
     geometry: Literal["point", "line", "area", "any"] = Field(
         description="What the SQL operation needs: 'point' for a center / radius, 'area' for containment or "
                     "boundary distance, 'line' for rivers / roads, 'any' if unsure. Do not call this at all when a "
                     "categorical column answers the question.")
-    entity_type: str | None = Field(default=None, description="entity_type from extract_locations.")
-    english_name: str | None = Field(default=None, description="english_name from extract_locations.")
+    entity_type: str | None = Field(default=None, description="The location's entity_type from your extraction.")
+    english_name: str | None = Field(default=None, description="The location's english_name from your extraction.")
     provider_id: str | None = Field(
         default=None, description="Pick one candidate from a previous LOCATION_AMBIGUOUS result (no new provider call).")
 
@@ -189,6 +152,11 @@ def _observed_text(messages: list) -> str:
     return "\n".join(m.text for m in messages if isinstance(m, ToolMessage) and m.name in EVIDENCE_TOOLS)
 
 
+def _question(messages: list) -> str:
+    """The delegation message (the parent passes the user's question verbatim in it)."""
+    return next((m.text for m in messages if isinstance(m, HumanMessage)), "")
+
+
 class LocationPlanMiddleware(AgentMiddleware):
     """Finalises the location-analyst's LocationPlan: evidence checks, SQL rendering, derived geometries."""
 
@@ -196,8 +164,9 @@ class LocationPlanMiddleware(AgentMiddleware):
         plan = state.get("structured_response")
         if not isinstance(plan, LocationPlan):
             return None
-        finalized, new_geometries = finalize_plan(plan, state.get("geo_registry") or {},
-                                                  _observed_text(state.get("messages") or []))
+        messages = state.get("messages") or []
+        finalized, new_geometries = finalize_plan(plan, state.get("geo_registry") or {}, _observed_text(messages),
+                                                  query=_question(messages))
         update: dict[str, Any] = {"structured_response": finalized}
         if new_geometries:
             update["geo_registry"] = {"geometries": new_geometries}

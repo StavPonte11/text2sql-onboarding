@@ -27,16 +27,11 @@ COLUMNS = [{"name": "city", "type": "varchar", "semanticType": "categorical"},
 
 def _role(messages) -> str:
     text = system_text(messages)
-    for role in ("location-extractor", "location-analyst"):
-        if f"You are {role}" in text:
-            return role
-    return "main"
+    return "location-analyst" if "You are location-analyst" in text else "main"
 
 
-EXTRACTION = AIMessage("", tool_calls=[{"name": "LocationExtraction", "id": "e1", "args": {
-    "candidates": [{"mention": "באר שבע", "is_geographic": True, "reason": "city whose boundary bounds the events"}],
-    "locations": [{"original_mention": "באר שבע", "canonical_hebrew": "באר שבע", "english_name": "beer_sheva",
-                   "entity_type": "city", "normalization_notes": []}]}}])
+BEER_SHEVA = {"original_mention": "באר שבע", "canonical_hebrew": "באר שבע", "english_name": "beer_sheva",
+              "entity_type": "city", "normalization_notes": []}
 
 
 def _tool_payloads(messages, name):
@@ -45,8 +40,6 @@ def _tool_payloads(messages, name):
 
 def policy(messages):
     tool_msgs = [m for m in messages if m.type == "tool"]
-    if _role(messages) == "location-extractor":
-        return EXTRACTION
     if _role(messages) == "main":
         task = [m for m in tool_msgs if m.name == "task"]
         if not task:
@@ -62,22 +55,22 @@ def policy(messages):
         return AIMessage("", tool_calls=[{"name": "DeepAgentAnswer", "id": "a1", "args": {
             "sql": f"SELECT count(*) AS n FROM events WHERE {sql}", "explanation_he": "ספירה", "confidence": "high"}}])
 
-    # location-analyst: extract -> inspect schema -> resolve area -> plan
+    # location-analyst: (extraction is its own reasoning) -> inspect schema -> resolve area -> plan
     if not tool_msgs:
-        return AIMessage("", tool_calls=[{"name": "extract_locations", "id": "s1", "args": {"query": QUESTION}}])
+        return AIMessage("", tool_calls=[{"name": "get_table_columns", "id": "s1", "args": {"table_name": "events"}}])
     if len(tool_msgs) == 1:
-        return AIMessage("", tool_calls=[{"name": "get_table_columns", "id": "s2", "args": {"table_name": "events"}}])
-    if len(tool_msgs) == 2:
-        loc = _tool_payloads(messages, "extract_locations")[0]["data"]["locations"][0]
-        return AIMessage("", tool_calls=[{"name": "resolve_location", "id": "s3", "args": {
-            "canonical_hebrew": loc["canonical_hebrew"], "geometry": "area", "entity_type": loc["entity_type"],
-            "english_name": loc["english_name"]}}])
+        return AIMessage("", tool_calls=[{"name": "resolve_location", "id": "s2", "args": {
+            "canonical_hebrew": "באר שבע", "geometry": "area", "entity_type": "city", "english_name": "beer_sheva"}}])
     ref = _tool_payloads(messages, "resolve_location")[0]["data"]["feature_ref"]
-    return AIMessage("", tool_calls=[{"name": "LocationPlan", "id": "s4", "args": {"usages": [{
-        "original_mention": "באר שבע", "canonical_hebrew": "באר שבע", "english_name": "beer_sheva",
-        "intent": "inside the municipal boundary", "operation": "within_area",
-        "target": {"table": "events", "kind": "lon_lat", "lon_column": "lon", "lat_column": "lat"},
-        "feature_ref": ref, "evidence": ["events has lon/lat columns"]}]}}])
+    return AIMessage("", tool_calls=[{"name": "LocationPlan", "id": "s3", "args": {
+        "locations": [BEER_SHEVA, {**BEER_SHEVA, "original_mention": "בדימונה", "canonical_hebrew": "דימונה",
+                                   "english_name": "dimona"}],          # not in the question: must be dropped
+        "excluded": [],
+        "usages": [{
+            "original_mention": "באר שבע", "canonical_hebrew": "באר שבע", "english_name": "beer_sheva",
+            "intent": "inside the municipal boundary", "operation": "within_area",
+            "target": {"table": "events", "kind": "lon_lat", "lon_column": "lon", "lat_column": "lat"},
+            "feature_ref": ref, "evidence": ["events has lon/lat columns"]}]}}])
 
 
 @pytest.mark.asyncio
@@ -94,16 +87,16 @@ async def test_location_analyst_end_to_end(policy_model):
             {"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "geo-e2e"}},
             context=DeepAgentContext(connection_id=1))
 
-    # Stage 1 ran the extractor model on the question verbatim, with its own prompt.
-    extractor_calls = [msgs for msgs in model.seen if _role(msgs) == "location-extractor"]
-    assert len(extractor_calls) == 1 and extractor_calls[0][-1].content == QUESTION
-
     # Stage 2 called the geocoder once, asking for a polygon (area needed).
     assert geocode.call_count == 1 and geocode.call_args.args[1] is True
 
     # The finalised plan (not the model's raw output) reached the parent, without geometry inline.
     task = next(m for m in result["messages"] if m.type == "tool" and m.name == "task")
     plan = json.loads(task.text)
+    # Stage 1 (the subagent's own extraction) was validated against the question: no extra model call.
+    assert [loc["canonical_hebrew"] for loc in plan["locations"]] == ["באר שבע"]
+    assert plan["excluded"][0]["mention"] == "בדימונה" and "not found in the question" in plan["excluded"][0]["reason"]
+    assert sum(_role(msgs) == "location-analyst" for msgs in model.seen) == 3
     u = plan["usages"][0]
     assert u["status"] == "ready" and u["geometry_type"] == "Polygon"
     assert u["predicate_sql"].startswith("ST_Contains(ST_GeometryFromText('@beer_sheva_") and "POLYGON" not in task.text
@@ -120,8 +113,7 @@ async def test_location_analyst_end_to_end(policy_model):
     # location-analyst was offered exactly its tools (+ resolve_location, the plan tool and harness tools).
     sub_call = next(i for i, msgs in enumerate(model.seen) if _role(msgs) == "location-analyst")
     offered = set(model.bound_tool_names[sub_call])
-    expected = {t.name for t in SUBAGENT_TOOLS["location-analyst"]} | {"extract_locations", "resolve_location",
-                                                                        "LocationPlan"}
+    expected = {t.name for t in SUBAGENT_TOOLS["location-analyst"]} | {"resolve_location", "LocationPlan"}
     assert expected <= offered and "execute_trino_query" not in offered and "task" not in offered
 
 
@@ -142,7 +134,7 @@ def test_location_analyst_spec_and_gateway_geocoder_injection():
     specs = {s["name"]: s for s in build_subagents(MagicMock(), {"location-analyst": [gateway, reverse]})}
     spec = specs["location-analyst"]
     names = [t.name for t in spec["tools"]]
-    assert {"extract_locations", "resolve_location", "get_location_by_coordinates"} <= set(names)
+    assert {"resolve_location", "get_location_by_coordinates"} <= set(names) and "extract_locations" not in names
     assert "get_geocode_address" not in names  # consumed by resolve_location, not offered to the model
     assert "gateway:get_geocode_address" in next(t for t in spec["tools"] if t.name == "resolve_location").description
     assert spec["response_format"].schema.__name__ == "LocationPlan"
