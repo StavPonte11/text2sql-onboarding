@@ -224,7 +224,7 @@ services:
       - TRINO_PORT=443
       - TRINO_USER=schema-modeler
       - TRINO_PASSWORD=
-      - TRINO_CATALOG=postgres
+      - TRINO_CATALOG=adventureworks
       - TRINO_SCHEMA=public
       - TRINO_HTTP_SCHEME=https
       - TRINO_REQUEST_TIMEOUT=30.0
