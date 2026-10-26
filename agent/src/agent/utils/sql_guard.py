@@ -34,10 +34,15 @@ class GuardedSQL:
     is_query: bool              # SELECT-like (row cap applied) vs SHOW/DESCRIBE
 
 
-def clamp(value: int | None, low: int, high: int, default: int) -> int:
-    if value is None:
-        return default
-    return max(low, min(int(value), high))
+def effective_cap(requested: int | None, ceiling: int | None) -> int | None:
+    """Rows to return: the caller's request, bounded by the configured ceiling when one is set.
+
+    None means unlimited — no ceiling configured and nothing requested.
+    """
+    if requested is None:
+        return ceiling
+    requested = max(1, int(requested))
+    return min(requested, ceiling) if ceiling is not None else requested
 
 
 def _has_comments(sql: str) -> bool:
@@ -65,9 +70,19 @@ def _reject_writes(tree: exp.Expression) -> None:
 
 
 def _limit_value(tree: exp.Expression) -> int | None:
+    """Row count of the outer LIMIT n or FETCH FIRST n ROWS (sqlglot stores both under 'limit')."""
     lim = tree.args.get("limit")
-    if isinstance(lim, exp.Limit) and isinstance(lim.expression, exp.Literal) and not lim.expression.is_string:
-        return int(lim.expression.this)
+    if isinstance(lim, exp.Limit):
+        count = lim.expression
+    elif isinstance(lim, exp.Fetch):
+        options = lim.args.get("limit_options")
+        if options is not None and options.args.get("percent"):
+            return None
+        count = lim.args.get("count")
+    else:
+        return None
+    if isinstance(count, exp.Literal) and not count.is_string:
+        return int(count.this)
     return None
 
 
@@ -103,18 +118,28 @@ def parse_read_statement(sql: str) -> exp.Expression | None:
     return tree
 
 
-def prepare(sql: str, row_cap: int) -> GuardedSQL:
-    """Validate `sql` and enforce an outer LIMIT of row_cap + 1 (the extra row flags truncation)."""
+def prepare(sql: str, row_cap: int | None) -> GuardedSQL:
+    """Validate `sql`; when row_cap is set, enforce an outer LIMIT of row_cap + 1 (the extra row flags truncation).
+
+    With row_cap=None the statement is only validated and runs exactly as written.
+    """
     tree = parse_read_statement(sql)
+    original = sql.strip().rstrip(";").strip()
     if tree is None:
-        return GuardedSQL(sql.strip().rstrip(";"), None, None, False)
+        return GuardedSQL(original, None, None, False)
+
+    asked = _limit_value(tree)
+    if row_cap is None:
+        return GuardedSQL(original, None, asked, True)
 
     fetch = row_cap + 1
-    asked = _limit_value(tree)
-    if isinstance(tree, exp.Select) and not tree.args.get("fetch"):
-        if asked is None or asked > fetch:
-            tree = tree.limit(fetch, copy=True)
-    elif asked is None or asked > fetch or isinstance(tree, exp.SetOperation) or tree.args.get("fetch"):
+    if asked is not None and asked <= fetch:
+        # Already within the cap: run it exactly as written (keeps FETCH ... WITH TIES semantics).
+        return GuardedSQL(original, row_cap, asked, True)
+    if isinstance(tree, (exp.Select, exp.SetOperation)):
+        # Set the outer LIMIT in place. Wrapping in a subquery would let Trino drop the ORDER BY.
+        tree = tree.limit(fetch, copy=True)
+    else:
         tree = exp.select("*").from_(tree.subquery("_q")).limit(fetch)
     return GuardedSQL(tree.sql(dialect=_DIALECT), row_cap, asked, True)
 

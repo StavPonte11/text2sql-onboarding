@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 
@@ -48,8 +48,9 @@ class AgentSettings(BaseSettings):
     # ── Deep Agent ────────────────────────────────────────────────────────────
     DEEP_AGENT_SKILLS_DIR: str | None = None  # Override packaged skills dir (<dir>/<name>/SKILL.md)
     DEEP_AGENT_MEMORY_DIR: str | None = None  # Override packaged memory dir (must contain AGENTS.md)
-    DEEP_AGENT_MAX_ROWS: int = Field(default=100, gt=0)  # Hard cap on rows returned by execute_trino_query
-    DEEP_AGENT_MAX_SAMPLE_ROWS: int = Field(default=10, gt=0)  # Hard cap on rows returned by get_sample_rows
+    # Row ceilings for the deep agent's SQL tools. Set to "none" (or empty) to disable the ceiling.
+    DEEP_AGENT_MAX_ROWS: int | None = Field(default=100, gt=0)  # execute_trino_query / get_column_distinct_values
+    DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""
@@ -101,6 +102,14 @@ class AgentSettings(BaseSettings):
 
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────
     SCHEMA_CACHE_TTL: int = Field(default=600, gt=0)    # seconds — DDL content
+
+    @field_validator("DEEP_AGENT_MAX_ROWS", "DEEP_AGENT_MAX_SAMPLE_ROWS", mode="before")
+    @classmethod
+    def _no_row_ceiling(cls, value):
+        # Env vars can't hold None; these spellings mean "no ceiling".
+        if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "unlimited"):
+            return None
+        return value
 
 
 settings = AgentSettings()

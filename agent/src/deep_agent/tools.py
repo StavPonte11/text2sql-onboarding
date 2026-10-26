@@ -8,7 +8,7 @@ from agent.config import settings
 from agent.utils import sql_guard
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
 from agent.utils.sql import clean_sql
-from agent.utils.sql_guard import clamp
+from agent.utils.sql_guard import effective_cap
 from core.trino import execute_query_sync
 from agent.services.geo_utils import get_geojson_polygon, geojson_to_simplified_wkt
 
@@ -253,8 +253,11 @@ def _error_result(error_category: str, error_message: str) -> str:
     }, ensure_ascii=False)
 
 
-def _run_sql(sql: str, row_cap: int) -> str:
-    """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation."""
+def _run_sql(sql: str, row_cap: int | None) -> str:
+    """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation.
+
+    row_cap=None means no ceiling: every returned row is passed through.
+    """
     try:
         res = execute_query_sync(sql)
     except Exception as e:
@@ -264,8 +267,9 @@ def _run_sql(sql: str, row_cap: int) -> str:
         return _error_result(_classify_trino_error(error_msg), error_msg)
 
     rows = res.rows or []
-    truncated = len(rows) > row_cap
-    rows = rows[:row_cap]
+    truncated = row_cap is not None and len(rows) > row_cap
+    if truncated:
+        rows = rows[:row_cap]
     return json.dumps({
         "success": True,
         "columns": res.columns,
@@ -276,7 +280,7 @@ def _run_sql(sql: str, row_cap: int) -> str:
 
 
 @tool
-def execute_trino_query(sql: str, limit: int = 50) -> str:
+def execute_trino_query(sql: str, limit: int | None = None) -> str:
     """
     Executes a read-only Trino SQL query and returns the resulting rows.
 
@@ -285,8 +289,8 @@ def execute_trino_query(sql: str, limit: int = 50) -> str:
     multiple statements, SQL comments and TABLE(...) pass-through functions are rejected with
     error_category FORBIDDEN_STATEMENT.
 
-    Results are capped: an outer LIMIT is enforced automatically, and the response includes
-    'truncated': true when more rows existed than were returned.
+    Results are capped at a configured row ceiling (when one is set): an outer LIMIT is enforced
+    automatically, and the response includes 'truncated': true when more rows existed than were returned.
 
     On failure, the response includes an 'error_category' field to help you classify and fix
     the error precisely:
@@ -300,9 +304,10 @@ def execute_trino_query(sql: str, limit: int = 50) -> str:
     Args:
         sql (str): The exact Trino SQL query string to execute. Markdown fences and trailing
                    semicolons are stripped automatically.
-        limit (int): The maximum number of rows to return (1–100). Defaults to 50.
+        limit (int, optional): Maximum number of rows to return. Defaults to the configured row
+                   ceiling; a larger value is reduced to that ceiling.
     """
-    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_ROWS, 50)
+    row_cap = effective_cap(limit, settings.DEEP_AGENT_MAX_ROWS)
     try:
         guarded = sql_guard.prepare(clean_sql(sql), row_cap)
     except sql_guard.GuardError as e:
@@ -321,9 +326,9 @@ def get_sample_rows(table_name: str, limit: int = 5) -> str:
 
     Args:
         table_name (str): The fully qualified exact name of the table, e.g. '"catalog"."schema"."table"'.
-        limit (int): The number of rows to sample (1–10). Defaults to 5.
+        limit (int): The number of rows to sample. Defaults to 5 (bounded by the configured sample ceiling).
     """
-    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_SAMPLE_ROWS, 5)
+    row_cap = effective_cap(limit if limit is not None else 5, settings.DEEP_AGENT_MAX_SAMPLE_ROWS)
     try:
         sql = sql_guard.sample_rows_sql(table_name, row_cap)
     except sql_guard.GuardError as e:
@@ -351,9 +356,9 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
     Args:
         table_name (str): The fully qualified exact name of the table.
         column_name (str): The exact name of the column (plain or double-quoted; spaces and Hebrew are fine).
-        limit (int): Maximum distinct values to return (1–100). Defaults to 50.
+        limit (int): Maximum distinct values to return. Defaults to 50 (bounded by the configured row ceiling).
     """
-    row_cap = clamp(limit, 1, settings.DEEP_AGENT_MAX_ROWS, 50)
+    row_cap = effective_cap(limit if limit is not None else 50, settings.DEEP_AGENT_MAX_ROWS)
     try:
         sql = sql_guard.distinct_values_sql(table_name, column_name, row_cap)
     except sql_guard.GuardError as e:

@@ -3,7 +3,7 @@ import sqlglot
 from sqlglot import exp
 
 from agent.utils import sql_guard
-from agent.utils.sql_guard import GuardError, clamp, distinct_values_sql, prepare, sample_rows_sql
+from agent.utils.sql_guard import GuardError, distinct_values_sql, effective_cap, prepare, sample_rows_sql
 
 
 def _outer_limit(sql: str) -> int | None:
@@ -63,11 +63,42 @@ def test_smaller_explicit_limit_is_kept():
     "SELECT a FROM t UNION ALL SELECT a FROM u LIMIT 1000",
     "SELECT a FROM t FETCH FIRST 1000 ROWS ONLY",
 ])
-def test_set_operations_and_fetch_are_wrapped(sql):
+def test_set_operations_and_fetch_get_the_cap(sql):
     guarded = prepare(sql, 10)
-    tree = sqlglot.parse_one(guarded.sql, read="trino")
-    assert isinstance(tree, exp.Select)
     assert _outer_limit(guarded.sql) == 11
+
+
+def test_union_order_by_keeps_its_order():
+    # Wrapping in SELECT * FROM (...) would let Trino drop the inner ORDER BY.
+    guarded = prepare("SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a", 10)
+    tree = sqlglot.parse_one(guarded.sql, read="trino")
+    assert isinstance(tree, exp.Union)
+    assert tree.args.get("order") is not None
+    assert _outer_limit(guarded.sql) == 11
+
+
+@pytest.mark.parametrize("sql, rows", [
+    ("SELECT a FROM t ORDER BY a FETCH FIRST 5 ROWS ONLY", 5),
+    ("SELECT a FROM t ORDER BY a FETCH FIRST 5 ROWS WITH TIES", 5),
+    ("SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a FETCH FIRST 3 ROWS ONLY", 3),
+])
+def test_fetch_within_cap_is_kept_as_written(sql, rows):
+    guarded = prepare(sql, 100)
+    assert guarded.requested_limit == rows
+    assert guarded.sql == sql
+
+
+def test_no_cap_runs_sql_exactly_as_written():
+    sql = "SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a"
+    guarded = prepare(sql + ";", None)
+    assert guarded.sql == sql
+    assert guarded.row_cap is None
+    assert guarded.is_query
+
+
+def test_no_cap_still_rejects_writes():
+    with pytest.raises(GuardError):
+        prepare("DELETE FROM t", None)
 
 
 def test_string_literal_with_dashes_is_not_a_comment():
@@ -86,10 +117,12 @@ def test_trailing_semicolon_is_accepted():
     assert prepare("SELECT 1;", 10).is_query
 
 
-def test_clamp():
-    assert clamp(1_000_000, 1, 100, 50) == 100
-    assert clamp(0, 1, 100, 50) == 1
-    assert clamp(None, 1, 100, 50) == 50
+def test_effective_cap():
+    assert effective_cap(1_000_000, 100) == 100
+    assert effective_cap(0, 100) == 1
+    assert effective_cap(None, 100) == 100
+    assert effective_cap(None, None) is None
+    assert effective_cap(1_000_000, None) == 1_000_000
 
 
 @pytest.mark.parametrize("table, expected", [

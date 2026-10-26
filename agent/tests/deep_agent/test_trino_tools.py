@@ -36,6 +36,51 @@ def test_limit_argument_is_clamped_and_truncation_reported(trino):
     assert out["truncated"] is True
 
 
+def test_omitted_limit_uses_the_configured_ceiling(trino, monkeypatch):
+    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", 100)
+    trino.return_value = _ok(5)
+    tools.execute_trino_query.invoke({"sql": "SELECT id FROM t"})
+    assert trino.call_args.args[0] == "SELECT id FROM t LIMIT 101"
+
+
+def test_no_ceiling_runs_sql_as_written_and_returns_every_row(trino, monkeypatch):
+    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", None)
+    trino.return_value = _ok(5000)
+    out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t;"}))
+    assert trino.call_args.args[0] == "SELECT id FROM t"
+    assert out["row_count"] == 5000
+    assert out["truncated"] is False
+
+
+def test_no_ceiling_still_honours_an_explicit_limit(trino, monkeypatch):
+    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", None)
+    trino.return_value = _ok(11)
+    out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t", "limit": 10}))
+    assert trino.call_args.args[0] == "SELECT id FROM t LIMIT 11"
+    assert out["row_count"] == 10
+    assert out["truncated"] is True
+
+
+@pytest.mark.parametrize("raw", ["none", "None", "", "unlimited"])
+def test_row_ceiling_can_be_disabled_from_env(monkeypatch, raw):
+    from agent.config import AgentSettings
+
+    monkeypatch.setenv("DEEP_AGENT_MAX_ROWS", raw)
+    monkeypatch.setenv("DEEP_AGENT_MAX_SAMPLE_ROWS", raw)
+    s = AgentSettings()
+    assert s.DEEP_AGENT_MAX_ROWS is None
+    assert s.DEEP_AGENT_MAX_SAMPLE_ROWS is None
+
+
+def test_row_ceiling_defaults(monkeypatch):
+    from agent.config import AgentSettings
+
+    monkeypatch.delenv("DEEP_AGENT_MAX_ROWS", raising=False)
+    monkeypatch.delenv("DEEP_AGENT_MAX_SAMPLE_ROWS", raising=False)
+    s = AgentSettings(_env_file=None)
+    assert (s.DEEP_AGENT_MAX_ROWS, s.DEEP_AGENT_MAX_SAMPLE_ROWS) == (100, 10)
+
+
 def test_speed_limit_column_still_gets_limit(trino):
     trino.return_value = _ok(3)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "```sql\nSELECT speed_limit FROM t;\n```", "limit": 10}))
