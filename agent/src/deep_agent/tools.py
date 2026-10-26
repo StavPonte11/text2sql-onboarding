@@ -9,7 +9,10 @@ except get_database_catalog, whose success result is the catalog itself as plain
 import logging
 from typing import Any, Optional
 
+from langchain.tools import ToolRuntime
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
+from langgraph.types import Command
 
 from agent.config import settings
 from agent.services.geo_utils import geojson_to_simplified_wkt, get_geojson_polygon
@@ -19,6 +22,7 @@ from agent.utils.sql import clean_sql
 from agent.utils.sql_guard import effective_cap
 from core.trino import execute_query_sync
 from deep_agent import trino_errors
+from deep_agent.context import DeepAgentContext, capability, connection_id
 from deep_agent.envelope import (
     ENRICHMENT_ERROR,
     INVALID_INPUT,
@@ -37,12 +41,7 @@ logger = logging.getLogger(__name__)
 # Database Catalog & Schema
 # ---------------------------------------------------------------------------
 
-# Connection capability flags dynamically inferred from the catalog prompt
-_connection_capabilities: dict[str, bool] = {
-    "has_knowledge_pairs": True,
-    "has_business_terms": True,
-    "has_relationships": True,
-}
+Runtime = ToolRuntime[DeepAgentContext]
 
 
 def _metadata_failure(what: str, exc: Exception) -> str:
@@ -54,7 +53,7 @@ def _metadata_failure(what: str, exc: Exception) -> str:
 
 
 @tool
-async def get_database_catalog() -> str:
+async def get_database_catalog(runtime: Runtime = None) -> str | Command:
     """
     Retrieves the complete metadata catalog and structural overview for the database.
 
@@ -74,7 +73,7 @@ async def get_database_catalog() -> str:
     Do NOT use this to fetch live data rows; this only retrieves metadata and schema definitions.
     """
     try:
-        catalog_prompt = await get_jeen_metadata_client().get_catalog_prompt()
+        catalog_prompt = await get_jeen_metadata_client().get_catalog_prompt(connection_id=connection_id(runtime))
     except Exception as e:
         return _metadata_failure("get_database_catalog", e)
 
@@ -82,9 +81,6 @@ async def get_database_catalog() -> str:
     has_kp = "(no knowledge pairs)" not in lower_prompt
     has_bt = "(no business terms)" not in lower_prompt
     has_fk = "(no relationships)" not in lower_prompt
-    _connection_capabilities["has_knowledge_pairs"] = has_kp
-    _connection_capabilities["has_business_terms"] = has_bt
-    _connection_capabilities["has_relationships"] = has_fk
 
     footer_lines = [
         "\n\n---",
@@ -93,24 +89,31 @@ async def get_database_catalog() -> str:
         f"- Business Terms: {'Available' if has_bt else 'None (skip search_business_terms)'}",
         f"- Foreign Keys: {'Available' if has_fk else 'None (infer joins from column names)'}",
     ]
-    return catalog_prompt + "\n".join(footer_lines)
+    content = catalog_prompt + "\n".join(footer_lines)
+    if runtime is None or not runtime.tool_call_id:
+        return content
+    # Record capabilities in this thread's state so later tool calls in the thread can read them.
+    return Command(update={
+        "connection_capabilities": {"knowledge_pairs": has_kp, "business_terms": has_bt, "relationships": has_fk},
+        "messages": [ToolMessage(content=content, tool_call_id=runtime.tool_call_id, name="get_database_catalog")],
+    })
 
 
 @tool
-async def get_database_tables() -> str:
+async def get_database_tables(runtime: Runtime = None) -> str:
     """
     Returns the list of all tables in the connection with their business descriptions and
     exact quoted identifiers ("catalog"."schema"."table") for querying.
     Use this for a quick, clean roster of available tables.
     """
     try:
-        return ok(await get_jeen_metadata_client().get_tables())
+        return ok(await get_jeen_metadata_client().get_tables(connection_id=connection_id(runtime)))
     except Exception as e:
         return _metadata_failure("get_database_tables", e)
 
 
 @tool
-async def get_table_columns(table_name: str) -> str:
+async def get_table_columns(table_name: str, runtime: Runtime = None) -> str:
     """
     Returns the columns for a specific table: data type, primary key flag, business description,
     real example values, and profiling statistics.
@@ -119,30 +122,31 @@ async def get_table_columns(table_name: str) -> str:
         table_name (str): The table identifier (e.g. '"postgres"."public"."flights_table"' or 'flights_table').
     """
     try:
-        return ok(await get_jeen_metadata_client().get_columns(table_name))
+        return ok(await get_jeen_metadata_client().get_columns(table_name, connection_id=connection_id(runtime)))
     except Exception as e:
         return _metadata_failure(f"get_table_columns({table_name})", e)
 
 
 @tool
-async def get_table_relationships() -> str:
+async def get_table_relationships(runtime: Runtime = None) -> str:
     """
     Returns the source-scoped foreign-key and semantic join relationships between tables.
     Use this to identify exact join paths and foreign key pairs.
     """
-    if not _connection_capabilities.get("has_relationships", True):
+    if not capability(runtime, "relationships"):
         return ok({
             "relationships": [],
             "notice": "This connection has NO foreign key relationships defined. Infer joins using matching column names, e.g. flight_id.",
         })
     try:
-        return ok({"relationships": await get_jeen_metadata_client().get_relationships()})
+        rels = await get_jeen_metadata_client().get_relationships(connection_id=connection_id(runtime))
+        return ok({"relationships": rels})
     except Exception as e:
         return _metadata_failure("get_table_relationships", e)
 
 
 @tool
-async def get_table_profile(table_name: str) -> str:
+async def get_table_profile(table_name: str, runtime: Runtime = None) -> str:
     """
     Retrieves the latest stored schema and statistics for one specific table.
 
@@ -155,7 +159,7 @@ async def get_table_profile(table_name: str) -> str:
                           e.g., '"catalog"."schema"."table"'.
     """
     try:
-        profile = await get_jeen_metadata_client().get_table_profile(table_name)
+        profile = await get_jeen_metadata_client().get_table_profile(table_name, connection_id=connection_id(runtime))
     except Exception as e:
         return _metadata_failure(f"get_table_profile({table_name})", e)
     if not profile:
@@ -164,7 +168,7 @@ async def get_table_profile(table_name: str) -> str:
 
 
 @tool
-async def get_column_profile(table_name: str, column_name: str) -> str:
+async def get_column_profile(table_name: str, column_name: str, runtime: Runtime = None) -> str:
     """
     Retrieves the latest stored statistics for a single specific column.
 
@@ -180,7 +184,9 @@ async def get_column_profile(table_name: str, column_name: str) -> str:
         column_name (str): The exact name of the column to profile.
     """
     try:
-        profile = await get_jeen_metadata_client().get_column_profile(table_name, column_name)
+        profile = await get_jeen_metadata_client().get_column_profile(
+            table_name, column_name, connection_id=connection_id(runtime)
+        )
     except Exception as e:
         return _metadata_failure(f"get_column_profile({table_name}.{column_name})", e)
     if not profile:
@@ -351,7 +357,7 @@ def validate_sql(sql: str) -> str:
 # ---------------------------------------------------------------------------
 
 @tool
-async def search_metadata(query: str, limit: int = 10) -> str:
+async def search_metadata(query: str, limit: int = 10, runtime: Runtime = None) -> str:
     """
     Searches the metadata catalog across all tables, columns, relationships, and business terms.
 
@@ -365,13 +371,13 @@ async def search_metadata(query: str, limit: int = 10) -> str:
         limit (int): Maximum number of results to return. Defaults to 10.
     """
     try:
-        return ok(await get_jeen_metadata_client().search(query, limit))
+        return ok(await get_jeen_metadata_client().search(query, limit, connection_id=connection_id(runtime)))
     except Exception as e:
         return _metadata_failure("search_metadata", e)
 
 
 @tool
-async def search_business_terms(query: str, limit: int = 10) -> str:
+async def search_business_terms(query: str, limit: int = 10, runtime: Runtime = None) -> str:
     """
     Searches the business glossary for terms relevant to a natural language question.
 
@@ -383,16 +389,17 @@ async def search_business_terms(query: str, limit: int = 10) -> str:
         query (str): A natural language question or phrase (multilingual support).
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    if not _connection_capabilities.get("has_business_terms", True):
+    if not capability(runtime, "business_terms"):
         return ok({"terms": [], "notice": "This connection has NO business terms defined. Do not call this tool again."})
     try:
-        return ok(await get_jeen_metadata_client().search_business_terms(query, limit))
+        terms = await get_jeen_metadata_client().search_business_terms(query, limit, connection_id=connection_id(runtime))
+        return ok(terms)
     except Exception as e:
         return _metadata_failure("search_business_terms", e)
 
 
 @tool
-async def search_knowledge_pairs(query: str, limit: int = 10) -> str:
+async def search_knowledge_pairs(query: str, limit: int = 10, runtime: Runtime = None) -> str:
     """
     Searches saved question-and-query examples that are semantically similar to the user's question.
 
@@ -407,10 +414,11 @@ async def search_knowledge_pairs(query: str, limit: int = 10) -> str:
         query (str): The natural language user question (multilingual/Hebrew support).
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    if not _connection_capabilities.get("has_knowledge_pairs", True):
+    if not capability(runtime, "knowledge_pairs"):
         return ok({"pairs": [], "notice": "This connection has NO knowledge pairs defined. Do not call this tool again."})
     try:
-        return ok(await get_jeen_metadata_client().search_knowledge_pairs(query, limit))
+        pairs = await get_jeen_metadata_client().search_knowledge_pairs(query, limit, connection_id=connection_id(runtime))
+        return ok(pairs)
     except Exception as e:
         return _metadata_failure("search_knowledge_pairs", e)
 
@@ -440,6 +448,7 @@ async def search_column_values(
     table: Optional[str] = None,
     column: Optional[str] = None,
     limit: int = 10,
+    runtime: Runtime = None,
 ) -> str:
     """
     Searches for exact real values contained within indexed columns across the database.
@@ -469,7 +478,8 @@ async def search_column_values(
     """
     try:
         res = await get_jeen_metadata_client().search_column_values(
-            search_term=search_term, table=table, column=column, limit=limit, raw=True
+            search_term=search_term, table=table, column=column, limit=limit, raw=True,
+            connection_id=connection_id(runtime),
         )
     except Exception as e:
         return _metadata_failure("search_column_values", e)

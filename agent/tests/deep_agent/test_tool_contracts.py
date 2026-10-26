@@ -45,11 +45,6 @@ def _client(fail: bool) -> MagicMock:
     return client
 
 
-@pytest.fixture(autouse=True)
-def _reset_capabilities():
-    tools._connection_capabilities.update(has_knowledge_pairs=True, has_business_terms=True, has_relationships=True)
-
-
 @pytest.fixture
 def patched(request):
     fail = request.param
@@ -98,7 +93,6 @@ async def test_catalog_is_plain_text_with_capabilities_note():
         raw = await tools.get_database_catalog.ainvoke({})
     assert raw.startswith('"postgres"."public"."t"')  # quotes not JSON-escaped
     assert "Knowledge Pairs: None (skip search_knowledge_pairs)" in raw
-    assert tools._connection_capabilities["has_knowledge_pairs"] is False
 
 
 @pytest.mark.asyncio

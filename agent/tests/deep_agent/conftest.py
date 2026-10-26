@@ -1,8 +1,9 @@
-from collections.abc import Iterator
+from collections.abc import Callable
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 
 class ScriptedChatModel(GenericFakeChatModel):
@@ -30,3 +31,26 @@ def scripted_model():
 
 def system_text(messages: list[BaseMessage]) -> str:
     return "\n".join(m.text for m in messages if m.type == "system")
+
+
+class PolicyChatModel(ScriptedChatModel):
+    """Fake chat model whose next reply is computed from the conversation so far.
+
+    Safe to share across concurrent threads (unlike a scripted iterator).
+    """
+
+    policy: Callable[[list[BaseMessage]], AIMessage] | None = None
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(list(messages))
+        return ChatResult(generations=[ChatGeneration(message=self.policy(messages))])
+
+
+@pytest.fixture
+def policy_model():
+    def _make(policy: Callable[[list[BaseMessage]], AIMessage]) -> PolicyChatModel:
+        model = PolicyChatModel(messages=iter([]), policy=policy)
+        model.seen = []
+        return model
+
+    return _make

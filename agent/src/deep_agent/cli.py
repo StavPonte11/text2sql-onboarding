@@ -19,8 +19,9 @@ from pathlib import Path
 
 from langchain_core.messages import BaseMessage
 
-from agent.utils.jeen_metadata_client import get_jeen_metadata_client
+from agent.config import settings
 from deep_agent.agent import create_deep_agent
+from deep_agent.context import DeepAgentContext
 
 # ANSI Colors for terminal output
 CYAN = "\033[96m"
@@ -144,7 +145,9 @@ def print_formatted_message(msg: BaseMessage) -> None:
         print(f"{WHITE}{_message_text(msg)}{RESET}\n")
 
 
-async def run_query(agent, question: str, thread_id: str, log_file: Path | None = None) -> None:
+async def run_query(
+    agent, question: str, thread_id: str, context: DeepAgentContext, log_file: Path | None = None
+) -> None:
     print(f"\n{CYAN}{BOLD}{'='*80}{RESET}")
     print(f"{CYAN}{BOLD} Running Query: \"{question}\"{RESET}")
     print(f"{DIM} Thread: {thread_id}{RESET}")
@@ -156,7 +159,9 @@ async def run_query(agent, question: str, thread_id: str, log_file: Path | None 
     final_state = None
     printed_count = 0
 
-    async for state in agent.astream({"messages": [("user", question)]}, config, stream_mode="values"):
+    async for state in agent.astream(
+        {"messages": [("user", question)]}, config, stream_mode="values", context=context
+    ):
         messages = state.get("messages", [])
         while printed_count < len(messages):
             print_formatted_message(messages[printed_count])
@@ -217,9 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def _amain(args: argparse.Namespace) -> None:
-    client = get_jeen_metadata_client()
-    if args.connection_id:
-        client._connection_id = args.connection_id
+    context = DeepAgentContext(connection_id=args.connection_id)
+    target_connection = args.connection_id or settings.JEEN_METADATA_CONNECTION_ID
 
     # Thread ID strategy:
     # - With --session-memory: all queries share one thread → agent sees prior Q&A in context
@@ -232,8 +236,8 @@ async def _amain(args: argparse.Namespace) -> None:
     print(f"\n{MAGENTA}{BOLD}================================================================{RESET}")
     print(f"{MAGENTA}{BOLD}               DEEP AGENT CLI — TEXT2SQL RUNNER                 {RESET}")
     print(f"{MAGENTA}{BOLD}================================================================{RESET}")
-    print(f" {CYAN}Target Connection:{RESET} ID {client._connection_id}")
-    print(f" {CYAN}MCP Endpoint:{RESET}      {client._mcp_url}")
+    print(f" {CYAN}Target Connection:{RESET} ID {target_connection}")
+    print(f" {CYAN}MCP Endpoint:{RESET}      {settings.JEEN_METADATA_MCP_URL}")
     if args.session_memory:
         print(f" {CYAN}Memory mode:{RESET}       Session (queries share context — agent learns within session)")
         print(f" {CYAN}Session thread:{RESET}    {session_thread_id}")
@@ -258,10 +262,10 @@ async def _amain(args: argparse.Namespace) -> None:
                 print(f"{MAGENTA}{BOLD}Goodbye!{RESET}")
                 break
 
-            await run_query(agent, question, next_thread_id(), args.log_file)
+            await run_query(agent, question, next_thread_id(), context, args.log_file)
 
     elif args.query:
-        await run_query(agent, args.query, next_thread_id(), args.log_file)
+        await run_query(agent, args.query, next_thread_id(), context, args.log_file)
 
 
 def main() -> None:

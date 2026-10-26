@@ -160,6 +160,10 @@ class JeenMetadataClient:
 
     # ── internal helper ────────────────────────────────────────────────────
 
+    def _cid(self, connection_id: int | None) -> int:
+        """Per-call connection override, falling back to the configured default."""
+        return connection_id if connection_id is not None else self._connection_id
+
     async def _call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Thin wrapper so individual methods don't repeat the URL/key/timeout."""
         return await _call_mcp_tool(
@@ -181,6 +185,7 @@ class JeenMetadataClient:
         column: str | None = None,
         limit: int | None = None,
         raw: bool = False,
+        connection_id: int | None = None,
     ) -> list[str] | dict[str, Any]:
         """
         Looks up real values a column contains using semantic and keyword matching via MCP.
@@ -193,7 +198,7 @@ class JeenMetadataClient:
 
         lim = limit if limit is not None else self._search_limit
         args: dict[str, Any] = {
-            "connection_id": self._connection_id,
+            "connection_id": self._cid(connection_id),
             "search_term": search_term,
             "limit": lim,
         }
@@ -360,7 +365,9 @@ class JeenMetadataClient:
             )
             return None
 
-    async def get_column_profile(self, table_name: str, column_name: str) -> dict[str, Any] | None:
+    async def get_column_profile(
+        self, table_name: str, column_name: str, connection_id: int | None = None
+    ) -> dict[str, Any] | None:
         """
         Returns the latest stored statistics for a single column: role, null ratio, distinct count, min/max, and example values.
         """
@@ -368,7 +375,7 @@ class JeenMetadataClient:
             res = await self._call(
                 "get_column_profile",
                 {
-                    "connection_id": self._connection_id,
+                    "connection_id": self._cid(connection_id),
                     "table_name": table_name,
                     "column_name": column_name,
                 },
@@ -381,26 +388,6 @@ class JeenMetadataClient:
         if isinstance(res, str) and res.strip():
             raise JeenMetadataError(f"get_column_profile returned unexpected payload: {res[:300]}")
         return None
-
-    # ------------------------------------------------------------------
-    # Prompt & Scoping Tools
-    # ------------------------------------------------------------------
-
-    # async def get_filtered_prompt(self, question: str, connection_id: int | None = None) -> dict[str, Any]:
-    #     """
-    #     Returns metadata prompt narrowed to the question: the most relevant columns,
-    #     knowledge pairs, and business terms. Returns { 'prompt': str, 'meta': dict }.
-    #     """
-    #     cid = connection_id if connection_id is not None else self._connection_id
-    #     return await self._call("get_filtered_prompt", {"connection_id": cid, "question": question})
-
-    # async def resolve_question(self, question: str, connection_id: int | None = None) -> dict[str, Any]:
-    #     """
-    #     Explains how a question maps onto this connection's curated vocabulary:
-    #     glossary terms, synonyms, acronyms, tables, and columns.
-    #     """
-    #     cid = connection_id if connection_id is not None else self._connection_id
-    #     return await self._call("resolve_question", {"connection_id": cid, "question": question})
 
     # ------------------------------------------------------------------
     # Tables, Columns & Relationships Structure
@@ -494,26 +481,26 @@ class JeenMetadataClient:
     # MCP Search Tools
     # ------------------------------------------------------------------
 
-    async def search(self, query: str, limit: int = 10) -> Any:
+    async def search(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
         """Search metadata for a connection across tables, columns, etc."""
         try:
-            return await self._call("search", {"connection_id": self._connection_id, "query": query, "limit": limit})
+            return await self._call("search", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search failed: %s", exc)
             _reraise_as_metadata_error(exc)
 
-    async def search_business_terms(self, query: str, limit: int = 10) -> Any:
+    async def search_business_terms(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
         """Finds business glossary terms relevant to a question."""
         try:
-            return await self._call("search_business_terms", {"connection_id": self._connection_id, "query": query, "limit": limit})
+            return await self._call("search_business_terms", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search_business_terms failed: %s", exc)
             _reraise_as_metadata_error(exc)
 
-    async def search_knowledge_pairs(self, query: str, limit: int = 10) -> Any:
+    async def search_knowledge_pairs(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
         """Finds saved question-and-query examples."""
         try:
-            return await self._call("search_knowledge_pairs", {"connection_id": self._connection_id, "query": query, "limit": limit})
+            return await self._call("search_knowledge_pairs", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search_knowledge_pairs failed: %s", exc)
             _reraise_as_metadata_error(exc)
