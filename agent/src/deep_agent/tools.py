@@ -22,10 +22,9 @@ from agent.utils.sql import clean_sql
 from agent.utils.sql_guard import effective_cap
 from core.trino import execute_query_sync
 from deep_agent import trino_errors
-from deep_agent.context import DeepAgentContext, capability, connection_id
+from deep_agent.context import DeepAgentContext, cached_catalog, capability, connection_id, user_request
 from deep_agent.envelope import (
     ENRICHMENT_ERROR,
-    INVALID_INPUT,
     LOCATION_NOT_FOUND,
     METADATA_ERROR,
     NOT_FOUND,
@@ -92,9 +91,10 @@ async def get_database_catalog(runtime: Runtime = None) -> str | Command:
     content = catalog_prompt + "\n".join(footer_lines)
     if runtime is None or not runtime.tool_call_id:
         return content
-    # Record capabilities in this thread's state so later tool calls in the thread can read them.
+    # Record capabilities + the raw catalog in this thread's state so later tool calls in the thread can read them.
     return Command(update={
         "connection_capabilities": {"knowledge_pairs": has_kp, "business_terms": has_bt, "relationships": has_fk},
+        "jeen_catalog": catalog_prompt,
         "messages": [ToolMessage(content=content, tool_call_id=runtime.tool_call_id, name="get_database_catalog")],
     })
 
@@ -498,11 +498,7 @@ async def search_column_values(
 # ---------------------------------------------------------------------------
 
 @tool
-async def enrich_sql_filters(
-    user_request: str,
-    sql: str,
-    jeen_catalog: str,
-) -> str:
+async def enrich_sql_filters(sql: str, runtime: Runtime = None) -> str | Command:
     """
     Automatically corrects categorical filter values in a draft SQL query to match exact
     database spellings using semantic search and LLM-guided AST transformation.
@@ -514,6 +510,9 @@ async def enrich_sql_filters(
     3. Use an LLM to select the best match
     4. Rewrite the SQL with exact canonical values (AST-level, not string replacement)
 
+    The catalog and the user's question are taken from the conversation automatically —
+    pass only the SQL.
+
     This is especially powerful for Hebrew→English column value resolution and large categorical
     columns where manually calling search_column_values for every filter would be tedious.
 
@@ -523,26 +522,34 @@ async def enrich_sql_filters(
     data.changes (one entry per corrected filter).
 
     Args:
-        user_request (str): The original natural language request from the user (Hebrew).
         sql (str): The draft SQL query to enrich.
-        jeen_catalog (str): The full catalog string (output of get_database_catalog).
     """
     from agent.nodes.refiner import parse_jeen_catalog_tables
     from agent.services.enrichment_orchestrator import EnrichmentOrchestrator
 
     sql_clean = clean_sql(sql)
+
+    catalog = cached_catalog(runtime)
+    fetched_catalog = False
+    if not catalog:
+        try:
+            catalog = await get_jeen_metadata_client().get_catalog_prompt(connection_id=connection_id(runtime))
+        except Exception as e:
+            return _metadata_failure("enrich_sql_filters (catalog fetch)", e)
+        fetched_catalog = True
+
     try:
-        schema, tables = parse_jeen_catalog_tables(jeen_catalog)
+        schema, tables = parse_jeen_catalog_tables(catalog)
         if not tables:
-            return fail(error(INVALID_INPUT, "Could not parse any tables from jeen_catalog; pass the catalog unchanged.",
+            return fail(error(ENRICHMENT_ERROR, "No tables could be parsed from the connection catalog. The SQL is unchanged.",
                               original_sql=sql_clean))
 
         refined_sql, plan, enriched = await EnrichmentOrchestrator.enrich_query(
-            user_request=user_request,
+            user_request=user_request(runtime),
             initial_sql=sql_clean,
             schema=schema,
             tables=tables,
-            config=None,
+            config=runtime.config if runtime is not None else None,
         )
     except Exception as e:
         logger.error("enrich_sql_filters failed: %s", e, exc_info=True)
@@ -562,7 +569,15 @@ async def enrich_sql_filters(
             if tf.changed_filter
         ]
     is_enriched = bool(enriched and plan)
-    return ok({"enriched": is_enriched, "sql": refined_sql if is_enriched else sql_clean, "changes": changes})
+    content = ok({"enriched": is_enriched, "sql": refined_sql if is_enriched else sql_clean, "changes": changes})
+
+    if fetched_catalog and runtime is not None and runtime.tool_call_id:
+        # Cache the catalog we had to fetch so the next call in this thread doesn't refetch it.
+        return Command(update={
+            "jeen_catalog": catalog,
+            "messages": [ToolMessage(content=content, tool_call_id=runtime.tool_call_id, name="enrich_sql_filters")],
+        })
+    return content
 
 
 # ---------------------------------------------------------------------------
