@@ -52,6 +52,7 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_ROWS: int | None = Field(default=100, gt=0)  # execute_trino_query / get_column_distinct_values
     DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
+    DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

@@ -100,22 +100,24 @@ def annotate_current_span(metadata: dict[str, Any], level: str | None = None) ->
 
 @dataclass(frozen=True)
 class RunMetrics:
-    """Plain counts and timing for one run. Whether the *final* SQL ran is not known here:
-    the run ends in free text, with no structured final answer to check."""
+    """Plain counts and timing for one run, plus whether the submitted final SQL actually ran
+    (from the structured-answer verification in deep_agent.answer)."""
 
     model_calls: int
     tool_calls: int
     sql_executions: int
     latency_s: float
+    final_sql_executed: bool = False  # the submitted final SQL ran and its rows are Trino's (not a correctness check)
 
 
-def run_metrics(messages: list[BaseMessage], latency_s: float) -> RunMetrics:
+def run_metrics(messages: list[BaseMessage], latency_s: float, final_result: dict | None = None) -> RunMetrics:
     ai = [m for m in messages if m.type == "ai"]
     return RunMetrics(
         model_calls=len(ai),
         tool_calls=sum(len(getattr(m, "tool_calls", None) or []) for m in ai),
         sql_executions=sum(1 for m in messages if m.type == "tool" and m.name == "execute_trino_query"),
         latency_s=round(latency_s, 2),
+        final_sql_executed=bool(final_result and final_result.get("executed")),
     )
 
 

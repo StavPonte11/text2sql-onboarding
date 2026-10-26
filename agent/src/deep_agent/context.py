@@ -11,10 +11,11 @@ Nothing request-specific lives in module globals:
   context's timezone, so long-running processes never serve a stale date.
 """
 
+import operator
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, NotRequired
+from typing import Annotated, Any, NotRequired
 from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, ModelRequest, ModelResponse
@@ -34,6 +35,8 @@ class DeepAgentContext:
 class DeepAgentRuntimeState(AgentState):
     connection_capabilities: NotRequired[dict[str, bool]]
     jeen_catalog: NotRequired[str]  # raw catalog text, cached so tools never need the model to re-send it
+    executed_queries: NotRequired[Annotated[list[dict[str, Any]], operator.add]]  # successful executions (append-only)
+    final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:

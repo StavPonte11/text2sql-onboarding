@@ -155,15 +155,19 @@ def test_run_metrics():
         AIMessage("answer\n```sql\nSELECT 1\n```"),
     ]
     assert run_metrics(messages, 12.345) == RunMetrics(model_calls=3, tool_calls=3, sql_executions=2, latency_s=12.35)
+    assert run_metrics(messages, 1, {"status": "matched", "executed": True}).final_sql_executed is True
+    assert run_metrics(messages, 1, {"status": "re_execution_failed", "executed": False}).final_sql_executed is False
 
 
 def test_score_run_posts_one_score_per_metric():
     fake_client = SimpleNamespace(create_score=MagicMock())
     with patch("agent.langfuse_client.langfuse_client", fake_client):
-        observability.score_run("trace-1", RunMetrics(4, 3, 1, 9.5))
+        observability.score_run("trace-1", RunMetrics(4, 3, 1, 9.5, final_sql_executed=True))
     names = {c.kwargs["name"]: c.kwargs for c in fake_client.create_score.call_args_list}
-    assert set(names) == {f"deep-agent.{n}" for n in ("model_calls", "tool_calls", "sql_executions", "latency_s")}
-    assert all(kw["data_type"] == "NUMERIC" for kw in names.values())
+    assert set(names) == {f"deep-agent.{n}" for n in
+                          ("model_calls", "tool_calls", "sql_executions", "latency_s", "final_sql_executed")}
+    assert names["deep-agent.final_sql_executed"]["data_type"] == "BOOLEAN"
+    assert names["deep-agent.final_sql_executed"]["value"] == 1.0
     assert all(kw["trace_id"] == "trace-1" for kw in names.values())
 
 

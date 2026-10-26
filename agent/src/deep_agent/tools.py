@@ -22,6 +22,7 @@ from agent.utils.sql import clean_sql
 from agent.utils.sql_guard import effective_cap
 from core.trino import execute_query_sync
 from deep_agent import trino_errors
+from deep_agent.answer import executed_query_record
 from deep_agent.context import DeepAgentContext, cached_catalog, capability, connection_id, user_request
 from deep_agent.envelope import (
     ENRICHMENT_ERROR,
@@ -200,8 +201,13 @@ async def get_column_profile(table_name: str, column_name: str, runtime: Runtime
 # ---------------------------------------------------------------------------
 
 def _run_sql(sql: str, row_cap: int | None) -> str:
+    return _execute(sql, row_cap)[0]
+
+
+def _execute(sql: str, row_cap: int | None) -> tuple[str, dict | None]:
     """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation.
 
+    Returns (envelope, success payload or None).
     row_cap=None means no ceiling: every returned row is passed through.
     Telemetry (query id, timing, row count / Trino error) goes both into the envelope
     and onto the current Langfuse tool observation.
@@ -211,7 +217,7 @@ def _run_sql(sql: str, row_cap: int | None) -> str:
     except Exception as e:
         err = trino_errors.from_exception(e)
         annotate_current_span({"error_name": err["name"]}, level="ERROR")
-        return fail(err)
+        return fail(err), None
     if not res.success:
         err = trino_errors.from_result(res)
         err["execution_time_ms"] = res.execution_time_ms
@@ -221,7 +227,7 @@ def _run_sql(sql: str, row_cap: int | None) -> str:
             "error_name": err["name"],
             "error_type": err.get("type"),
         }, level="ERROR")
-        return fail(err)
+        return fail(err), None
 
     rows = res.rows or []
     truncated = row_cap is not None and len(rows) > row_cap
@@ -233,18 +239,19 @@ def _run_sql(sql: str, row_cap: int | None) -> str:
         "row_count": len(rows),
         "truncated": truncated,
     })
-    return ok({
+    payload = {
         "columns": res.columns,
         "row_count": len(rows),
         "truncated": truncated,
         "rows": rows,
         "query_id": res.query_id,
         "execution_time_ms": res.execution_time_ms,
-    })
+    }
+    return ok(payload), payload
 
 
 @tool
-def execute_trino_query(sql: str, limit: int | None = None) -> str:
+def execute_trino_query(sql: str, limit: int | None = None, runtime: Runtime = None) -> str | Command:
     """
     Executes a read-only Trino SQL query and returns the resulting rows.
 
@@ -276,7 +283,14 @@ def execute_trino_query(sql: str, limit: int | None = None) -> str:
         guarded = sql_guard.prepare(clean_sql(sql), row_cap)
     except sql_guard.GuardError as e:
         return fail(trino_errors.forbidden(str(e)))
-    return _run_sql(guarded.sql, guarded.row_cap if guarded.is_query else settings.DEEP_AGENT_MAX_ROWS)
+    content, payload = _execute(guarded.sql, guarded.row_cap if guarded.is_query else settings.DEEP_AGENT_MAX_ROWS)
+    if payload is None or not guarded.is_query or runtime is None or not runtime.tool_call_id:
+        return content
+    # Record the successful execution so the final answer can be bound to it (deep_agent.answer).
+    return Command(update={
+        "executed_queries": [executed_query_record(sql, guarded.sql, payload, row_cap)],
+        "messages": [ToolMessage(content=content, tool_call_id=runtime.tool_call_id, name="execute_trino_query")],
+    })
 
 
 @tool
