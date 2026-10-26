@@ -22,8 +22,8 @@ def trino():
 @pytest.mark.parametrize("sql", ["DROP TABLE t", "DELETE FROM t", "SELECT 1; DROP TABLE t", "SELECT 1 -- x"])
 def test_forbidden_sql_never_reaches_trino(trino, sql):
     out = json.loads(tools.execute_trino_query.invoke({"sql": sql}))
-    assert out["success"] is False
-    assert out["error_name"] == "FORBIDDEN_STATEMENT"
+    assert out["ok"] is False
+    assert out["error"]["name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
@@ -32,8 +32,8 @@ def test_limit_argument_is_clamped_and_truncation_reported(trino):
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t", "limit": 1_000_000}))
     executed = trino.call_args.args[0]
     assert executed.endswith("LIMIT 101")
-    assert out["row_count"] == 100
-    assert out["truncated"] is True
+    assert out["data"]["row_count"] == 100
+    assert out["data"]["truncated"] is True
 
 
 def test_omitted_limit_uses_the_configured_ceiling(trino, monkeypatch):
@@ -48,8 +48,8 @@ def test_no_ceiling_runs_sql_as_written_and_returns_every_row(trino, monkeypatch
     trino.return_value = _ok(5000)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t;"}))
     assert trino.call_args.args[0] == "SELECT id FROM t"
-    assert out["row_count"] == 5000
-    assert out["truncated"] is False
+    assert out["data"]["row_count"] == 5000
+    assert out["data"]["truncated"] is False
 
 
 def test_no_ceiling_still_honours_an_explicit_limit(trino, monkeypatch):
@@ -57,8 +57,8 @@ def test_no_ceiling_still_honours_an_explicit_limit(trino, monkeypatch):
     trino.return_value = _ok(11)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t", "limit": 10}))
     assert trino.call_args.args[0] == "SELECT id FROM t LIMIT 11"
-    assert out["row_count"] == 10
-    assert out["truncated"] is True
+    assert out["data"]["row_count"] == 10
+    assert out["data"]["truncated"] is True
 
 
 @pytest.mark.parametrize("raw", ["none", "None", "", "unlimited"])
@@ -85,8 +85,8 @@ def test_speed_limit_column_still_gets_limit(trino):
     trino.return_value = _ok(3)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "```sql\nSELECT speed_limit FROM t;\n```", "limit": 10}))
     assert trino.call_args.args[0] == "SELECT speed_limit FROM t LIMIT 11"
-    assert out["truncated"] is False
-    assert out["row_count"] == 3
+    assert out["data"]["truncated"] is False
+    assert out["data"]["row_count"] == 3
 
 
 def test_trino_error_is_reported(trino):
@@ -95,7 +95,7 @@ def test_trino_error_is_reported(trino):
         error_name="COLUMN_NOT_FOUND", error_type="USER_ERROR",
     )
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT x FROM t"}))
-    assert out["error_name"] == "COLUMN_NOT_FOUND"
+    assert out["error"]["name"] == "COLUMN_NOT_FOUND"
 
 
 def test_sample_rows_handles_hebrew_quoted_table(trino):
@@ -106,7 +106,7 @@ def test_sample_rows_handles_hebrew_quoted_table(trino):
 
 def test_sample_rows_rejects_injection(trino):
     out = json.loads(tools.get_sample_rows.invoke({"table_name": "t; DROP TABLE t"}))
-    assert out["error_name"] == "FORBIDDEN_STATEMENT"
+    assert out["error"]["name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
@@ -118,12 +118,12 @@ def test_distinct_values_quotes_hebrew_column(trino):
 
 def test_validate_rejects_writes_without_calling_trino(trino):
     out = json.loads(tools.validate_sql.invoke({"sql": "DELETE FROM t"}))
-    assert out["valid"] is False
-    assert out["error_name"] == "FORBIDDEN_STATEMENT"
+    assert out["ok"] is False
+    assert out["error"]["name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
 def test_validate_runs_explain_for_reads(trino):
     trino.return_value = _ok(0)
-    assert json.loads(tools.validate_sql.invoke({"sql": "SELECT 1"})) == {"valid": True}
+    assert json.loads(tools.validate_sql.invoke({"sql": "SELECT 1"}))["data"] == {"valid": True}
     assert trino.call_args.args[0] == "EXPLAIN (TYPE VALIDATE) SELECT 1"

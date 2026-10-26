@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -51,6 +51,10 @@ from mcp.client.streamable_http import streamablehttp_client
 from agent.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class JeenMetadataError(RuntimeError):
+    """The MCP server reported an error, or returned a payload of an unexpected shape."""
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +94,11 @@ async def _call_mcp_tool(
 
     # result.content is a list of ContentBlock objects.
     # We expect the first (and only) block to be a TextContent.
-    if not result.content:
-        return {}
-
-    first = result.content[0]
+    first = result.content[0] if result.content else None
     text = getattr(first, "text", None)
+
+    if getattr(result, "isError", False):
+        raise JeenMetadataError(f"MCP tool '{tool_name}' failed: {text or 'no error details'}")
     if text is None:
         return {}
 
@@ -102,6 +106,21 @@ async def _call_mcp_tool(
         return json.loads(text)
     except json.JSONDecodeError:
         return text
+
+
+def _reraise_as_metadata_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, JeenMetadataError):
+        raise exc
+    raise JeenMetadataError(str(exc)) from exc
+
+
+def _expect_list(payload: Any, key: str, method: str) -> list[dict[str, Any]]:
+    """Unwrap a list payload (bare or under `key`); anything else is an error, never an empty result."""
+    if isinstance(payload, dict) and key in payload:
+        payload = payload[key]
+    if isinstance(payload, list):
+        return payload
+    raise JeenMetadataError(f"{method} returned unexpected payload: {str(payload)[:300]}")
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +205,11 @@ class JeenMetadataClient:
         try:
             payload = await self._call("search_column_values", args)
             if raw:
-                return payload if isinstance(payload, dict) else {"values": payload}
+                if isinstance(payload, dict):
+                    return payload
+                if isinstance(payload, list):
+                    return {"values": payload}
+                raise JeenMetadataError(f"search_column_values returned unexpected payload: {str(payload)[:300]}")
 
             if isinstance(payload, dict) and "values" in payload:
                 results = []
@@ -201,7 +224,9 @@ class JeenMetadataClient:
             return []
         except Exception as exc:
             logger.error("JeenMetadataClient.search_column_values failed: %s", exc, exc_info=True)
-            return [] if not raw else {"error": str(exc)}
+            if raw:
+                _reraise_as_metadata_error(exc)
+            return []
 
     # ------------------------------------------------------------------
     # Glossary / Context
@@ -348,12 +373,14 @@ class JeenMetadataClient:
                     "column_name": column_name,
                 },
             )
-            if isinstance(res, dict):
-                return res.get("profile") or res
-            return None
         except Exception as exc:
             logger.error("JeenMetadataClient.get_column_profile failed: %s", exc)
-            return None
+            _reraise_as_metadata_error(exc)
+        if isinstance(res, dict):
+            return res.get("profile") or res
+        if isinstance(res, str) and res.strip():
+            raise JeenMetadataError(f"get_column_profile returned unexpected payload: {res[:300]}")
+        return None
 
     # ------------------------------------------------------------------
     # Prompt & Scoping Tools
@@ -385,9 +412,7 @@ class JeenMetadataClient:
         """
         cid = connection_id if connection_id is not None else self._connection_id
         res = await self._call("get_tables", {"connection_id": cid})
-        if isinstance(res, dict) and "tables" in res:
-            return res["tables"]
-        return res if isinstance(res, list) else []
+        return _expect_list(res, "tables", "get_tables")
 
     async def get_columns(self, table_name: str | None = None, connection_id: int | None = None) -> list[dict[str, Any]]:
         """
@@ -398,9 +423,7 @@ class JeenMetadataClient:
         if table_name:
             args["table_name"] = table_name
         res = await self._call("get_columns", args)
-        if isinstance(res, dict) and "columns" in res:
-            return res["columns"]
-        return res if isinstance(res, list) else []
+        return _expect_list(res, "columns", "get_columns")
 
     async def get_relationships(self, connection_id: int | None = None) -> list[dict[str, Any]]:
         """
@@ -408,9 +431,7 @@ class JeenMetadataClient:
         """
         cid = connection_id if connection_id is not None else self._connection_id
         res = await self._call("get_relationships", {"connection_id": cid})
-        if isinstance(res, dict) and "relationships" in res:
-            return res["relationships"]
-        return res if isinstance(res, list) else []
+        return _expect_list(res, "relationships", "get_relationships")
 
     async def get_source_statistics(self, connection_id: int | None = None) -> dict[str, Any]:
         """
@@ -479,7 +500,7 @@ class JeenMetadataClient:
             return await self._call("search", {"connection_id": self._connection_id, "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search failed: %s", exc)
-            return {"error": str(exc)}
+            _reraise_as_metadata_error(exc)
 
     async def search_business_terms(self, query: str, limit: int = 10) -> Any:
         """Finds business glossary terms relevant to a question."""
@@ -487,7 +508,7 @@ class JeenMetadataClient:
             return await self._call("search_business_terms", {"connection_id": self._connection_id, "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search_business_terms failed: %s", exc)
-            return {"error": str(exc)}
+            _reraise_as_metadata_error(exc)
 
     async def search_knowledge_pairs(self, query: str, limit: int = 10) -> Any:
         """Finds saved question-and-query examples."""
@@ -495,7 +516,7 @@ class JeenMetadataClient:
             return await self._call("search_knowledge_pairs", {"connection_id": self._connection_id, "query": query, "limit": limit})
         except Exception as exc:
             logger.error("search_knowledge_pairs failed: %s", exc)
-            return {"error": str(exc)}
+            _reraise_as_metadata_error(exc)
 
 
 # ---------------------------------------------------------------------------

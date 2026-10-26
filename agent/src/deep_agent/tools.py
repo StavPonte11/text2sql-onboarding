@@ -1,17 +1,34 @@
-import json
+"""
+Deep Agent tools.
+
+Every tool returns the same JSON envelope (see deep_agent.envelope):
+    {"ok": true, "data": ..., "error": null} | {"ok": false, "data": null, "error": {"name", "message", ...}}
+except get_database_catalog, whose success result is the catalog itself as plain text.
+"""
+
 import logging
-import asyncio
-from typing import Optional
+from typing import Any, Optional
+
 from langchain_core.tools import tool
 
 from agent.config import settings
+from agent.services.geo_utils import geojson_to_simplified_wkt, get_geojson_polygon
 from agent.utils import sql_guard
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
 from agent.utils.sql import clean_sql
 from agent.utils.sql_guard import effective_cap
-from deep_agent import trino_errors
 from core.trino import execute_query_sync
-from agent.services.geo_utils import get_geojson_polygon, geojson_to_simplified_wkt
+from deep_agent import trino_errors
+from deep_agent.envelope import (
+    ENRICHMENT_ERROR,
+    INVALID_INPUT,
+    LOCATION_NOT_FOUND,
+    METADATA_ERROR,
+    NOT_FOUND,
+    error,
+    fail,
+    ok,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +45,14 @@ _connection_capabilities: dict[str, bool] = {
 }
 
 
+def _metadata_failure(what: str, exc: Exception) -> str:
+    logger.warning("%s failed: %s", what, exc)
+    return fail(error(
+        METADATA_ERROR,
+        f"{what} failed: {exc}. The metadata service failed — this does not mean the data is empty.",
+    ))
+
+
 @tool
 async def get_database_catalog() -> str:
     """
@@ -36,82 +61,39 @@ async def get_database_catalog() -> str:
     Use this FIRST when starting any new query to discover what tables exist, how they relate,
     and to see column profiling statistics including semantic types, null ratios, and distinct counts.
 
-    The output includes Column/Table Names, Descriptions, Types, Universal Base Metrics (Null Rate,
-    Distinct Count, Cardinality Ratio) and specific Profiling Data Payloads.
+    On success the result is the catalog as plain text (not JSON): Column/Table Names, Descriptions,
+    Types, Universal Base Metrics (Null Rate, Distinct Count, Cardinality Ratio) and specific Profiling
+    Data Payloads, followed by a note on which discovery sources exist for this connection.
+    On failure it is the usual JSON envelope with ok=false.
 
     Column semantic_type values to watch for:
-    - 'categorical' — small finite value set; use search_column_values to resolve exact spellings.
-    - 'large_categorical' — too many values to enumerate; use search_column_values with query terms.
+    - 'categorical' — small finite value set; values are in the catalog or via get_column_distinct_values.
+    - 'large_categorical' / 'large_unit_id' — too many values to enumerate; use search_column_values.
     - 'geo' — WKT geometry column; use resolve_location_to_wkt to build filter values.
 
     Do NOT use this to fetch live data rows; this only retrieves metadata and schema definitions.
     """
-    client = get_jeen_metadata_client()
     try:
-        catalog_prompt = await client.get_catalog_prompt()
-
-        lower_prompt = catalog_prompt.lower()
-        has_kp = "(no knowledge pairs)" not in lower_prompt
-        has_bt = "(no business terms)" not in lower_prompt
-        has_fk = "(no relationships)" not in lower_prompt
-
-        _connection_capabilities["has_knowledge_pairs"] = has_kp
-        _connection_capabilities["has_business_terms"] = has_bt
-        _connection_capabilities["has_relationships"] = has_fk
-
-        footer_lines = [
-            "\n\n---",
-            "### Discovery Capabilities Note:",
-            f"- Knowledge Pairs: {'Available' if has_kp else 'None (skip search_knowledge_pairs)'}",
-            f"- Business Terms: {'Available' if has_bt else 'None (skip search_business_terms)'}",
-            f"- Foreign Keys: {'Available' if has_fk else 'None (infer joins from column names)'}",
-        ]
-        return catalog_prompt + "\n".join(footer_lines)
+        catalog_prompt = await get_jeen_metadata_client().get_catalog_prompt()
     except Exception as e:
-        return f"Error fetching catalog: {str(e)}"
+        return _metadata_failure("get_database_catalog", e)
 
+    lower_prompt = catalog_prompt.lower()
+    has_kp = "(no knowledge pairs)" not in lower_prompt
+    has_bt = "(no business terms)" not in lower_prompt
+    has_fk = "(no relationships)" not in lower_prompt
+    _connection_capabilities["has_knowledge_pairs"] = has_kp
+    _connection_capabilities["has_business_terms"] = has_bt
+    _connection_capabilities["has_relationships"] = has_fk
 
-# @tool
-# async def get_filtered_prompt(question: str) -> str:
-#     """
-#     Retrieves a narrowed, highly focused catalog prompt scoped specifically to the user's question.
-#     Contains the AI-selected most relevant columns, primary keys, foreign key joins, and relevant
-#     knowledge pairs / business terms.
-
-#     Use this when you want a compact, fast overview of just the tables and columns relevant to
-#     the current question without reading the massive full database catalog.
-
-#     Args:
-#         question (str): The natural language question (Hebrew or English).
-#     """
-#     client = get_jeen_metadata_client()
-#     try:
-#         res = await client.get_filtered_prompt(question)
-#         if isinstance(res, dict) and "prompt" in res:
-#             return res["prompt"]
-#         return json.dumps(res, indent=2, ensure_ascii=False)
-#     except Exception as e:
-#         return f"Error fetching filtered prompt: {e}"
-
-
-# @tool
-# async def resolve_question(question: str) -> str:
-#     """
-#     Explains how a question maps onto this connection's curated vocabulary:
-#     which glossary terms, synonyms, acronyms, tables and columns it mentions and what they resolve to.
-
-#     Use this when encountering ambiguous domain abbreviations, jargon, or Hebrew concepts to
-#     see the curated glossary and lexicon mappings.
-
-#     Args:
-#         question (str): The natural language question or phrase in Hebrew or English.
-#     """
-#     client = get_jeen_metadata_client()
-#     try:
-#         res = await client.resolve_question(question)
-#         return json.dumps(res, indent=2, ensure_ascii=False)
-#     except Exception as e:
-#         return f"Error resolving question: {e}"
+    footer_lines = [
+        "\n\n---",
+        "### Discovery Capabilities Note:",
+        f"- Knowledge Pairs: {'Available' if has_kp else 'None (skip search_knowledge_pairs)'}",
+        f"- Business Terms: {'Available' if has_bt else 'None (skip search_business_terms)'}",
+        f"- Foreign Keys: {'Available' if has_fk else 'None (infer joins from column names)'}",
+    ]
+    return catalog_prompt + "\n".join(footer_lines)
 
 
 @tool
@@ -121,12 +103,10 @@ async def get_database_tables() -> str:
     exact quoted identifiers ("catalog"."schema"."table") for querying.
     Use this for a quick, clean roster of available tables.
     """
-    client = get_jeen_metadata_client()
     try:
-        tables = await client.get_tables()
-        return json.dumps(tables, indent=2, ensure_ascii=False)
+        return ok(await get_jeen_metadata_client().get_tables())
     except Exception as e:
-        return f"Error fetching tables: {e}"
+        return _metadata_failure("get_database_tables", e)
 
 
 @tool
@@ -138,12 +118,10 @@ async def get_table_columns(table_name: str) -> str:
     Args:
         table_name (str): The table identifier (e.g. '"postgres"."public"."flights_table"' or 'flights_table').
     """
-    client = get_jeen_metadata_client()
     try:
-        cols = await client.get_columns(table_name)
-        return json.dumps(cols, indent=2, ensure_ascii=False)
+        return ok(await get_jeen_metadata_client().get_columns(table_name))
     except Exception as e:
-        return f"Error fetching columns for {table_name}: {e}"
+        return _metadata_failure(f"get_table_columns({table_name})", e)
 
 
 @tool
@@ -153,13 +131,14 @@ async def get_table_relationships() -> str:
     Use this to identify exact join paths and foreign key pairs.
     """
     if not _connection_capabilities.get("has_relationships", True):
-        return "[] (Notice: This connection has NO foreign key relationships defined in the catalog. Infer joins using matching column names, e.g. flight_id.)"
-    client = get_jeen_metadata_client()
+        return ok({
+            "relationships": [],
+            "notice": "This connection has NO foreign key relationships defined. Infer joins using matching column names, e.g. flight_id.",
+        })
     try:
-        rels = await client.get_relationships()
-        return json.dumps(rels, indent=2, ensure_ascii=False)
+        return ok({"relationships": await get_jeen_metadata_client().get_relationships()})
     except Exception as e:
-        return f"Error fetching relationships: {e}"
+        return _metadata_failure("get_table_relationships", e)
 
 
 @tool
@@ -175,14 +154,13 @@ async def get_table_profile(table_name: str) -> str:
         table_name (str): The fully qualified, exact 3-part name of the table,
                           e.g., '"catalog"."schema"."table"'.
     """
-    client = get_jeen_metadata_client()
     try:
-        profile = await client.get_table_profile(table_name)
-        if not profile:
-            return f"Error: Schema not found for table {table_name}"
-        return json.dumps(profile, indent=2, ensure_ascii=False)
+        profile = await get_jeen_metadata_client().get_table_profile(table_name)
     except Exception as e:
-        return f"Error fetching table schema: {str(e)}"
+        return _metadata_failure(f"get_table_profile({table_name})", e)
+    if not profile:
+        return fail(error(NOT_FOUND, f"No stored profile for table {table_name}"))
+    return ok(profile)
 
 
 @tool
@@ -201,23 +179,18 @@ async def get_column_profile(table_name: str, column_name: str) -> str:
         table_name (str): The fully qualified exact name of the table, e.g., '"catalog"."schema"."table"'.
         column_name (str): The exact name of the column to profile.
     """
-    client = get_jeen_metadata_client()
     try:
-        profile = await client.get_column_profile(table_name, column_name)
-        if not profile:
-            return f"Error: Column profile not found for {table_name}.{column_name}"
-        return json.dumps(profile, indent=2, ensure_ascii=False)
+        profile = await get_jeen_metadata_client().get_column_profile(table_name, column_name)
     except Exception as e:
-        return f"Error fetching column profile: {str(e)}"
+        return _metadata_failure(f"get_column_profile({table_name}.{column_name})", e)
+    if not profile:
+        return fail(error(NOT_FOUND, f"No stored profile for column {table_name}.{column_name}"))
+    return ok(profile)
 
 
 # ---------------------------------------------------------------------------
 # Query Execution
 # ---------------------------------------------------------------------------
-
-def _json(payload: dict) -> str:
-    return json.dumps(payload, ensure_ascii=False, default=str)
-
 
 def _run_sql(sql: str, row_cap: int | None) -> str:
     """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation.
@@ -227,22 +200,21 @@ def _run_sql(sql: str, row_cap: int | None) -> str:
     try:
         res = execute_query_sync(sql)
     except Exception as e:
-        return _json(trino_errors.from_exception(e))
+        return fail(trino_errors.from_exception(e))
     if not res.success:
-        return _json(trino_errors.from_result(res))
+        return fail(trino_errors.from_result(res))
 
     rows = res.rows or []
     truncated = row_cap is not None and len(rows) > row_cap
     if truncated:
         rows = rows[:row_cap]
-    return json.dumps({
-        "success": True,
+    return ok({
         "columns": res.columns,
         "row_count": len(rows),
         "truncated": truncated,
         "rows": rows,
         "query_id": res.query_id,
-    }, ensure_ascii=False, default=str)
+    })
 
 
 @tool
@@ -253,17 +225,17 @@ def execute_trino_query(sql: str, limit: int | None = None) -> str:
     Use this to test SQL queries against the actual database and perform exploratory data analysis.
     Only a single SELECT / WITH (or SHOW / DESCRIBE) statement is accepted; anything that writes,
     multiple statements, SQL comments and TABLE(...) pass-through functions are rejected with
-    error_name FORBIDDEN_STATEMENT.
+    error.name FORBIDDEN_STATEMENT.
 
     Results are capped at a configured row ceiling (when one is set): an outer LIMIT is enforced
-    automatically, and the response includes 'truncated': true when more rows existed than were returned.
+    automatically, and data.truncated is true when more rows existed than were returned.
 
-    On failure, the response carries Trino's own error, unmodified:
-    - error_name: Trino's error code (e.g. SYNTAX_ERROR, COLUMN_NOT_FOUND, TYPE_MISMATCH,
+    On failure, error carries Trino's own error, unmodified:
+    - error.name: Trino's error code (e.g. SYNTAX_ERROR, COLUMN_NOT_FOUND, TYPE_MISMATCH,
       EXPRESSION_NOT_AGGREGATE, DIVISION_BY_ZERO)
-    - error_type: Trino's error class — USER_ERROR means the SQL itself is wrong;
+    - error.type: Trino's error class — USER_ERROR means the SQL itself is wrong;
       INSUFFICIENT_RESOURCES, INTERNAL_ERROR and EXTERNAL come from the cluster or the source database
-    - error_message: Trino's message; error_location: {line, column} of the offending token
+    - error.message: Trino's message; error.location: {line, column} of the offending token
     Two errors don't come from Trino: FORBIDDEN_STATEMENT (rejected before reaching Trino — rewrite
     as a single read-only query without comments) and CONNECTION_ERROR (Trino could not be reached).
 
@@ -277,7 +249,7 @@ def execute_trino_query(sql: str, limit: int | None = None) -> str:
     try:
         guarded = sql_guard.prepare(clean_sql(sql), row_cap)
     except sql_guard.GuardError as e:
-        return _json(trino_errors.forbidden(str(e)))
+        return fail(trino_errors.forbidden(str(e)))
     return _run_sql(guarded.sql, guarded.row_cap if guarded.is_query else settings.DEEP_AGENT_MAX_ROWS)
 
 
@@ -298,7 +270,7 @@ def get_sample_rows(table_name: str, limit: int = 5) -> str:
     try:
         sql = sql_guard.sample_rows_sql(table_name, row_cap)
     except sql_guard.GuardError as e:
-        return _json(trino_errors.forbidden(str(e)))
+        return fail(trino_errors.forbidden(str(e)))
     return _run_sql(sql, row_cap)
 
 
@@ -328,13 +300,16 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
     try:
         sql = sql_guard.distinct_values_sql(table_name, column_name, row_cap)
     except sql_guard.GuardError as e:
-        return _json(trino_errors.forbidden(str(e)))
+        return fail(trino_errors.forbidden(str(e)))
     return _run_sql(sql, row_cap)
 
 
 # ---------------------------------------------------------------------------
 # SQL Quality
 # ---------------------------------------------------------------------------
+
+_VALIDATE_PREFIX = "EXPLAIN (TYPE VALIDATE) "
+
 
 @tool
 def validate_sql(sql: str) -> str:
@@ -346,8 +321,8 @@ def validate_sql(sql: str) -> str:
     Use this to dry-run a new draft before execute_trino_query. It cannot tell you whether the
     query returns rows.
 
-    Returns JSON: {"valid": true}, or {"valid": false, ...} with the same error fields as
-    execute_trino_query (error_name, error_type, error_message, error_location).
+    Returns ok=true with data.valid=true, or ok=false with the same error fields as
+    execute_trino_query (error.name, error.type, error.message, error.location).
 
     Args:
         sql (str): The exact Trino SQL query string to validate.
@@ -356,26 +331,19 @@ def validate_sql(sql: str) -> str:
     try:
         sql_guard.parse_read_statement(sql_clean)
     except sql_guard.GuardError as e:
-        return _invalid(trino_errors.forbidden(str(e)))
+        return fail(trino_errors.forbidden(str(e)))
     try:
         res = execute_query_sync(f"{_VALIDATE_PREFIX}{sql_clean}")
     except Exception as e:
-        return _invalid(trino_errors.from_exception(e))
+        return fail(trino_errors.from_exception(e))
     if res.success:
-        return _json({"valid": True})
-    error = trino_errors.from_result(res)
-    location = error.get("error_location")
+        return ok({"valid": True})
+    err = trino_errors.from_result(res)
+    location = err.get("location")
     if location and location["line"] == 1:
         # Trino counts columns from the start of "EXPLAIN (TYPE VALIDATE) ..."; report them against the caller's SQL.
         location["column"] = max(1, location["column"] - len(_VALIDATE_PREFIX))
-    return _invalid(error)
-
-
-_VALIDATE_PREFIX = "EXPLAIN (TYPE VALIDATE) "
-
-
-def _invalid(error: dict) -> str:
-    return _json({"valid": False, **{k: v for k, v in error.items() if k != "success"}})
+    return fail(err)
 
 
 # ---------------------------------------------------------------------------
@@ -396,9 +364,10 @@ async def search_metadata(query: str, limit: int = 10) -> str:
         query (str): The search text (multilingual/Hebrew support) to match against metadata.
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    client = get_jeen_metadata_client()
-    res = await client.search(query, limit)
-    return json.dumps(res, indent=2, ensure_ascii=False)
+    try:
+        return ok(await get_jeen_metadata_client().search(query, limit))
+    except Exception as e:
+        return _metadata_failure("search_metadata", e)
 
 
 @tool
@@ -415,10 +384,11 @@ async def search_business_terms(query: str, limit: int = 10) -> str:
         limit (int): Maximum number of results to return. Defaults to 10.
     """
     if not _connection_capabilities.get("has_business_terms", True):
-        return "[] (Notice: This connection has NO business terms defined in the catalog. Do not call this tool again.)"
-    client = get_jeen_metadata_client()
-    res = await client.search_business_terms(query, limit)
-    return json.dumps(res, indent=2, ensure_ascii=False)
+        return ok({"terms": [], "notice": "This connection has NO business terms defined. Do not call this tool again."})
+    try:
+        return ok(await get_jeen_metadata_client().search_business_terms(query, limit))
+    except Exception as e:
+        return _metadata_failure("search_business_terms", e)
 
 
 @tool
@@ -438,10 +408,30 @@ async def search_knowledge_pairs(query: str, limit: int = 10) -> str:
         limit (int): Maximum number of results to return. Defaults to 10.
     """
     if not _connection_capabilities.get("has_knowledge_pairs", True):
-        return "[] (Notice: This connection has NO knowledge pairs defined in the catalog. Do not call this tool again.)"
-    client = get_jeen_metadata_client()
-    res = await client.search_knowledge_pairs(query, limit)
-    return json.dumps(res, indent=2, ensure_ascii=False)
+        return ok({"pairs": [], "notice": "This connection has NO knowledge pairs defined. Do not call this tool again."})
+    try:
+        return ok(await get_jeen_metadata_client().search_knowledge_pairs(query, limit))
+    except Exception as e:
+        return _metadata_failure("search_knowledge_pairs", e)
+
+
+def _round_or_none(value: Any) -> float | None:
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _value_match(v: Any) -> dict:
+    if not isinstance(v, dict):
+        return {"value": v}
+    return {
+        "value": v.get("value"),
+        "table": v.get("table_name") or v.get("table"),
+        "column": v.get("column_name") or v.get("column"),
+        "keyword_similarity": _round_or_none(v.get("keyword_similarity")),
+        "semantic_distance": _round_or_none(v.get("semantic_distance")),
+    }
 
 
 @tool
@@ -456,8 +446,6 @@ async def search_column_values(
 
     SUPPORTED COLUMN TYPES:
     Works exclusively on high-cardinality columns profiled as:
-    # - `boolean` (not indexed in search MCP — use catalog or get_column_distinct_values)
-    # - `categorical` (not indexed in search MCP — use catalog or get_column_distinct_values)
     - `large_categorical`
     - `large_unit_id`
     ⚠️  Do NOT use on standard `categorical` or `boolean` columns (e.g. `launch_country`) — they are
@@ -468,13 +456,8 @@ async def search_column_values(
     - Use whenever you need to find how a high-cardinality entity is represented or spelled in the database
       (e.g., finding 'Tel Aviv 1' from 'תל אביב' or 'Acme Corp' from 'Acme'). Multilingual,
       keyword, and vector search finds the exact database spelling.
-    - Essential for high-cardinality columns (`large_categorical`, `large_unit_id`) where dumping
-      all distinct values is infeasible.
 
-    The response includes:
-    - A 'top_matches' summary listing the exact values you should use in SQL
-    - If multiple values share a common prefix (e.g., 'Tel Aviv 1', 'Tel Aviv 57'),
-      the column stores composite strings — use LIKE 'prefix%' in SQL to match all variants
+    Returns data.matches — every matching value (use each 'value' verbatim in SQL) with:
     - 'keyword_similarity' close to 1.0 = strong lexical match
     - 'semantic_distance' close to 0.0 = strong semantic match
 
@@ -484,47 +467,20 @@ async def search_column_values(
         column (str, optional): Restrict search to one column name. Omit to search all columns.
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    client = get_jeen_metadata_client()
-    res = await client.search_column_values(search_term=search_term, table=table, column=column, limit=limit, raw=True)
+    try:
+        res = await get_jeen_metadata_client().search_column_values(
+            search_term=search_term, table=table, column=column, limit=limit, raw=True
+        )
+    except Exception as e:
+        return _metadata_failure("search_column_values", e)
 
-    # Build an actionable summary of the top matches at the top of the response
-    summary_lines = []
-    if isinstance(res, dict) and "values" in res:
-        values = res["values"]
-        if values:
-            summary_lines.append(f"TOP MATCHES for '{search_term}' (use these exact strings in SQL):")
-            seen_values = []
-            for v in values[:5]:
-                if isinstance(v, dict):
-                    val = v.get("value", "")
-                    tbl = v.get("table_name", "")
-                    col = v.get("column_name", "")
-                    ks = round(v.get("keyword_similarity", 0), 3)
-                    sd = round(v.get("semantic_distance", 1), 3)
-                    summary_lines.append(f"  - '{val}'  (table: {tbl}, column: {col}, keyword_sim: {ks}, sem_dist: {sd})")
-                    seen_values.append(val)
-
-            # Detect composite prefix pattern (e.g., 'Tel Aviv 1', 'Tel Aviv 57')
-            import re as _re
-            prefixes = []
-            for val in seen_values:
-                m = _re.match(r'^([A-Za-z\s\'\-\.]+?)\s*\d+$', val.strip())
-                if m:
-                    prefixes.append(m.group(1).strip())
-            if prefixes:
-                common_prefix = max(set(prefixes), key=prefixes.count)
-                if prefixes.count(common_prefix) >= 2:
-                    summary_lines.append(
-                        f"\nNOTE: Multiple values share prefix '{common_prefix}' "
-                        f"— this column stores composite strings (name + code). "
-                        f"Use LIKE '{common_prefix}%' to match all variants, or pick one specific value."
-                    )
-        else:
-            summary_lines.append(f"No matches found for '{search_term}'. The value may not exist in this column.")
-
-    summary = "\n".join(summary_lines)
-    full_payload = json.dumps(res, indent=2, ensure_ascii=False)
-    return f"{summary}\n\nFull payload:\n{full_payload}"
+    values = (res.get("values") or []) if isinstance(res, dict) else []
+    matches = [_value_match(v) for v in values]
+    return ok({
+        "search_term": search_term,
+        "matches": matches,
+        "notice": None if matches else "No matches — the value may not exist in this column, or the column is not indexed (only large_categorical / large_unit_id are).",
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -553,21 +509,23 @@ async def enrich_sql_filters(
 
     Do NOT use this on purely numeric SQL or when you already have exact confirmed values.
 
-    Returns the enriched SQL string, or the original SQL if no enrichment was needed/possible.
+    Returns data.sql (the enriched SQL, or the original if nothing changed), data.enriched and
+    data.changes (one entry per corrected filter).
 
     Args:
         user_request (str): The original natural language request from the user (Hebrew).
         sql (str): The draft SQL query to enrich.
         jeen_catalog (str): The full catalog string (output of get_database_catalog).
     """
-    from agent.services.enrichment_orchestrator import EnrichmentOrchestrator
     from agent.nodes.refiner import parse_jeen_catalog_tables
+    from agent.services.enrichment_orchestrator import EnrichmentOrchestrator
 
     sql_clean = clean_sql(sql)
     try:
         schema, tables = parse_jeen_catalog_tables(jeen_catalog)
         if not tables:
-            return f"Could not parse schema from catalog. Original SQL returned unchanged:\n{sql_clean}"
+            return fail(error(INVALID_INPUT, "Could not parse any tables from jeen_catalog; pass the catalog unchanged.",
+                              original_sql=sql_clean))
 
         refined_sql, plan, enriched = await EnrichmentOrchestrator.enrich_query(
             user_request=user_request,
@@ -576,28 +534,25 @@ async def enrich_sql_filters(
             tables=tables,
             config=None,
         )
-
-        if enriched and plan:
-            changes = []
-            for tf in plan.enrichment_details:
-                if tf.changed_filter:
-                    changes.append(
-                        f"  • column '{tf.column}': '{tf.original_value}' → {tf.refined_values} "
-                        f"(operator: {tf.old_operator} → {tf.new_operator})"
-                    )
-            summary = "\n".join(changes) if changes else "  (no changes logged)"
-            return (
-                f"✅ SQL enriched successfully. Changes made:\n{summary}\n\n"
-                f"Enriched SQL:\n```sql\n{refined_sql}\n```"
-            )
-        else:
-            return (
-                f"ℹ️ No categorical filter corrections needed. Original SQL:\n```sql\n{sql_clean}\n```"
-            )
-
     except Exception as e:
-        logger.error(f"enrich_sql_filters failed: {e}", exc_info=True)
-        return f"Error during enrichment (original SQL unchanged): {e}\n\n```sql\n{sql_clean}\n```"
+        logger.error("enrich_sql_filters failed: %s", e, exc_info=True)
+        return fail(error(ENRICHMENT_ERROR, f"{e}. The SQL is unchanged.", original_sql=sql_clean))
+
+    changes = []
+    if enriched and plan:
+        changes = [
+            {
+                "column": tf.column,
+                "original_value": tf.original_value,
+                "refined_values": tf.refined_values,
+                "old_operator": tf.old_operator,
+                "new_operator": tf.new_operator,
+            }
+            for tf in plan.enrichment_details
+            if tf.changed_filter
+        ]
+    is_enriched = bool(enriched and plan)
+    return ok({"enriched": is_enriched, "sql": refined_sql if is_enriched else sql_clean, "changes": changes})
 
 
 # ---------------------------------------------------------------------------
@@ -610,14 +565,14 @@ def resolve_location_to_wkt(location_name: str) -> str:
     Resolves a geographic location name to its WKT (Well-Known Text) polygon representation.
 
     Use this whenever the user's query involves a geographic area and you need a WKT polygon for
-    a Trino ST_GeometryFromText() / ST_Within() / ST_Intersects() call.
+    a Trino ST_GeometryFromText() / ST_Within() / ST_Contains() call.
 
     Supports Hebrew location names directly (e.g., 'תל אביב', 'ירושלים', 'חיפה').
-    Returns a simplified polygon quoted WKT string, e.g., 'POLYGON((...))', ready to embed
-    directly into SQL: ST_GeometryFromText(<returned_value>).
+    Returns data.wkt — the polygon as plain (unquoted) WKT, e.g. POLYGON((...)). In SQL, wrap it
+    in single quotes: ST_GeometryFromText('<data.wkt>').
 
     The function uses rate-limited Nominatim geocoding with caching and automatic WKT
-    simplification (binary search), falling back to a bounding-box polygon if needed.
+    simplification (binary search). Only area geometries are returned (never points).
 
     Do NOT use this for exact addresses (e.g., "Rothschild 10, Tel Aviv"); it is designed for
     administrative areas: cities, regions, districts, and countries.
@@ -627,8 +582,32 @@ def resolve_location_to_wkt(location_name: str) -> str:
                              accepted and preferred for Israeli locations.
     """
     geojson = get_geojson_polygon(location_name)
-    if geojson:
-        wkt = geojson_to_simplified_wkt(geojson)
-        if wkt:
-            return wkt
-    return f"Error: Could not resolve location '{location_name}' to WKT."
+    quoted = geojson_to_simplified_wkt(geojson) if geojson else None  # returns a single-quoted literal
+    if not quoted:
+        return fail(error(LOCATION_NOT_FOUND, f"Could not resolve location '{location_name}' to an area polygon."))
+    return ok({"location": location_name, "wkt": quoted.strip("'")})
+
+
+# The agent's full domain tool set (order = order shown to the model).
+DEEP_AGENT_TOOLS = [
+    # Discovery & Schema
+    get_database_catalog,
+    get_database_tables,
+    get_table_columns,
+    get_table_relationships,
+    get_table_profile,
+    get_column_profile,
+    # Search & Resolve
+    search_metadata,
+    search_business_terms,
+    search_knowledge_pairs,
+    search_column_values,
+    resolve_location_to_wkt,
+    # Query Execution
+    execute_trino_query,
+    get_sample_rows,
+    get_column_distinct_values,
+    validate_sql,
+    # Post-processing
+    enrich_sql_filters,
+]

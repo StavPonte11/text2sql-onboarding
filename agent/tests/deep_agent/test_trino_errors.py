@@ -33,14 +33,14 @@ def test_trino_errors_are_passed_through_unchanged(error):
     assert res.query_id == "20261020_000000_00001_abcde"
 
     out = trino_errors.from_result(res)
-    assert out["error_name"] == error["errorName"]
-    assert out["error_type"] == error["errorType"]
-    assert out["error_message"] == error["message"]
+    assert out["name"] == error["errorName"]
+    assert out["type"] == error["errorType"]
+    assert out["message"] == error["message"]
     location = error.get("errorLocation")
     if location:
-        assert out["error_location"] == {"line": location["lineNumber"], "column": location["columnNumber"]}
+        assert out["location"] == {"line": location["lineNumber"], "column": location["columnNumber"]}
     else:
-        assert "error_location" not in out
+        assert "location" not in out
 
 
 def test_connection_failure_is_reported_as_connection_error():
@@ -49,9 +49,9 @@ def test_connection_failure_is_reported_as_connection_error():
          patch.object(core_trino, "get_trino_connection", return_value=_failing_connection(exc)):
         res = core_trino.execute_query_sync("SELECT 1")
     out = trino_errors.from_result(res)
-    assert out["error_name"] == "CONNECTION_ERROR"
-    assert out["error_type"] is None
-    assert "Max retries exceeded" in out["error_message"]
+    assert out["name"] == "CONNECTION_ERROR"
+    assert "type" not in out
+    assert "Max retries exceeded" in out["message"]
 
 
 def test_execute_tool_returns_trinos_error():
@@ -62,20 +62,23 @@ def test_execute_tool_returns_trinos_error():
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT ST_GeomFromText('POINT(1 1)')"}))
     assert out == {
-        "success": False,
-        "error_name": "FUNCTION_NOT_FOUND",
-        "error_type": "USER_ERROR",
-        "error_message": "line 1:8: Function 'st_geomfromtext' not registered",
-        "error_location": {"line": 1, "column": 8},
-        "query_id": "q1",
+        "ok": False,
+        "data": None,
+        "error": {
+            "name": "FUNCTION_NOT_FOUND",
+            "message": "line 1:8: Function 'st_geomfromtext' not registered",
+            "type": "USER_ERROR",
+            "location": {"line": 1, "column": 8},
+            "query_id": "q1",
+        },
     }
 
 
 def test_execute_tool_reports_exceptions_as_connection_error():
     with patch.object(tools, "execute_query_sync", side_effect=OSError("connection refused")):
         out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT 1"}))
-    assert out["error_name"] == "CONNECTION_ERROR"
-    assert out["error_message"] == "connection refused"
+    assert out["error"]["name"] == "CONNECTION_ERROR"
+    assert out["error"]["message"] == "connection refused"
 
 
 def test_validate_returns_trinos_error():
@@ -85,11 +88,9 @@ def test_validate_returns_trinos_error():
     )
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT x FROM t"}))
-    assert out["valid"] is False
-    assert out["error_name"] == "COLUMN_NOT_FOUND"
-    assert out["error_type"] == "USER_ERROR"
-    assert "success" not in out
-
+    assert out["ok"] is False
+    assert out["error"]["name"] == "COLUMN_NOT_FOUND"
+    assert out["error"]["type"] == "USER_ERROR"
 
 
 def test_validate_reports_location_against_the_callers_sql():
@@ -100,8 +101,8 @@ def test_validate_reports_location_against_the_callers_sql():
     )
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT x FROM t"}))
-    assert out["error_location"] == {"line": 1, "column": 8}
-    assert out["error_message"] == "line 1:32: Column 'x' cannot be resolved"  # Trino's message stays raw
+    assert out["error"]["location"] == {"line": 1, "column": 8}
+    assert out["error"]["message"] == "line 1:32: Column 'x' cannot be resolved"  # Trino's message stays raw
 
 
 def test_validate_leaves_later_lines_alone():
@@ -111,4 +112,4 @@ def test_validate_leaves_later_lines_alone():
     )
     with patch.object(tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT a\nFROM t\nWHERE x = 1"}))
-    assert out["error_location"] == {"line": 3, "column": 7}
+    assert out["error"]["location"] == {"line": 3, "column": 7}
