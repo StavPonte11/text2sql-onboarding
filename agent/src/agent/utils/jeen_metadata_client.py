@@ -41,8 +41,13 @@ JEEN_METADATA_PROFILE_TIMEOUT  Per-call timeout in seconds (default 15).
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import json
 import logging
+import time
+import weakref
+from datetime import timedelta
 from typing import Any, NoReturn
 
 from mcp import ClientSession
@@ -57,41 +62,97 @@ class JeenMetadataError(RuntimeError):
     """The MCP server reported an error, or returned a payload of an unexpected shape."""
 
 
+# Read-only metadata tools whose results may be served from the client's TTL cache.
+_CACHEABLE_TOOLS = frozenset({
+    "get_catalog_prompt", "get_tables", "get_columns", "get_relationships", "get_table_profile", "get_column_profile",
+})
+
+
 # ---------------------------------------------------------------------------
 # Low-level MCP call helper
 # ---------------------------------------------------------------------------
 
-async def _call_mcp_tool(
-    url: str,
-    api_key: str,
-    tool_name: str,
-    arguments: dict[str, Any],
-    timeout: float = 15.0,
-) -> Any:
+class _PersistentSession:
+    """One long-lived MCP ClientSession, owned by a background task.
+
+    anyio requires the transport/session context managers to be entered and exited in the
+    same task, so a dedicated task holds them open; callers in other tasks use
+    `session.call_tool(...)` concurrently (MCP multiplexes requests by id). A broken
+    session is invalidated and transparently re-created on the next call.
     """
-    Open an MCP session, run the full initialization handshake, call one
-    tool, and return the parsed payload from the first text content block.
 
-    Uses the official Python MCP SDK so the
-    initialize → notifications/initialized → tools/call sequence is handled
-    automatically.  Returns parsed JSON (dict/list) or a raw string if the
-    content block is not JSON.
-    """
-    headers = {"Authorization": f"Bearer {api_key}"}
+    def __init__(self, url: str, api_key: str, timeout: float) -> None:
+        self._url, self._api_key, self._timeout = url, api_key, timeout
+        self._session: ClientSession | None = None
+        self._task: asyncio.Task | None = None
+        self._ready = asyncio.Event()
+        self._stop = asyncio.Event()
+        self._error: BaseException | None = None
+        self._lock = asyncio.Lock()
+        self.handshakes = 0  # number of initialize() handshakes performed (observability/tests)
 
-    async with streamablehttp_client(
-        url,
-        headers=headers,
-        timeout=timeout,
-        # SSE read timeout slightly longer than the overall timeout so a
-        # streaming tool call has time to produce its first event.
-        sse_read_timeout=timeout + 30,
-    ) as (read, write, _get_session_id):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async def get(self) -> ClientSession:
+        async with self._lock:
+            if self._session is None or self._task is None or self._task.done():
+                self._ready, self._stop, self._error = asyncio.Event(), asyncio.Event(), None
+                self._task = asyncio.create_task(self._run(), name="jeen-mcp-session")
+                await asyncio.wait_for(self._ready.wait(), timeout=self._timeout + 5)
+                if self._session is None:
+                    raise JeenMetadataError(f"Could not open MCP session: {self._error}")
+            return self._session
 
-            result = await session.call_tool(tool_name, arguments)
+    async def _run(self) -> None:
+        try:
+            async with streamablehttp_client(
+                self._url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=self._timeout,
+                sse_read_timeout=self._timeout + 30,
+            ) as (read, write, _get_session_id):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self.handshakes += 1
+                    self._session = session
+                    self._ready.set()
+                    await self._stop.wait()
+        except BaseException as exc:  # noqa: BLE001 — recorded and surfaced to the caller
+            self._error = exc
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+        finally:
+            self._session = None
+            self._ready.set()
 
+    def invalidate(self) -> None:
+        self._session = None
+        self._stop.set()
+
+    async def close(self) -> None:
+        self._stop.set()
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
+
+
+# One persistent session per (event loop, url, key).
+_sessions: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple[str, str], _PersistentSession]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _persistent_session(url: str, api_key: str, timeout: float) -> _PersistentSession:
+    per_loop = _sessions.setdefault(asyncio.get_running_loop(), {})
+    if (url, api_key) not in per_loop:
+        per_loop[(url, api_key)] = _PersistentSession(url, api_key, timeout)
+    return per_loop[(url, api_key)]
+
+
+async def close_mcp_sessions() -> None:
+    """Close this event loop's persistent MCP sessions (call before the loop shuts down)."""
+    per_loop = _sessions.pop(asyncio.get_running_loop(), {})
+    await asyncio.gather(*(s.close() for s in per_loop.values()), return_exceptions=True)
+
+
+def _parse_tool_result(tool_name: str, result: Any) -> Any:
     # result.content is a list of ContentBlock objects.
     # We expect the first (and only) block to be a TextContent.
     first = result.content[0] if result.content else None
@@ -106,6 +167,61 @@ async def _call_mcp_tool(
         return json.loads(text)
     except json.JSONDecodeError:
         return text
+
+
+async def _call_with_persistent_session(
+    url: str, api_key: str, tool_name: str, arguments: dict[str, Any], timeout: float
+) -> Any:
+    holder = _persistent_session(url, api_key, timeout)
+    for attempt in (1, 2):
+        session = await holder.get()
+        try:
+            result = await session.call_tool(
+                tool_name, arguments, read_timeout_seconds=timedelta(seconds=timeout)
+            )
+            return _parse_tool_result(tool_name, result)
+        except JeenMetadataError:
+            raise
+        except Exception as exc:
+            holder.invalidate()  # stale/broken session: reconnect once
+            if attempt == 2:
+                raise
+            logger.info("MCP session for %s failed (%s); reconnecting", url, exc)
+
+
+async def _call_mcp_tool(
+    url: str,
+    api_key: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    timeout: float = 15.0,
+) -> Any:
+    """
+    Call one MCP tool and return the parsed payload from the first text content block.
+
+    With JEEN_METADATA_REUSE_SESSION (default) the MCP session is kept open per event loop,
+    so the initialize → notifications/initialized handshake happens once instead of on
+    every call. Otherwise (or if the persistent path cannot be set up) a session is opened
+    for this call only. Uses the official Python MCP SDK, which handles the handshake and
+    both JSON and SSE responses. Returns parsed JSON (dict/list) or a raw string if the
+    content block is not JSON.
+    """
+    if settings.JEEN_METADATA_REUSE_SESSION:
+        return await _call_with_persistent_session(url, api_key, tool_name, arguments, timeout)
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with streamablehttp_client(
+        url,
+        headers=headers,
+        timeout=timeout,
+        # SSE read timeout slightly longer than the overall timeout so a
+        # streaming tool call has time to produce its first event.
+        sse_read_timeout=timeout + 30,
+    ) as (read, write, _get_session_id):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool_name, arguments)
+    return _parse_tool_result(tool_name, result)
 
 
 def _reraise_as_metadata_error(exc: Exception) -> NoReturn:
@@ -145,6 +261,8 @@ class JeenMetadataClient:
             getattr(settings, "JEEN_METADATA_SEARCH_LIMIT", settings.HYBRID_SEARCH_MAX_TABLES)
         )
         self._timeout: float = float(getattr(settings, "JEEN_METADATA_PROFILE_TIMEOUT", 15.0))
+        self._cache: dict[tuple[str, str], tuple[float, Any]] = {}
+        self._inflight: dict[tuple[str, str], asyncio.Future] = {}
 
         self.is_configured: bool = bool(
             self._mcp_url and self._mcp_key and self._connection_id
@@ -165,7 +283,30 @@ class JeenMetadataClient:
         return connection_id if connection_id is not None else self._connection_id
 
     async def _call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        """Thin wrapper so individual methods don't repeat the URL/key/timeout."""
+        """Call an MCP tool; read-only metadata tools are served from a TTL cache (single-flight)."""
+        ttl = settings.JEEN_METADATA_CACHE_TTL_S
+        if tool_name not in _CACHEABLE_TOOLS or ttl <= 0:
+            return await self._call_uncached(tool_name, arguments)
+
+        key = (tool_name, json.dumps(arguments, sort_keys=True, default=str))
+        hit = self._cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return copy.deepcopy(hit[1])
+
+        inflight = self._inflight.get(key)
+        if inflight is None:
+            inflight = asyncio.ensure_future(self._call_uncached(tool_name, arguments))
+            self._inflight[key] = inflight
+            try:
+                value = await asyncio.shield(inflight)  # a cancelled caller must not cancel the shared fetch
+                self._cache[key] = (time.monotonic() + ttl, value)  # errors are never cached
+            finally:
+                self._inflight.pop(key, None)
+        else:
+            value = await asyncio.shield(inflight)
+        return copy.deepcopy(value)
+
+    async def _call_uncached(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         return await _call_mcp_tool(
             self._mcp_url,
             self._mcp_key,
@@ -173,6 +314,10 @@ class JeenMetadataClient:
             arguments,
             self._timeout,
         )
+
+    def clear_cache(self) -> None:
+        """Drop cached metadata (e.g. after a profiling run updates the catalog)."""
+        self._cache.clear()
 
     # ------------------------------------------------------------------
     # Search Column Values

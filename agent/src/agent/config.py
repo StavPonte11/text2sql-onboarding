@@ -53,6 +53,8 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
     DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
+    JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
+    JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

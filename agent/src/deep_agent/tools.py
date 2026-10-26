@@ -213,7 +213,7 @@ def _execute(sql: str, row_cap: int | None) -> tuple[str, dict | None]:
     and onto the current Langfuse tool observation.
     """
     try:
-        res = execute_query_sync(sql)
+        res = execute_query_sync(sql, reuse_connection=True)
     except Exception as e:
         err = trino_errors.from_exception(e)
         annotate_current_span({"error_name": err["name"]}, level="ERROR")
@@ -358,8 +358,10 @@ def validate_sql(sql: str) -> str:
     resolves it against the catalog: syntax, table and column names, types and function signatures.
     No data is read.
 
-    Use this to dry-run a new draft before execute_trino_query. It cannot tell you whether the
-    query returns rows.
+    Optional. For an invalid query, execute_trino_query fails at the same checking step, just as
+    fast and without reading data, with the same error fields — so validating first usually
+    saves nothing. Use it only to check a draft you do not want to run yet. It cannot tell you
+    whether the query returns rows.
 
     Returns ok=true with data.valid=true, or ok=false with the same error fields as
     execute_trino_query (error.name, error.type, error.message, error.location).
@@ -373,7 +375,7 @@ def validate_sql(sql: str) -> str:
     except sql_guard.GuardError as e:
         return fail(trino_errors.forbidden(str(e)))
     try:
-        res = execute_query_sync(f"{_VALIDATE_PREFIX}{sql_clean}")
+        res = execute_query_sync(f"{_VALIDATE_PREFIX}{sql_clean}", reuse_connection=True)
     except Exception as e:
         return fail(trino_errors.from_exception(e))
     if res.success:

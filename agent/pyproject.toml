@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 deep-agent = "deep_agent.cli:main"
+deep-agent-bench = "deep_agent.benchmark:main"
 
 [tool.uv.sources]
 core = { path = "../core", editable = true }

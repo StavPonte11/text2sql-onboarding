@@ -19,6 +19,7 @@ from pathlib import Path
 from langchain_core.messages import BaseMessage
 
 from agent.config import settings
+from agent.utils.jeen_metadata_client import close_mcp_sessions
 from deep_agent.agent import create_deep_agent
 from deep_agent import observability
 from deep_agent.answer import render_markdown
@@ -235,7 +236,13 @@ async def _amain(args: argparse.Namespace) -> None:
 
     print(f"{MAGENTA}{BOLD}Initializing Deep Agent...{RESET}")
     agent = create_deep_agent()
+    try:
+        await _run_questions(agent, args, context, next_thread_id)
+    finally:
+        await close_mcp_sessions()  # the persistent Jeen MCP session lives as long as this event loop
 
+
+async def _run_questions(agent, args: argparse.Namespace, context: DeepAgentContext, next_thread_id) -> None:
     if args.interactive:
         print(f"{GREEN}{BOLD}Starting Interactive Mode. Type 'quit', 'exit', or 'q' to stop.{RESET}")
         while True:

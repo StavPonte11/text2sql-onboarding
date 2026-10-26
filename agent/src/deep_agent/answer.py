@@ -126,7 +126,7 @@ def _re_execute(answer_sql: str) -> tuple[VerificationStatus, dict[str, Any] | N
         guarded = sql_guard.prepare(clean_sql(answer_sql), row_cap)
     except sql_guard.GuardError as e:
         return "rejected", None, str(e)
-    res = execute_query_sync(guarded.sql)
+    res = execute_query_sync(guarded.sql, reuse_connection=True)
     if not res.success:
         return "re_execution_failed", None, res.error_message
     rows = res.rows or []

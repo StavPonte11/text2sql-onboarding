@@ -10,8 +10,10 @@ class ScriptedChatModel(GenericFakeChatModel):
     """Fake chat model that replays scripted AIMessages and records every prompt it receives."""
 
     seen: list[list[BaseMessage]] = []
+    bound_tool_names: list[list[str]] = []
 
     def bind_tools(self, tools, **kwargs):  # deepagents binds tools; the script decides the calls
+        self.bound_tool_names.append([getattr(t, "name", None) or t.get("name") for t in tools])
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -24,6 +26,7 @@ def scripted_model():
     def _make(*replies: AIMessage) -> ScriptedChatModel:
         model = ScriptedChatModel(messages=iter(replies))
         model.seen = []
+        model.bound_tool_names = []
         return model
 
     return _make
@@ -51,6 +54,7 @@ def policy_model():
     def _make(policy: Callable[[list[BaseMessage]], AIMessage]) -> PolicyChatModel:
         model = PolicyChatModel(messages=iter([]), policy=policy)
         model.seen = []
+        model.bound_tool_names = []
         return model
 
     return _make

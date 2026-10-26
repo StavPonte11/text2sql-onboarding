@@ -12,6 +12,7 @@ from agent.config import settings
 from deep_agent.answer import AnswerVerificationMiddleware, answer_schema
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
 from deep_agent.resources import build_resources
+from deep_agent.tool_filter import BuiltinToolFilterMiddleware
 from deep_agent.tools import DEEP_AGENT_TOOLS
 
 
@@ -90,7 +91,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
   - Break complex or multi-step logic into named CTE blocks (e.g. `WITH filtered_data AS (...), aggregated_counts AS (...)`).
   - CTEs make queries significantly cleaner to read, prevent join fan-out (by aggregating child tables in a CTE before joining), and make window rankings (`ROW_NUMBER() / RANK()`) and multi-stage metrics easy to organize.
 - SQL uses ONLY confirmed 3-part table names: `"catalog"."schema"."table"`
-- `validate_sql` — Trino checks the draft without running it (syntax, table/column names, types, functions). Always call before `execute_trino_query` on a fresh draft.
+- `validate_sql` — optional dry-run by Trino (syntax, names, types; reads no data). For an invalid query `execute_trino_query` fails at the same step, just as fast and with the same error, so validating first usually saves nothing — use it only to check a draft you don't want to run yet.
 - `enrich_sql_filters` — run on any SQL that filters text columns
 
 ---
@@ -152,7 +153,7 @@ If any check fails or is uncertain, run a targeted diagnostic query. Do not gues
 - `execute_trino_query` — runs SQL; on failure `error` carries Trino's own `name` / `type` / `message`
 - `get_sample_rows` — peek at raw data format, string casing, date format
 - `get_column_distinct_values` — live distinct values. Appropriate for standard low-cardinality `categorical` columns (e.g. `launch_country`) when not listed in catalog.
-- `validate_sql` — dry-run check by Trino, reads no data. Call before every execute on a new draft.
+- `validate_sql` — optional dry-run; not needed before executing.
 
 **Post-processing**
 - `enrich_sql_filters` — AST-level auto-correction of categorical filter values. Use after drafting SQL with text filters.
@@ -219,7 +220,7 @@ def create_deep_agent(model: BaseChatModel | None = None, clarifications_enabled
         model=llm,
         tools=DEEP_AGENT_TOOLS,
         system_prompt=SYSTEM_PROMPT + CLARIFICATION_PROMPT if clarifications_enabled else SYSTEM_PROMPT,
-        middleware=[DeepAgentContextMiddleware(), AnswerVerificationMiddleware()],
+        middleware=[DeepAgentContextMiddleware(), AnswerVerificationMiddleware(), BuiltinToolFilterMiddleware()],
         response_format=ToolStrategy(answer_schema(clarifications_enabled)),
         context_schema=DeepAgentContext,
         checkpointer=memory,
