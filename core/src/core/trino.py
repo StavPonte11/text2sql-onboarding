@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 import trino
+import trino.exceptions
 from pydantic import BaseModel
 import urllib3
 from core.config import settings
@@ -25,6 +26,12 @@ class TrinoExecutionResult(BaseModel):
     row_count: int = 0
     execution_time_ms: int = 0
     error_message: str | None = None
+    # Structured Trino error details (populated from trino.exceptions.TrinoQueryError)
+    error_name: str | None = None        # e.g. SYNTAX_ERROR, COLUMN_NOT_FOUND, FUNCTION_NOT_FOUND
+    error_type: str | None = None        # USER_ERROR | INSUFFICIENT_RESOURCES | INTERNAL_ERROR | EXTERNAL
+    error_code: int | None = None
+    error_location: tuple[int, int] | None = None  # (line, column) of the offending token
+    query_id: str | None = None
 
 
 def get_trino_connection():
@@ -79,6 +86,7 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
             cur.execute(sql)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description] if cur.description else []
+        query_id = getattr(cur, "query_id", None)
         execution_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[CoreTrinoClient] OK — {len(rows)} rows in {execution_time_ms}ms")
         cur.close()
@@ -89,6 +97,7 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
             columns=columns,
             row_count=len(rows),
             execution_time_ms=execution_time_ms,
+            query_id=query_id,
         )
     except Exception as exc:
         execution_time_ms = int((time.time() - start_time) * 1000)
@@ -103,11 +112,21 @@ def execute_query_sync(sql: str, table_id: str = "", params: tuple | dict | list
                 conn.close()
             except:
                 pass
+        details: dict[str, Any] = {}
+        if isinstance(exc, trino.exceptions.TrinoQueryError):
+            details = {
+                "error_message": exc.message,
+                "error_name": exc.error_name,
+                "error_type": exc.error_type,
+                "error_code": exc.error_code,
+                "error_location": exc.error_location,
+                "query_id": exc.query_id,
+            }
         return TrinoExecutionResult(
             success=False,
             rows=[],
             columns=[],
             row_count=0,
             execution_time_ms=execution_time_ms,
-            error_message=str(exc),
+            **{"error_message": str(exc), **details},
         )

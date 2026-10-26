@@ -40,7 +40,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "core", directory = "../core" },
+    { name = "core", editable = "../core" },
     { name = "deepagents", specifier = ">=0.6.12" },
     { name = "esca-sdk", git = "https://github.com/elirazpevz/esca.git?subdirectory=packages%2Fesca-sdk" },
     { name = "fastapi", specifier = ">=0.115.6" },
@@ -259,7 +259,7 @@ wheels = [
 [[package]]
 name = "core"
 version = "0.1.0"
-source = { directory = "../core" }
+source = { editable = "../core" }
 dependencies = [
     { name = "alembic" },
     { name = "langchain" },

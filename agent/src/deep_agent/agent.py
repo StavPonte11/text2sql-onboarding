@@ -23,7 +23,7 @@ from deep_agent.tools import (
     search_knowledge_pairs,
     search_column_values,
     resolve_location_to_wkt,
-    validate_sql_syntax,
+    validate_sql,
     enrich_sql_filters,
 )
 import datetime
@@ -108,7 +108,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
   - Break complex or multi-step logic into named CTE blocks (e.g. `WITH filtered_data AS (...), aggregated_counts AS (...)`).
   - CTEs make queries significantly cleaner to read, prevent join fan-out (by aggregating child tables in a CTE before joining), and make window rankings (`ROW_NUMBER() / RANK()`) and multi-stage metrics easy to organize.
 - SQL uses ONLY confirmed 3-part table names: `"catalog"."schema"."table"`
-- `validate_sql_syntax` — free, instant, catches typos and wrong function names. Always call before `execute_trino_query` on a fresh draft.
+- `validate_sql` — Trino checks the draft without running it (syntax, table/column names, types, functions). Always call before `execute_trino_query` on a fresh draft.
 - `enrich_sql_filters` — run on any SQL that filters text columns
 
 ---
@@ -116,7 +116,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
 ## Phase 5 — Execute & Diagnose
 
 - `execute_trino_query` — always LIMIT exploratory queries
-- **Classify the error before retrying** (the response includes `error_category`):
+- **Read the error before retrying** (the response includes Trino's `error_name`, `error_type` and `error_message`):
   - `SYNTAX_ERROR` → fix the specific line only, do not redesign
   - `TABLE_NOT_FOUND` / `COLUMN_NOT_FOUND` → re-verify exact identifiers from catalog
   - `TYPE_MISMATCH` → add `CAST(col AS type)`
@@ -167,10 +167,10 @@ If any check fails or is uncertain, run a targeted diagnostic query. Do not gues
 - `resolve_location_to_wkt` — Hebrew location → WKT polygon for `ST_GeometryFromText(...)`
 
 **Execution**
-- `execute_trino_query` — runs SQL; response includes `error_category` on failure
+- `execute_trino_query` — runs SQL; on failure the response carries Trino's `error_name` / `error_type` / `error_message`
 - `get_sample_rows` — peek at raw data format, string casing, date format
 - `get_column_distinct_values` — live distinct values. Appropriate for standard low-cardinality `categorical` columns (e.g. `launch_country`) when not listed in catalog.
-- `validate_sql_syntax` — free dry-run. Call before every execute on a new draft.
+- `validate_sql` — dry-run check by Trino, reads no data. Call before every execute on a new draft.
 
 **Post-processing**
 - `enrich_sql_filters` — AST-level auto-correction of categorical filter values. Use after drafting SQL with text filters.
@@ -235,7 +235,7 @@ def create_deep_agent(model: BaseChatModel | None = None):
         execute_trino_query,
         get_sample_rows,
         get_column_distinct_values,
-        validate_sql_syntax,
+        validate_sql,
         # Post-processing
         enrich_sql_filters,
     ]

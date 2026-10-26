@@ -101,7 +101,7 @@ Understand what each tool supports and choose based on the column's `semantic_ty
 
 When SQL fails, classify the error **before** deciding what to fix:
 
-| Error category | Targeted fix |
+| Trino `error_name` / situation | Targeted fix |
 |---------------|-------------|
 | `SYNTAX_ERROR` | Fix the specific line only — do not redesign the query |
 | `TABLE_NOT_FOUND` | Re-verify the exact 3-part identifier from `get_database_catalog` |
@@ -142,8 +142,8 @@ Before writing the final response, translate your SQL back to plain English and 
 **Subagent delegation can keep your context clean.**
 If you need to explore many tables or profile many columns at once — delegate to a focused subagent via `task` and process the result. Don't exhaust your context on breadth-first exploration inline.
 
-**`validate_sql_syntax` is free.**
-Runs `EXPLAIN (TYPE VALIDATE)` — no data touched, instant. Call it before every `execute_trino_query` on a fresh draft.
+**`validate_sql` is cheap.**
+Runs `EXPLAIN (TYPE VALIDATE)` — Trino checks syntax, names and types without touching data. Call it before every `execute_trino_query` on a fresh draft.
 
 **Dumping distinct values on high-cardinality columns wastes latency and tokens.**
 For `large_categorical` or `large_unit_id` columns with hundreds or thousands of values, `get_column_distinct_values` returns a random slice of unrelated values. Always use `search_column_values` for targeted search on high-cardinality columns, and save `get_column_distinct_values` for low-cardinality categories.

@@ -23,7 +23,7 @@ def trino():
 def test_forbidden_sql_never_reaches_trino(trino, sql):
     out = json.loads(tools.execute_trino_query.invoke({"sql": sql}))
     assert out["success"] is False
-    assert out["error_category"] == "FORBIDDEN_STATEMENT"
+    assert out["error_name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
@@ -90,9 +90,12 @@ def test_speed_limit_column_still_gets_limit(trino):
 
 
 def test_trino_error_is_reported(trino):
-    trino.return_value = TrinoExecutionResult(success=False, error_message="line 1:8: Column 'x' cannot be resolved")
+    trino.return_value = TrinoExecutionResult(
+        success=False, error_message="line 1:8: Column 'x' cannot be resolved",
+        error_name="COLUMN_NOT_FOUND", error_type="USER_ERROR",
+    )
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT x FROM t"}))
-    assert out["error_category"] == "COLUMN_NOT_FOUND"
+    assert out["error_name"] == "COLUMN_NOT_FOUND"
 
 
 def test_sample_rows_handles_hebrew_quoted_table(trino):
@@ -103,7 +106,7 @@ def test_sample_rows_handles_hebrew_quoted_table(trino):
 
 def test_sample_rows_rejects_injection(trino):
     out = json.loads(tools.get_sample_rows.invoke({"table_name": "t; DROP TABLE t"}))
-    assert out["error_category"] == "FORBIDDEN_STATEMENT"
+    assert out["error_name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
@@ -114,12 +117,13 @@ def test_distinct_values_quotes_hebrew_column(trino):
 
 
 def test_validate_rejects_writes_without_calling_trino(trino):
-    out = tools.validate_sql_syntax.invoke({"sql": "DELETE FROM t"})
-    assert out.startswith("Syntax Error:")
+    out = json.loads(tools.validate_sql.invoke({"sql": "DELETE FROM t"}))
+    assert out["valid"] is False
+    assert out["error_name"] == "FORBIDDEN_STATEMENT"
     trino.assert_not_called()
 
 
 def test_validate_runs_explain_for_reads(trino):
     trino.return_value = _ok(0)
-    assert tools.validate_sql_syntax.invoke({"sql": "SELECT 1"}) == "Syntax is VALID."
+    assert json.loads(tools.validate_sql.invoke({"sql": "SELECT 1"})) == {"valid": True}
     assert trino.call_args.args[0] == "EXPLAIN (TYPE VALIDATE) SELECT 1"
