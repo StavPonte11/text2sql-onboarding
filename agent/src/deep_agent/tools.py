@@ -32,6 +32,7 @@ from deep_agent.envelope import (
     fail,
     ok,
 )
+from deep_agent.observability import annotate_current_span
 
 logger = logging.getLogger(__name__)
 
@@ -202,24 +203,43 @@ def _run_sql(sql: str, row_cap: int | None) -> str:
     """Execute already-guarded SQL that fetches up to row_cap + 1 rows; report truncation.
 
     row_cap=None means no ceiling: every returned row is passed through.
+    Telemetry (query id, timing, row count / Trino error) goes both into the envelope
+    and onto the current Langfuse tool observation.
     """
     try:
         res = execute_query_sync(sql)
     except Exception as e:
-        return fail(trino_errors.from_exception(e))
+        err = trino_errors.from_exception(e)
+        annotate_current_span({"error_name": err["name"]}, level="ERROR")
+        return fail(err)
     if not res.success:
-        return fail(trino_errors.from_result(res))
+        err = trino_errors.from_result(res)
+        err["execution_time_ms"] = res.execution_time_ms
+        annotate_current_span({
+            "trino_query_id": res.query_id,
+            "execution_time_ms": res.execution_time_ms,
+            "error_name": err["name"],
+            "error_type": err.get("type"),
+        }, level="ERROR")
+        return fail(err)
 
     rows = res.rows or []
     truncated = row_cap is not None and len(rows) > row_cap
     if truncated:
         rows = rows[:row_cap]
+    annotate_current_span({
+        "trino_query_id": res.query_id,
+        "execution_time_ms": res.execution_time_ms,
+        "row_count": len(rows),
+        "truncated": truncated,
+    })
     return ok({
         "columns": res.columns,
         "row_count": len(rows),
         "truncated": truncated,
         "rows": rows,
         "query_id": res.query_id,
+        "execution_time_ms": res.execution_time_ms,
     })
 
 

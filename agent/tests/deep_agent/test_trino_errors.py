@@ -70,6 +70,7 @@ def test_execute_tool_returns_trinos_error():
             "type": "USER_ERROR",
             "location": {"line": 1, "column": 8},
             "query_id": "q1",
+            "execution_time_ms": 0,
         },
     }
 
