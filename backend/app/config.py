@@ -29,21 +29,24 @@ class Settings(BaseSettings):
 
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
+    AGENT_READ_TIMEOUT_SECONDS: float = 900.0
+    AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
-    OPENMETADATA_TOKEN: str = ""
+    # Overall deadline for one evaluation run (the service runs it as a
+    # background job that the backend polls)
+    EVALUATION_TIMEOUT_SECONDS: float = 6 * 3600.0
+    EVALUATION_POLL_INTERVAL_SECONDS: float = 10.0
+    # Consecutive failed polls tolerated (e.g. while the service restarts)
+    EVALUATION_POLL_MAX_ERRORS: int = 30
 
     # Jeen MCP
     JEEN_METADATA_MCP_URL: str = "http://schema-modeler.dev161.internal/api/mcp"
     JEEN_METADATA_MCP_KEY: str = (
-        "mcp_f885337e381366db5edc22093415450e38f71e997e96dc708fea69bde9529ab9"
+        "mcp_d61337a926f6b1e1c88218994c731c28d64ff925918a2dd384c89db1383ee7e3"
     )
+    JEEN_METADATA_CONNECTION_ID: int = 89
 
     APP_ENV: str = "development"
-    OPENMETADATA_URL: str = "http://localhost:8585"
-    OPENMETADATA_ADMIN_EMAIL: str = "admin@open-metadata.org"
-    OPENMETADATA_ADMIN_PASSWORD: str = "admin"
-    OPENMETADATA_VERIFY_SSL: bool = False
-    OPENMETADATA_SERVICE_NAME: str = "local_trino"
     RUN_SEED: bool = False
     RUN_INFRA_INIT: bool = False
     # Trino connection
@@ -65,7 +68,6 @@ class Settings(BaseSettings):
     TRINO_KEY_PATH: str | None = (
         None  # Path to client private key for mTLS (.key / .pem)
     )
-    TRINO_SERVICE_URL: str | None = None
 
     # Starburst Galaxy Configuration
     USE_GALAXY: bool = False
@@ -88,11 +90,7 @@ class Settings(BaseSettings):
                 self.TRINO_PASSWORD = self.GALAXY_PASSWORD
             if self.GALAXY_HTTP_SCHEME:
                 self.TRINO_HTTP_SCHEME = self.GALAXY_HTTP_SCHEME
-            self.TRINO_CATALOG = "spider2_airlines"
-            self.TRINO_SCHEMA = "airlines"
             self.TRINO_VERIFY = True
-            # Also point OpenMetadata service name to galaxy cluster if needed
-            self.OPENMETADATA_SERVICE_NAME = "galaxy_trino"
         return self
 
     # Langfuse run-item finalization wait (used by wait_for_run_items to gate cleanup)
@@ -117,6 +115,8 @@ class Settings(BaseSettings):
 
     FLAG_CACHE_TTL: int = 30
     MODE_CACHE_TTL: int = 30
+
+    EVAL_THRESHOLD: float = 0.5
 
 
 settings = Settings()

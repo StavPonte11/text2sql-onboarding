@@ -51,8 +51,6 @@ class CoreSettings(BaseSettings):
                 self.TRINO_PASSWORD = self.GALAXY_PASSWORD
             if self.GALAXY_HTTP_SCHEME:
                 self.TRINO_HTTP_SCHEME = self.GALAXY_HTTP_SCHEME
-            self.TRINO_CATALOG = "spider2_airlines"
-            self.TRINO_SCHEMA = "airlines"
             self.TRINO_VERIFY = True
         return self
 

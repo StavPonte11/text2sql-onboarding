@@ -329,7 +329,9 @@
   background: var(--color-surface-primary);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
 .override-builder-item:hover {
@@ -393,4 +395,3 @@
   gap: 8px;
   margin-top: 8px;
 }
-

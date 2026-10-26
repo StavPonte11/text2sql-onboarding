@@ -48,3 +48,5 @@ junit.xml
 
 # Certs
 certs
+# Image tars from build_openshift.sh
+/openshift-images/

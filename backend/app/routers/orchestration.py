@@ -10,11 +10,14 @@ New endpoints:
   System:      GET /evaluations/system-health
 """
 
+import logging
 from datetime import datetime, timedelta
 
+import requests
 from core.db.engine import engine, get_session
 from core.models.models import (
     AlertSeverity,
+    DifficultyLevel,
     EnrichmentVersion,
     EvalResult,
     EvalRun,
@@ -28,14 +31,25 @@ from core.models.models import (
     EvaluationScheduleRead,
     EvaluationScheduleUpdate,
     GoldenQuestion,
+    QuestionType,
     Table,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from langfuse import observe
+from langfuse import observe, propagate_attributes
+from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.routers.evaluation import execute_single_table_eval
+from app.config import settings
+from app.routers.evaluation import (
+    _call_run_new_evaluation,
+    _map_and_save_run_metrics,
+    execute_single_table_eval,
+    save_case_results,
+)
+from app.services.jeen_metadata import fetch_jeen_sql_pairs
 from app.services.langfuse_client import langfuse_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -53,120 +67,143 @@ LOW_SCORE_THRESHOLD = 0.70
 
 @observe(name="evaluation_pipeline")
 def _run_full_pipeline(
-    table_ids: list[str], run_ids: list[str], triggered_by: str = "user"
+    table_ids: list[str],
+    run_ids: list[str],
+    triggered_by: str = "user",
+    connection_id: int | None = None,
 ):
     """Run evaluation for multiple tables (one run per table)."""
-    if langfuse_client.client and langfuse_client.client.get_current_trace_id():
-        langfuse_client.client.trace(
-            id=langfuse_client.client.get_current_trace_id(),
-            tags=["evaluation_run"],
-            metadata={
-                "table_ids": table_ids,
-                "run_ids": run_ids,
-                "triggered_by": triggered_by,
-            },
-        )
-
-    for table_id, run_id in zip(table_ids, run_ids, strict=False):
-        with Session(engine) as session:
-            run = session.get(EvalRun, run_id)
-            if not run:
-                continue
-
-            # ── Delegate to shared core logic ───────────────────────────
-            score = execute_single_table_eval(table_id, run_id, session)
-
-            # Fetch updated run state
-            session.refresh(run)
-
-            # Detect regression vs previous run
-            prev_runs = session.exec(
-                select(EvalRun)
-                .where(
-                    EvalRun.table_id == table_id,
-                    EvalRun.status == EvalStatus.completed,
-                    EvalRun.id != run_id,
-                )
-                .order_by(EvalRun.created_at.desc())
-                .limit(1)
-            ).first()
-
-            regression_detected = False
-            regression_delta = None
-
-            if prev_runs and prev_runs.score > 0:
-                delta = prev_runs.score - score
-                if delta > REGRESSION_BLOCK_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.critical,
-                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
+    with propagate_attributes(
+        tags=["evaluation_run"],
+        metadata={
+            "table_ids": ",".join(table_ids),
+            "run_ids": ",".join(run_ids),
+            "triggered_by": triggered_by,
+        },
+    ):
+        for table_id, run_id in zip(table_ids, run_ids, strict=False):
+            with Session(engine) as session:
+                run = session.get(EvalRun, run_id)
+                if not run:
+                    continue
+                if run.status == EvalStatus.cancelled:
+                    logger.info(
+                        f"[Eval] Run {run_id} was cancelled by user; skipping table {table_id}"
                     )
-                elif delta > REGRESSION_WARNING_DELTA:
-                    regression_detected = True
-                    regression_delta = round(delta, 4)
-                    _create_alert(
-                        session,
-                        run_id,
-                        table_id,
-                        "regression",
-                        AlertSeverity.warning,
-                        f"Score warning: {delta:.1%} drop detected",
-                        {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
-                            "delta": delta,
-                        },
+                    continue
+
+                try:
+                    # ── Delegate to shared core logic ───────────────────────────
+                    score = execute_single_table_eval(
+                        table_id, run_id, session, connection_id=connection_id
                     )
 
-            # Low score alert
-            if score < LOW_SCORE_THRESHOLD:
-                _create_alert(
-                    session,
-                    run_id,
-                    table_id,
-                    "low_score",
-                    AlertSeverity.warning,
-                    f"Table performance is low ({score:.1%})",
-                )
+                    # Fetch updated run state
+                    session.refresh(run)
 
-            # Finalize run orchestration fields
-            run.regression_detected = regression_detected
-            run.regression_delta = regression_delta
-            session.add(run)
+                    # Detect regression vs previous run
+                    prev_runs = session.exec(
+                        select(EvalRun)
+                        .where(
+                            EvalRun.table_id == table_id,
+                            EvalRun.status == EvalStatus.completed,
+                            EvalRun.id != run_id,
+                        )
+                        .order_by(EvalRun.created_at.desc())
+                        .limit(1)
+                    ).first()
 
-            # Persist metrics for analytics
-            metrics_to_save = [
-                ("accuracy", score if score is not None else 0.0),
-            ]
-            if run.dimension_averages:
-                for dim_name, dim_val in run.dimension_averages.items():
-                    metrics_to_save.append(
-                        (dim_name, dim_val if dim_val is not None else 0.0)
+                    regression_detected = False
+                    regression_delta = None
+
+                    if prev_runs and prev_runs.score > 0:
+                        delta = prev_runs.score - score
+                        if delta > REGRESSION_BLOCK_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.critical,
+                                f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
+                        elif delta > REGRESSION_WARNING_DELTA:
+                            regression_detected = True
+                            regression_delta = round(delta, 4)
+                            _create_alert(
+                                session,
+                                run_id,
+                                table_id,
+                                "regression",
+                                AlertSeverity.warning,
+                                f"Score warning: {delta:.1%} drop detected",
+                                {
+                                    "previous_score": prev_runs.score,
+                                    "current_score": score,
+                                    "delta": delta,
+                                },
+                            )
+
+                    # Low score alert
+                    if score < LOW_SCORE_THRESHOLD:
+                        _create_alert(
+                            session,
+                            run_id,
+                            table_id,
+                            "low_score",
+                            AlertSeverity.warning,
+                            f"Table performance is low ({score:.1%})",
+                        )
+
+                    # Finalize run orchestration fields
+                    run.regression_detected = regression_detected
+                    run.regression_delta = regression_delta
+                    session.add(run)
+
+                    # Persist metrics for analytics
+                    metrics_to_save = [
+                        ("accuracy", score if score is not None else 0.0),
+                    ]
+                    if run.dimension_averages:
+                        for dim_name, dim_val in run.dimension_averages.items():
+                            metrics_to_save.append(
+                                (dim_name, dim_val if dim_val is not None else 0.0)
+                            )
+                    if run.failure_breakdown:
+                        for fail_type, count in run.failure_breakdown.items():
+                            metrics_to_save.append(
+                                (fail_type, float(count) if count is not None else 0.0)
+                            )
+
+                    for metric_name, m_val in metrics_to_save:
+                        metric = EvaluationHistoryMetric(
+                            run_id=run_id, metric_name=metric_name, metric_value=m_val
+                        )
+                        session.add(metric)
+
+                    session.commit()
+                except Exception as e:
+                    logger.error(
+                        f"[Orchestrator] Error evaluating table {table_id} in run {run_id}: {e}",
+                        exc_info=True,
                     )
-            if run.failure_breakdown:
-                for fail_type, count in run.failure_breakdown.items():
-                    metrics_to_save.append(
-                        (fail_type, float(count) if count is not None else 0.0)
-                    )
-
-            for metric_name, m_val in metrics_to_save:
-                metric = EvaluationHistoryMetric(
-                    run_id=run_id, metric_name=metric_name, metric_value=m_val
-                )
-                session.add(metric)
-
-            session.commit()
+                    try:
+                        session.refresh(run)
+                        run.status = EvalStatus.failed
+                        run.score = 0.0
+                        session.add(run)
+                        session.commit()
+                    except Exception as db_err:
+                        logger.error(
+                            f"[Orchestrator] Failed to mark run {run_id} as failed: {db_err}"
+                        )
 
 
 def _create_alert(
@@ -198,9 +235,16 @@ def trigger_evaluation_run(
     table_ids: list[str],
     background_tasks: BackgroundTasks,
     triggered_by: str = Query(default="user"),
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """Trigger evaluation for one or more tables."""
+
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
 
     # ── Validate all tables before creating any run records ─────────────────
     validation_errors: list[str] = []
@@ -240,7 +284,15 @@ def trigger_evaluation_run(
     runs = []
     for table_id in table_ids:
         table = session.get(Table, table_id)
-        run = EvalRun(table_id=table_id, triggered_by=triggered_by)
+        questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.table_id == table_id)
+        ).all()
+        run = EvalRun(
+            table_id=table_id,
+            total_questions=len(questions),
+            triggered_by=triggered_by,
+            connection_id=connection_id,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -248,19 +300,435 @@ def trigger_evaluation_run(
 
     background_tasks.add_task(
         _run_full_pipeline,
-        [r.table_id for r in runs],
+        table_ids,
         [r.id for r in runs],
         triggered_by,
+        connection_id,
     )
     read_runs = []
     for r in runs:
-        t = session.get(Table, r.table_id)
+        t = session.get(Table, r.table_id) if r.table_id else None
         read_runs.append(
             EvalRunRead.model_validate(
-                r, update={"table_name": t.name if t else r.table_id}
+                r, update={"table_name": t.name if t else (r.table_id or "Unknown")}
             )
         )
     return read_runs
+
+
+def _is_run_cancelled(run_id: str) -> bool:
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        return run is not None and run.status == EvalStatus.cancelled
+
+
+def _run_dataset_pipeline(
+    dataset_name: str, run_id: str, connection_id: int | None = None
+):
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return
+
+        if run.status == EvalStatus.cancelled:
+            logger.info(
+                f"[Eval] Run {run_id} was already cancelled before dataset pipeline started."
+            )
+            return
+
+        if connection_id is None and run.connection_id is not None:
+            connection_id = run.connection_id
+
+        if connection_id is None:
+            logger.error(
+                f"[Eval] Dataset {dataset_name} evaluation failed: connection_id is required."
+            )
+            run.status = EvalStatus.failed
+            run.score = 0.0
+            session.add(run)
+            session.commit()
+            return
+
+        try:
+            req = {
+                "dataset_name": dataset_name,
+                "connection_id": connection_id,
+            }
+            saved_question_ids: set[str] = set()
+
+            def save_progress(job: dict) -> None:
+                """Store each finished question as it comes in, so the report shows it."""
+                new_ids = save_case_results(
+                    run_id,
+                    job.get("completed_cases") or [],
+                    session,
+                    skip_question_ids=saved_question_ids,
+                )
+                if new_ids:
+                    session.commit()
+                    saved_question_ids.update(new_ids)
+
+            eval_resp = _call_run_new_evaluation(
+                req,
+                is_cancelled=lambda: _is_run_cancelled(run_id),
+                on_progress=save_progress,
+            )
+
+            # Check if run was cancelled while evaluation was in progress
+            session.refresh(run)
+            if run.status == EvalStatus.cancelled:
+                logger.info(
+                    f"[Eval] Run {run_id} was cancelled by user; discarding evaluation response."
+                )
+                return
+
+            _map_and_save_run_metrics(run, eval_resp, session, run_id)
+            session.commit()
+        except Exception as e:
+            try:
+                session.refresh(run)
+                if run.status == EvalStatus.cancelled:
+                    logger.info(
+                        f"[Eval] Run {run_id} was cancelled by user; ignoring exception: {e}"
+                    )
+                    return
+            except Exception:
+                pass
+
+            logger.error(
+                f"[Eval] Dataset {dataset_name} evaluation failed: {e}",
+                exc_info=True,
+            )
+            try:
+                session.refresh(run)
+                if run.status != EvalStatus.cancelled:
+                    run.status = EvalStatus.failed
+                    run.score = 0.0
+                    run.fail_rate = 1.0
+                    run.pass_rate = 0.0
+                    err_msg = str(e)
+                    if isinstance(e, requests.ConnectionError):
+                        err_msg = (
+                            f"Could not reach the evaluation service at "
+                            f"{settings.EVALUATION_SERVICE_URL}: {e}"
+                        )
+                    run.failure_breakdown = {
+                        "evaluation_failed": run.total_questions or 1,
+                        "error_message": err_msg,
+                        "message": err_msg,
+                    }
+                    session.add(run)
+                    session.commit()
+            except Exception as db_err:
+                logger.error(f"[Eval] Failed to mark run {run_id} as failed: {db_err}")
+
+
+@router.post("/run-dataset", response_model=EvalRunRead, status_code=202)
+async def trigger_dataset_run(
+    dataset_name: str,
+    background_tasks: BackgroundTasks,
+    connection_id: int | None = Query(default=None),
+    connection_name: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+):
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
+
+    try:
+        conn_id = int(connection_id)
+        if conn_id <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
+        )
+
+    conn_name = connection_name if isinstance(connection_name, str) else None
+
+    # Fallback to look up connection name from previous runs if not passed
+    if not conn_name and conn_id:
+        prev_run = session.exec(
+            select(EvalRun)
+            .where(EvalRun.connection_id == conn_id)
+            .where(EvalRun.connection_name.is_not(None))
+        ).first()
+        if prev_run:
+            conn_name = prev_run.connection_name
+
+    total_q_count = 0
+    all_questions_payload: list[dict] = []
+
+    # 1. Sync production dataset if requested
+    if dataset_name == "text2sql_production":
+        # Fetch golden questions directly from Jeen metadata ONLY
+        jeen_pairs: list[dict] = []
+        try:
+            jeen_pairs = await fetch_jeen_sql_pairs(conn_id)
+        except Exception as e:
+            logger.warning(
+                f"[Eval] Failed to fetch golden questions from Jeen for connection {conn_id}: {e}"
+            )
+
+        if not jeen_pairs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
+            )
+
+        existing_db_questions = session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
+        ).all()
+        by_question_text = {q.question.strip(): q for q in existing_db_questions}
+
+        conn_questions: list[GoldenQuestion] = []
+        for item in jeen_pairs:
+            q_text = (item.get("question") or "").strip()
+            sql = (
+                item.get("sql_statement")
+                or item.get("query")
+                or item.get("expected_sql")
+                or ""
+            ).strip()
+            if not q_text:
+                continue
+
+            if q_text in by_question_text:
+                q = by_question_text[q_text]
+                if sql and q.expected_sql != sql:
+                    q.expected_sql = sql
+                    session.add(q)
+                conn_questions.append(q)
+            else:
+                q = GoldenQuestion(
+                    connection_id=conn_id,
+                    question=q_text,
+                    expected_sql=sql,
+                    difficulty=DifficultyLevel.simple,
+                    question_type=QuestionType.simple,
+                )
+                session.add(q)
+                conn_questions.append(q)
+
+        session.commit()
+        for q in conn_questions:
+            session.refresh(q)
+
+        all_questions_payload = [
+            {
+                "question_id": q.id,
+                "question_text": q.question,
+                "expected_sql": q.expected_sql,
+                "connection_id": conn_id,
+                "connection_name": conn_name,
+                "difficulty": q.difficulty.value
+                if hasattr(q.difficulty, "value")
+                else str(q.difficulty),
+                "question_type": q.question_type.value
+                if hasattr(q.question_type, "value")
+                else str(q.question_type),
+            }
+            for q in conn_questions
+        ]
+        total_q_count = len(conn_questions)
+
+    elif dataset_name == "bird":
+        # BIRD-Verified benchmark: the evaluation service loads the questions of
+        # the BIRD database this connection holds (matched by connection name)
+        # and syncs them to Langfuse itself; the question count is known only
+        # once the run completes.
+        pass
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dataset '{dataset_name}'. Use 'text2sql_production' or 'bird'.",
+        )
+
+    actual_dataset_to_run = (
+        f"text2sql_connection_{conn_id}"
+        if dataset_name == "text2sql_production"
+        else dataset_name
+    )
+
+    if all_questions_payload and langfuse_client.enabled:
+        try:
+            langfuse_client.sync_dataset(actual_dataset_to_run, all_questions_payload)
+        except Exception as e:
+            logger.warning(f"[Eval] Dataset sync failed: {e}")
+
+    # 2. Create the run record
+    run = EvalRun(
+        table_id=None,
+        total_questions=total_q_count,
+        triggered_by=dataset_name,
+        connection_id=conn_id,
+        connection_name=conn_name,
+        dataset_id=actual_dataset_to_run,
+        status=EvalStatus.running,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # 3. Queue the task
+    background_tasks.add_task(
+        _run_dataset_pipeline, actual_dataset_to_run, run.id, conn_id
+    )
+
+    display_title = (
+        f"Production Dataset: {conn_name}"
+        if conn_name and dataset_name == "text2sql_production"
+        else f"Dataset: {dataset_name} ({conn_name})"
+        if conn_name
+        else f"Dataset: {dataset_name}"
+    )
+    return EvalRunRead.model_validate(
+        run, update={"table_name": display_title, "connection_name": conn_name}
+    )
+
+
+@router.post("/run-connection", response_model=EvalRunRead, status_code=202)
+async def trigger_connection_run(
+    background_tasks: BackgroundTasks,
+    connection_id: int = Query(...),
+    connection_name: str | None = Query(default=None),
+    dataset_name: str | None = Query(default=None),
+    triggered_by: str = Query(default="user"),
+    session: Session = Depends(get_session),
+):
+    if connection_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="connection_id is required. Please select a catalog connection.",
+        )
+    try:
+        conn_id = int(connection_id)
+        if conn_id <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
+        )
+
+    conn_name = connection_name if isinstance(connection_name, str) else None
+    ds_name = (
+        dataset_name
+        if isinstance(dataset_name, str) and dataset_name
+        else f"text2sql_connection_{conn_id}"
+    )
+    trig_by = triggered_by if isinstance(triggered_by, str) else "user"
+
+    # 1. Fetch all golden questions for this connection from Jeen metadata
+    questions: list[GoldenQuestion] = []
+    try:
+        jeen_pairs = await fetch_jeen_sql_pairs(conn_id)
+        if jeen_pairs:
+            existing_db_questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
+            ).all()
+            by_question_text = {q.question.strip(): q for q in existing_db_questions}
+
+            for item in jeen_pairs:
+                q_text = (item.get("question") or "").strip()
+                sql = (
+                    item.get("sql_statement")
+                    or item.get("query")
+                    or item.get("expected_sql")
+                    or ""
+                ).strip()
+                if not q_text:
+                    continue
+
+                if q_text in by_question_text:
+                    q = by_question_text[q_text]
+                    if sql and q.expected_sql != sql:
+                        q.expected_sql = sql
+                        session.add(q)
+                    questions.append(q)
+                else:
+                    q = GoldenQuestion(
+                        connection_id=conn_id,
+                        question=q_text,
+                        expected_sql=sql,
+                        difficulty=DifficultyLevel.simple,
+                        question_type=QuestionType.simple,
+                    )
+                    session.add(q)
+                    questions.append(q)
+
+            session.commit()
+            for q in questions:
+                session.refresh(q)
+    except Exception as e:
+        logger.warning(
+            f"[Eval] Failed to fetch golden questions from Jeen for connection {conn_id}: {e}"
+        )
+
+    if not questions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
+        )
+
+    # 2. Sync to Langfuse dataset if available
+    if questions and langfuse_client.enabled:
+        payload = [
+            {
+                "question_id": q.id,
+                "question_text": q.question,
+                "expected_sql": q.expected_sql,
+                "connection_id": conn_id,
+                "connection_name": conn_name,
+                "difficulty": q.difficulty.value
+                if hasattr(q.difficulty, "value")
+                else str(q.difficulty),
+                "question_type": q.question_type.value
+                if hasattr(q.question_type, "value")
+                else str(q.question_type),
+            }
+            for q in questions
+        ]
+        try:
+            langfuse_client.sync_dataset(ds_name, payload)
+        except Exception as e:
+            logger.warning(
+                f"[Eval] Connection dataset sync failed for '{ds_name}': {e}"
+            )
+
+    # 3. Create run record
+    run = EvalRun(
+        table_id=None,
+        total_questions=len(questions),
+        triggered_by=trig_by,
+        connection_id=conn_id,
+        connection_name=conn_name,
+        dataset_id=ds_name,
+        status=EvalStatus.running,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # 4. Queue background evaluation pipeline
+    background_tasks.add_task(_run_dataset_pipeline, ds_name, run.id, conn_id)
+
+    display_title = (
+        f"Connection: {conn_name} (ID {conn_id})"
+        if conn_name
+        else f"Connection: {conn_id}"
+    )
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": display_title,
+            "connection_name": conn_name,
+        },
+    )
 
 
 @router.get("/runs", response_model=list[EvalRunRead])
@@ -269,6 +737,7 @@ def list_runs(
     offset: int = Query(default=0),
     status: str | None = Query(default=None),
     table_id: str | None = Query(default=None),
+    connection_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     query = (
@@ -282,12 +751,42 @@ def list_runs(
         query = query.where(EvalRun.status == status)
     if table_id:
         query = query.where(EvalRun.table_id == table_id)
+    if connection_id is not None:
+        query = query.where(EvalRun.connection_id == connection_id)
 
     results = session.exec(query).all()
+    running_ids = [run.id for run, _ in results if run.status == EvalStatus.running]
+    completed_counts: dict[str, int] = {}
+    if running_ids:
+        completed_counts = dict(
+            session.exec(
+                select(EvalResult.run_id, func.count())
+                .where(EvalResult.run_id.in_(running_ids))
+                .group_by(EvalResult.run_id)
+            ).all()
+        )
     runs = []
     for run, table_name in results:
-        t_name = table_name if table_name else "All prod tables"
-        read = EvalRunRead.model_validate(run, update={"table_name": t_name})
+        if table_name:
+            t_name = table_name
+        elif run.connection_name or run.connection_id is not None:
+            c_name = run.connection_name or f"ID {run.connection_id}"
+            t_name = f"Connection: {c_name}"
+        elif run.triggered_by and run.triggered_by != "user":
+            t_name = f"Dataset: {run.triggered_by}"
+        else:
+            t_name = "Catalog Evaluation"
+
+        read = EvalRunRead.model_validate(
+            run,
+            update={
+                "table_name": t_name,
+                "connection_name": run.connection_name,
+                "completed_questions": completed_counts.get(run.id, 0)
+                if run.status == EvalStatus.running
+                else None,
+            },
+        )
         runs.append(read)
     return runs
 
@@ -296,7 +795,7 @@ def list_runs(
 def get_run(run_id: str, session: Session = Depends(get_session)):
     result = session.exec(
         select(EvalRun, Table.name)
-        .join(Table, EvalRun.table_id == Table.id)
+        .join(Table, EvalRun.table_id == Table.id, isouter=True)
         .where(EvalRun.id == run_id)
     ).first()
 
@@ -304,8 +803,67 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     run, table_name = result
-    t_name = table_name if table_name else "All prod tables"
-    return EvalRunRead.model_validate(run, update={"table_name": t_name})
+    if table_name:
+        t_name = table_name
+    elif run.connection_name or run.connection_id is not None:
+        c_name = run.connection_name or f"ID {run.connection_id}"
+        t_name = f"Connection: {c_name}"
+    elif run.triggered_by and run.triggered_by != "user":
+        t_name = f"Dataset: {run.triggered_by}"
+    else:
+        t_name = "Catalog Evaluation"
+
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": t_name,
+            "connection_name": run.connection_name,
+        },
+    )
+
+
+@router.post("/runs/{run_id}/stop", response_model=EvalRunRead)
+@router.post("/runs/{run_id}/cancel", response_model=EvalRunRead)
+def stop_eval_run(run_id: str, session: Session = Depends(get_session)):
+    """Stop/cancel an in-progress evaluation run."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+
+    if run.status == EvalStatus.running:
+        run.status = EvalStatus.cancelled
+        now = datetime.now()
+        run.completed_at = now
+        duration = (now - run.started_at).total_seconds()
+        run.duration_seconds = max(0.0, round(duration, 2))
+        run.failure_breakdown = {
+            "cancelled": True,
+            "message": "Evaluation stopped by user",
+        }
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+    t_name = run.table_id or "Unknown"
+    if run.table_id:
+        table = session.get(Table, run.table_id)
+        if table:
+            t_name = table.name
+    elif run.connection_name or run.connection_id is not None:
+        c_name = run.connection_name or f"ID {run.connection_id}"
+        t_name = f"Connection: {c_name}"
+    elif run.triggered_by and run.triggered_by != "user":
+        t_name = f"Dataset: {run.triggered_by}"
+    else:
+        t_name = "Catalog Evaluation"
+
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": t_name,
+            "connection_name": run.connection_name,
+        },
+    )
 
 
 @router.get("/runs/{run_id}/report")
@@ -323,34 +881,102 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
     ).all()
     question_map = {q.id: q.question for q in questions}
 
+    # Benchmark (BIRD) questions aren't golden questions of the connection, so
+    # never fall back to listing the connection's own questions for them
+    if (
+        not results
+        and (run.table_id or run.connection_id)
+        and run.triggered_by != "bird"
+    ):
+        if run.table_id:
+            fallback_questions = session.exec(
+                select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
+            ).all()
+        else:
+            fallback_questions = session.exec(
+                select(GoldenQuestion).where(
+                    GoldenQuestion.connection_id == run.connection_id
+                )
+            ).all()
+        is_running = run.status == EvalStatus.running
+        err_msg = (
+            (run.failure_breakdown or {}).get("error_message")
+            or (run.failure_breakdown or {}).get("message")
+            or ("evaluation_failed" if run.status == EvalStatus.failed else "failed")
+        )
+        per_question = [
+            {
+                "question_id": q.id,
+                "question": q.question,
+                "score": None if is_running else 0.0,
+                "status": "pending" if is_running else "fail",
+                "failure_type": None if is_running else err_msg,
+            }
+            for q in fallback_questions
+        ]
+    else:
+        per_question = [
+            {
+                "question_id": r.question_id,
+                "question": question_map.get(r.question_id, r.question_id),
+                "score": r.score,
+                "status": r.status,
+                "failure_type": r.error_type,
+            }
+            for r in results
+        ]
+        if (
+            run.status == EvalStatus.running
+            and run.connection_id
+            and run.triggered_by != "bird"
+        ):
+            # Finished questions first, then the ones still being evaluated
+            done = {r.question_id for r in results}
+            per_question += [
+                {
+                    "question_id": q.id,
+                    "question": q.question,
+                    "score": None,
+                    "status": "pending",
+                    "failure_type": None,
+                }
+                for q in session.exec(
+                    select(GoldenQuestion).where(
+                        GoldenQuestion.connection_id == run.connection_id
+                    )
+                ).all()
+                if q.id not in done
+            ]
+
+    failure_breakdown = run.failure_breakdown or (
+        {"evaluation_failed": run.total_questions or len(per_question)}
+        if run.status == EvalStatus.failed
+        else {}
+    )
+
     return {
         "run_id": run_id,
         "table_id": run.table_id,
         "overall_score": run.score,
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
-        "total_questions": run.total_questions,
+        "total_questions": run.total_questions or len(per_question),
+        # questions with a result so far (equals total_questions once completed)
+        "completed_questions": len(results),
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
         "promotion_run_id": run.promotion_run_id,
-        "is_publishable": run.score > 0.00,
+        "is_publishable": run.score >= 0.50
+        if run.status == EvalStatus.completed
+        else False,
         "regression_detected": run.regression_detected,
         "regression_delta": run.regression_delta,
-        "failure_breakdown": run.failure_breakdown or {},
+        "failure_breakdown": failure_breakdown,
         "dimension_averages": run.dimension_averages or {},
         "started_at": run.started_at.isoformat(),
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-        "per_question": [
-            {
-                "question_id": r.question_id,
-                "question": question_map.get(r.question_id),
-                "score": r.score,
-                "status": r.status,
-                "failure_type": r.error_type,
-            }
-            for r in results
-        ],
+        "per_question": per_question,
     }
 
 
@@ -678,20 +1304,18 @@ def system_health(session: Session = Depends(get_session)):
     # Top failing tables (lowest avg score)
     table_scores: dict[str, list[float]] = {}
     for r in all_runs:
-        if r.score is not None:
+        if r.table_id is not None and r.score is not None:
             table_scores.setdefault(r.table_id, []).append(r.score)
 
     failing_tables = []
     for tid, scores in table_scores.items():
         avg = sum(scores) / len(scores)
         if avg < LOW_SCORE_THRESHOLD:
-            table = session.get(Table, tid) if tid else None
+            table = session.get(Table, tid)
             failing_tables.append(
                 {
                     "table_id": tid,
-                    "table_name": table.name
-                    if table
-                    else (tid[:8] if tid else "Unknown"),
+                    "table_name": table.name if table else tid[:8],
                     "avg_score": round(avg, 3),
                     "failure_rate": round(1 - avg, 3),
                 }
