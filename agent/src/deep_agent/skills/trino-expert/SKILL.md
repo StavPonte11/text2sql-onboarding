@@ -8,13 +8,13 @@ description: Trino SQL syntax rules, domain conventions, categorical filter patt
 
 1. **Strings vs Identifiers**: Strings use single quotes `'abc'`. Identifiers with special chars or Hebrew use double quotes `"col"`. Never use backticks (\`col\`).
 2. **Fully Qualified Names**: Always write full table names as given in the metadata: `"catalog"."schema"."table"`.
-3. **Column Projection**: Never `SELECT *`. Select only the specific columns needed.
+3. **Column Projection**: Final queries select only the columns needed — no `SELECT *` (use `get_sample_rows` to peek at raw rows).
 4. **Early Filtering**: Put filters in `WHERE` as early as possible (inside the innermost CTE); always filter the partition column on large tables.
 5. **Row Limits**: Always add `LIMIT` to non-aggregate exploratory queries. Use `ORDER BY` + `LIMIT` for "top N" (or `RANK()` if ties must be preserved).
 6. **Integer Division Truncation**: `5 / 2 = 2`. Use `CAST(a AS double) / b` or `1.0 * a / b` for ratios and percentages.
 7. **Safe Division**: Divide safely: `x / NULLIF(y, 0)` to avoid division-by-zero crashes.
 8. **GROUP BY Completeness**: Every non-aggregated column in `SELECT` must be included in `GROUP BY`.
-9. **No Cross Joins & Distributed Join Order**: Every `JOIN` must have an explicit `ON` condition with keys. Put the large fact table on the left, and the small lookup/dimension table on the right.
+9. **No Cross Joins**: Every `JOIN` must have an explicit `ON` condition with keys.
 10. **Distinct Cardinality**: Use `COUNT(DISTINCT x)` when exact is required; use `approx_distinct(x)` on large tables for speed.
 11. **Case-Insensitive Matching**: Use `lower(col) LIKE lower('%text%')` or `regexp_like(col, '(?i)...')`. There is no `ILIKE`.
 12. **NULL Checks**: Use `IS NULL` / `IS NOT NULL`. Never use `= NULL` or `!= NULL`.
@@ -98,12 +98,11 @@ description: Trino SQL syntax rules, domain conventions, categorical filter patt
 ## Categorical Filters — The #1 Correctness Issue
 The user says "מגורים". The database stores "Residential". They are NOT the same string.
 
-Before writing ANY string equality filter (`WHERE col = '...'`):
-1. Check `get_column_profile` — if `domainIsComplete: true`, the example values ARE the full value set
-2. Use `search_column_values` with the user's term to find the exact database spelling
-3. After writing SQL, pass it through `enrich_sql_filters` as an automatic correctness pass
-
-For `semantic_type: large_categorical` columns: always use `search_column_values` — never assume or use LIKE blindly.
+Before writing ANY string equality filter (`WHERE col = '...'`), resolve the value by the column's `semantic_type`:
+1. `categorical` / `boolean` — the values in the catalog / `get_column_profile` (`domainIsComplete: true` = the full
+   value set), otherwise `get_column_distinct_values`. `search_column_values` does not index these columns.
+2. `large_categorical` / `large_unit_id` — `search_column_values` with the user's term finds the exact spelling.
+3. After writing SQL, pass it through `enrich_sql_filters` as an automatic correctness pass.
 
 **Interpreting `search_column_values` results:**
 - Use the `value` field from each result — that is the exact database string
@@ -123,17 +122,19 @@ A 1-to-many JOIN inflates row counts. `COUNT(*)` after such a join is wrong.
 
 Quick diagnostic: compare COUNT before and after the join:
 ```sql
--- How many flights exist?
-SELECT COUNT(*) FROM "postgres"."public"."flights_table" WHERE launch_country = 'France'
--- How many rows after JOIN?  
-SELECT COUNT(*) FROM "postgres"."public"."flights_table" f
-JOIN "postgres"."public"."flight_alerts_table" a ON f.flight_id = a.flight_id
-WHERE f.launch_country = 'France'
+-- How many customers match?
+SELECT COUNT(*) FROM "catalog"."schema"."customers" WHERE country = 'IL'
+
+-- How many rows after JOIN?
+SELECT COUNT(*) FROM "catalog"."schema"."customers" c
+JOIN "catalog"."schema"."orders" o ON c.customer_id = o.customer_id
+WHERE c.country = 'IL'
 ```
-If second > first → fan-out → use `COUNT(DISTINCT f.flight_id)` or aggregate before joining.
+If second > first → fan-out → use `COUNT(DISTINCT c.customer_id)` or aggregate before joining.
 
 ### Join type selection & Distributed Execution Order
-- **Big Table on Left, Small Table on Right**: In Trino distributed joins, the right table is broadcast to worker nodes. Always put the largest fact table on the LEFT and the smaller lookup/dimension table on the RIGHT.
+- **Join order**: Trino's cost-based optimizer reorders joins when table statistics exist. Without statistics, keep the
+  large fact table on the LEFT (probe side) and the small lookup table on the RIGHT (build side, may be broadcast).
 - **No Cross Joins**: Every `JOIN` must have an explicit `ON` condition with matching keys.
 - **INNER JOIN**: only rows that exist in both tables — use when the relationship is guaranteed.
 - **LEFT JOIN**: keep all left-side rows even without a match — use for "per entity" metrics where some entities may have zero related records.
@@ -148,14 +149,14 @@ If second > first → fan-out → use `COUNT(DISTINCT f.flight_id)` or aggregate
 
 ## Window Functions
 ```sql
--- Rank within group (e.g., top 3 cities per district)
-ROW_NUMBER() OVER (PARTITION BY district ORDER BY area_kmr DESC) AS rn
+-- Rank within group (e.g., top 3 products per category)
+ROW_NUMBER() OVER (PARTITION BY category ORDER BY revenue DESC) AS rn
 -- Then filter: WHERE rn <= 3
 ```
 
 ## Zero-Row Investigation
 If your query returns 0 rows unexpectedly, investigate in this order:
-1. String filter values — `search_column_values` or `get_column_distinct_values`
+1. String filter values — re-resolve them by semantic type (`get_column_distinct_values` for categorical, `search_column_values` for large_categorical)
 2. Join key alignment — `get_sample_rows` on both tables to verify key format matches
 3. Date range logic — is the column a `DATE` or `TIMESTAMP`? Are the casts correct?
 4. NULL presence — `get_column_profile` shows null_ratio; high null columns often filter everything out
@@ -167,21 +168,21 @@ When multiple logic paths seem plausible (INNER vs LEFT JOIN, different grouping
 When schema is ambiguous, map the user's Hebrew terms to English tables/columns mentally before drafting.
 
 ## Per-Capita / Per-Entity Patterns
-Notice the franularity difference between the numerator and the denominator. For example in the question:
-"alerts per person" = COUNT(alerts) / SUM(population) — not AVG(count_per_row).
+Notice the granularity difference between the numerator and the denominator. For example in the question:
+"orders per resident" = COUNT(orders) / SUM(population) — not AVG(count_per_row).
 
 When the denominator comes from a different table, aggregate it independently in a CTE, then divide:
 ```sql
-WITH alert_counts AS (
-  SELECT district, COUNT(*) AS alerts
-  FROM alert_table GROUP BY district
+WITH order_counts AS (
+  SELECT region, COUNT(*) AS orders
+  FROM orders GROUP BY region
 ),
 populations AS (
-  SELECT district, SUM(population) AS pop
-  FROM city_table GROUP BY district
+  SELECT region, SUM(population) AS pop
+  FROM regions GROUP BY region
 )
-SELECT a.district, a.alerts * 1.0 / p.pop AS alerts_per_capita
-FROM alert_counts a JOIN populations p ON a.district = p.district
+SELECT o.region, o.orders * 1.0 / p.pop AS orders_per_resident
+FROM order_counts o JOIN populations p ON o.region = p.region
 ```
 
 ## Trino Error → Fix Diagnostic Reference

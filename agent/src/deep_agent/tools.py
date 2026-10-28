@@ -121,7 +121,7 @@ async def get_table_columns(table_name: str, runtime: Runtime = None) -> str:
     real example values, and profiling statistics.
 
     Args:
-        table_name (str): The table identifier (e.g. '"postgres"."public"."flights_table"' or 'flights_table').
+        table_name (str): The table identifier (e.g. '"catalog"."schema"."orders"' or 'orders').
     """
     try:
         return ok(await get_jeen_metadata_client().get_columns(table_name, connection_id=connection_id(runtime)))
@@ -138,7 +138,7 @@ async def get_table_relationships(runtime: Runtime = None) -> str:
     if not capability(runtime, "relationships"):
         return ok({
             "relationships": [],
-            "notice": "This connection has NO foreign key relationships defined. Infer joins using matching column names, e.g. flight_id.",
+            "notice": "This connection has NO foreign key relationships defined. Infer joins using matching column names, e.g. customer_id.",
         })
     try:
         rels = await get_jeen_metadata_client().get_relationships(connection_id=connection_id(runtime))
@@ -493,13 +493,13 @@ async def search_column_values(
     Works exclusively on high-cardinality columns profiled as:
     - `large_categorical`
     - `large_unit_id`
-    ⚠️  Do NOT use on standard `categorical` or `boolean` columns (e.g. `launch_country`) — they are
+    ⚠️  Do NOT use on standard `categorical` or `boolean` columns (e.g. a `status` column) — they are
     not indexed in vector search and will return 0 matches! Use `get_column_distinct_values` or the catalog instead.
     Do NOT use on numeric, date/timestamp, or geometry columns.
 
     WHEN TO USE:
     - Use whenever you need to find how a high-cardinality entity is represented or spelled in the database
-      (e.g., finding 'Tel Aviv 1' from 'תל אביב' or 'Acme Corp' from 'Acme'). Multilingual,
+      (e.g., finding 'Acme Corporation LLC' from 'Acme Corp', or the stored spelling of a Hebrew term). Multilingual,
       keyword, and vector search finds the exact database spelling.
 
     Returns data.matches — every matching value (use each 'value' verbatim in SQL) with:

@@ -1,15 +1,14 @@
 """
-Skills and memory (AGENTS.md) wiring for the Deep Agent.
+Skills wiring for the Deep Agent.
 
-Skills and memory live on disk inside this package and are exposed to deepagents
-through a CompositeBackend:
+Skills live on disk inside this package and are exposed to deepagents through a CompositeBackend:
 
     /skills/<name>/SKILL.md   -> read-only FilesystemBackend over the skills dir
-    /memory/AGENTS.md         -> read-only FilesystemBackend over the memory dir
     everything else           -> ephemeral StateBackend (agent scratch files)
 
-Writes to /skills/ and /memory/ are denied via FilesystemPermission, so the agent
-can read its references but never modify them.
+Writes to /skills/ are denied via FilesystemPermission, so the agent can read its references
+but never modify them. (There is no AGENTS.md memory: always-on guidance lives in the system
+prompt, deep_agent/prompts/system.md.)
 """
 
 from dataclasses import dataclass
@@ -23,24 +22,20 @@ from agent.config import settings
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_SKILLS_DIR = PACKAGE_DIR / "skills"
-DEFAULT_MEMORY_DIR = PACKAGE_DIR / "memory"
 
 SKILLS_ROUTE = "/skills/"
-MEMORY_ROUTE = "/memory/"
-MEMORY_FILE = "AGENTS.md"
 
 EXPECTED_SKILLS = frozenset({"trino-expert", "temporal-analyst", "spatial-analyst", "semantic-validation"})
 
 
 class DeepAgentResourceError(RuntimeError):
-    """Skills or memory are missing or malformed; the agent must not start without them."""
+    """Skills are missing or malformed; the agent must not start without them."""
 
 
 @dataclass(frozen=True)
 class DeepAgentResources:
     backend: CompositeBackend
     skills: list[str]
-    memory: list[str]
     permissions: list[FilesystemPermission]
     skill_names: frozenset[str]
 
@@ -80,44 +75,28 @@ def discover_skills(skills_dir: Path) -> frozenset[str]:
 
 def build_resources(
     skills_dir: Path | None = None,
-    memory_dir: Path | None = None,
     expected_skills: frozenset[str] = EXPECTED_SKILLS,
 ) -> DeepAgentResources:
-    """Validate skills/memory on disk and build the backend + create_deep_agent arguments.
+    """Validate skills on disk and build the backend + create_deep_agent arguments.
 
     Fails fast (DeepAgentResourceError) instead of letting deepagents silently skip
     missing files.
     """
     skills_dir = Path(skills_dir or settings.DEEP_AGENT_SKILLS_DIR or DEFAULT_SKILLS_DIR).resolve()
-    memory_dir = Path(memory_dir or settings.DEEP_AGENT_MEMORY_DIR or DEFAULT_MEMORY_DIR).resolve()
 
     skill_names = discover_skills(skills_dir)
     missing = expected_skills - skill_names
     if missing:
         raise DeepAgentResourceError(f"Missing required skills in {skills_dir}: {sorted(missing)}")
 
-    memory_file = memory_dir / MEMORY_FILE
-    if not memory_file.is_file() or not memory_file.read_text(encoding="utf-8").strip():
-        raise DeepAgentResourceError(f"Memory file missing or empty: {memory_file}")
-
     backend = CompositeBackend(
         default=StateBackend(),
-        routes={
-            SKILLS_ROUTE: FilesystemBackend(root_dir=skills_dir, virtual_mode=True),
-            MEMORY_ROUTE: FilesystemBackend(root_dir=memory_dir, virtual_mode=True),
-        },
+        routes={SKILLS_ROUTE: FilesystemBackend(root_dir=skills_dir, virtual_mode=True)},
     )
-    permissions = [
-        FilesystemPermission(
-            operations=["write"],
-            paths=[f"{SKILLS_ROUTE}**", f"{MEMORY_ROUTE}**"],
-            mode="deny",
-        ),
-    ]
+    permissions = [FilesystemPermission(operations=["write"], paths=[f"{SKILLS_ROUTE}**"], mode="deny")]
     return DeepAgentResources(
         backend=backend,
         skills=[SKILLS_ROUTE],
-        memory=[f"{MEMORY_ROUTE}{MEMORY_FILE}"],
         permissions=permissions,
         skill_names=skill_names,
     )

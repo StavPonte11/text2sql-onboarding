@@ -55,11 +55,11 @@ If Step 2 > Step 1, rows are being duplicated. Fix options:
 
 **Example pattern:**
 ```sql
--- WRONG: counts alert rows, not flights
-SELECT COUNT(*) FROM flights f JOIN alerts a ON f.id = a.flight_id
+-- WRONG: counts order rows, not customers
+SELECT COUNT(*) FROM customers c JOIN orders o ON c.id = o.customer_id
 
--- CORRECT: count distinct flights that have alerts
-SELECT COUNT(DISTINCT f.id) FROM flights f JOIN alerts a ON f.id = a.flight_id
+-- CORRECT: count distinct customers that have orders
+SELECT COUNT(DISTINCT c.id) FROM customers c JOIN orders o ON c.id = o.customer_id
 ```
 
 ---
@@ -127,7 +127,7 @@ If any answer is "no" or "unsure" — revise the SQL before executing.
 
 **0 rows returned:**
 1. Strip WHERE clauses one at a time to find which one eliminates all rows
-2. `search_column_values` on any string filter you wrote
+2. Re-resolve every string filter you wrote by semantic type (`get_column_distinct_values` for categorical, `search_column_values` for large_categorical)
 3. Sample the join keys: `get_sample_rows` on both sides — do the key formats match?
 
 **Count too high (round number like 10000 or identical to table size):**

@@ -78,8 +78,8 @@ def date_line(tz: str) -> str:
 def _with_date(request: ModelRequest) -> ModelRequest:
     """Prefix the latest human message with today's date for this model call only.
 
-    The date is deliberately *not* put in the system message: deepagents appends memory
-    (AGENTS.md) after user middleware, so a date there would sit mid-prompt and invalidate
+    The date is deliberately *not* put in the system message: deepagents appends its
+    skills section after user middleware, so a date there would sit mid-prompt and invalidate
     provider prompt caching for everything after it every day. Here the system prompt stays
     byte-identical and the change is transient (never written to graph state).
     """
