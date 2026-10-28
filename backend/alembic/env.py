@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from core.models.models import *  # noqa: F403
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 from sqlmodel import SQLModel
 
 from alembic import context
@@ -86,6 +86,8 @@ def run_migrations_online() -> None:
         )
 
         with context.begin_transaction():
+            # Backend pods run migrations on startup; only one at a time.
+            connection.execute(text("SELECT pg_advisory_xact_lock(727274)"))
             context.run_migrations()
 
 
