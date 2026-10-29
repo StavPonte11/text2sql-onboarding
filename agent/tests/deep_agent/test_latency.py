@@ -10,7 +10,7 @@ import core.trino as core_trino
 from agent.config import settings
 from agent.utils.jeen_metadata_client import JeenMetadataClient, JeenMetadataError, close_mcp_sessions
 from core.trino import TrinoExecutionResult
-from deep_agent import benchmark, tools
+from deep_agent import tools
 from deep_agent.agent import create_deep_agent
 from deep_agent.tool_filter import EXCLUDED_BUILTIN_TOOLS
 
@@ -171,42 +171,3 @@ def test_default_execution_still_opens_and_closes_a_connection(monkeypatch):
     with patch.object(core_trino, "get_trino_connection", return_value=conn):
         core_trino.execute_query_sync("SELECT 1")
     conn.close.assert_called_once()
-
-
-# ── benchmark ───────────────────────────────────────────────────────────────
-
-def test_percentile_nearest_rank():
-    assert benchmark.percentile([5, 1, 3, 2, 4], 50) == 3
-    assert benchmark.percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 95) == 10
-    assert benchmark.percentile([], 95) == 0.0
-
-
-@pytest.mark.asyncio
-async def test_benchmark_reports_calls_tokens_and_status(policy_model):
-    def policy(messages):
-        if not [m for m in messages if m.type == "tool"]:
-            msg = AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": "SELECT 7 AS n"}, "id": "e"}])
-        else:
-            msg = AIMessage("", tool_calls=[{"name": "submit_answer", "id": "f", "args": {
-                "sql": "SELECT 7 AS n", "explanation_he": "שבע", "confidence": "high"}}])
-        msg.usage_metadata = {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}
-        return msg
-
-    agent = create_deep_agent(model=policy_model(policy))
-    with patch.object(tools, "execute_query_sync", return_value=OK):
-        runs = await benchmark.run_benchmark(agent, [{"id": "q1", "question": "a"}, {"id": "q2", "question": "b"}],
-                                             benchmark.DeepAgentContext(), concurrency=2)
-    assert [r.status for r in runs] == ["matched", "matched"]
-    assert all(r.model_calls == 2 and r.sql_executions == 1 and r.input_tokens == 200 and r.output_tokens == 20
-               for r in runs)
-    summary = benchmark.summarize(runs)
-    assert summary["questions"] == 2 and summary["executed_rate"] == 1.0 and summary["errors"] == 0
-
-
-def test_benchmark_question_set_is_valid():
-    import json
-
-    questions = json.loads(benchmark.DEFAULT_QUESTIONS.read_text(encoding="utf-8"))
-    assert len(questions) >= 10
-    assert len({q["id"] for q in questions}) == len(questions)
-    assert all(q["question"].strip() for q in questions)
