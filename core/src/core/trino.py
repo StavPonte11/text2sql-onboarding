@@ -77,6 +77,7 @@ def get_trino_connection():
         http_scheme=settings.TRINO_HTTP_SCHEME,
         auth=auth,
         request_timeout=settings.TRINO_REQUEST_TIMEOUT,
+        timezone=settings.TRINO_TIMEZONE,
         verify=settings.TRINO_VERIFY,
     )
 

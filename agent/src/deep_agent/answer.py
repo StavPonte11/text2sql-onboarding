@@ -239,7 +239,7 @@ class AnswerRecoveryMiddleware(AgentMiddleware):
         return self._recover(request, await handler(request))
 
 
-def _current_turn(messages: list) -> list:
+def current_turn(messages: list) -> list:
     """Messages after the latest human message (this run's turn)."""
     for i in range(len(messages) - 1, -1, -1):
         if getattr(messages[i], "type", None) == "human":
@@ -248,14 +248,29 @@ def _current_turn(messages: list) -> list:
 
 
 class AnswerVerificationMiddleware(AgentMiddleware):
-    """After the agent finishes, bind the structured answer to executed SQL and real rows."""
+    """Bind each turn's structured answer to SQL executed in that turn and its real rows.
+
+    before_agent clears the previous turn's structured answer (it would otherwise be reported
+    again on a turn that ends without a new one) and marks where this turn's executions start,
+    so an answer can only match SQL that ran in its own turn.
+
+    after_agent keeps the answer only as plain data in final_result and drops the pydantic object:
+    checkpoints can't restore the dynamically built `submit_answer` class.
+    """
+
+    def before_agent(self, state, runtime) -> dict[str, Any] | None:
+        return {"structured_response": None, "turn_execution_start": len(state.get("executed_queries") or [])}
+
+    async def abefore_agent(self, state, runtime) -> dict[str, Any] | None:
+        return self.before_agent(state, runtime)
 
     def after_agent(self, state, runtime) -> dict[str, Any] | None:
-        final = verify_answer(state.get("structured_response"), state.get("executed_queries") or [])
+        executed = (state.get("executed_queries") or [])[state.get("turn_execution_start") or 0:]
+        final = verify_answer(state.get("structured_response"), executed)
         final["recovered_from_text"] = any(
-            (getattr(m, "additional_kwargs", None) or {}).get(RECOVERED_FLAG) for m in _current_turn(state.get("messages") or [])
+            (getattr(m, "additional_kwargs", None) or {}).get(RECOVERED_FLAG) for m in current_turn(state.get("messages") or [])
         )
-        return {"final_result": final}
+        return {"final_result": final, "structured_response": None}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.after_agent, state, runtime)
@@ -282,6 +297,9 @@ def render_markdown(final_result: dict[str, Any]) -> str:
         parts.append("\n".join([header, sep, *body]))
         if result.get("truncated"):
             parts.append(f"_מוצגות {result['row_count']} השורות הראשונות בלבד._")
+    elif final_result.get("status") == "no_answer":
+        reason = final_result.get("error")
+        parts.append("⚠️ לא התקבלה תשובה סופית" + (f": {reason}" if reason else "."))
     elif final_result.get("error"):
         parts.append(f"⚠️ לא ניתן היה להריץ את השאילתה הסופית: {final_result['error']}")
 

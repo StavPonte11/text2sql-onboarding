@@ -41,7 +41,9 @@ def _general_purpose_subagent() -> dict:
     }
 
 
-def create_deep_agent(model: BaseChatModel | None = None, clarifications_enabled: bool | None = None):
+def create_deep_agent(
+    model: BaseChatModel | None = None, clarifications_enabled: bool | None = None, checkpointer=None
+):
     """
     Creates and returns a compiled LangGraph deep agent.
 
@@ -51,11 +53,12 @@ def create_deep_agent(model: BaseChatModel | None = None, clarifications_enabled
     Args:
         model: Chat model override (tests); defaults to the configured LLM.
         clarifications_enabled: Override DEEP_AGENT_CLARIFICATIONS_ENABLED (tests).
+        checkpointer: Thread persistence (e.g. AsyncPostgresSaver); defaults to an in-memory saver.
     """
     if clarifications_enabled is None:
         clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED
     llm = model or get_llm()
-    memory = MemorySaver()
+    memory = checkpointer or MemorySaver()
     resources = build_resources()
     suffix = CLARIFICATION_PROMPT if clarifications_enabled else ""
     system_prompt = load_prompt("system").text + suffix

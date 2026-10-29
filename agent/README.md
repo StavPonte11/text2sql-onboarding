@@ -70,3 +70,24 @@ Every deep-agent run is **one Langfuse trace** built by `deep_agent.observabilit
 - run-level scores: `deep-agent.model_calls`, `.tool_calls`, `.sql_executions`, `.latency_s`
 
 In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disable tracing with `DEEP_AGENT_TRACING_ENABLED=false`.
+
+### Serving the deep agent
+
+The UI → backend → agent path is the `chat_with_agent` MCP tool. It runs the legacy graph or the deep agent:
+
+| Setting / argument | Effect |
+|---|---|
+| `AGENT_ENGINE=legacy` (default) / `deep` | default engine for new threads |
+| `engine` argument (backend `POST /api/agent/chat` body: `"engine": "deep"`) | per-request choice |
+| thread id `deep-…` | resumes always go back to the deep agent (and legacy threads to the legacy graph) |
+| `DEEP_AGENT_CHECKPOINT_DB_URL=postgresql://…` | durable deep-agent threads (shared by replicas, survive restarts); unset = in-memory |
+| `timeout_s` argument | how long the caller waits; the run is cancelled then (a query already running finishes first). Omitted = no limit. The backend sends 290 (it waits 300). |
+
+The deep agent is built once per process and streams the same Redis `agent_stream:{thread_id}` events as the legacy graph
+(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `engine`, `verification`
+(matched / re_executed / rejected / re_execution_failed / no_answer), `executed` (the final SQL ran and the rows are
+Trino's), `recovered_from_text` and `confidence`. Each turn's answer is checked only against SQL executed in that turn.
+
+Clarifications are off (`DEEP_AGENT_CLARIFICATIONS_ENABLED=false`). When on, a clarification comes back as
+`status: "interrupted"` with `interrupt_details.type = "hitl_escalation"` (`subtype: "clarification"`); the user's answer
+is sent as `resume_value` (string or `{"feedback": ...}`).

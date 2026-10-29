@@ -25,6 +25,8 @@ dependencies = [
     "deepagents>=0.6.12",
     "urllib3>=2.7.0",
     "pyyaml>=6.0",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary,pool]>=3.2",
 ]
 
 [project.scripts]

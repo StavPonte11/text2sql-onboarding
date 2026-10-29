@@ -17,6 +17,8 @@ class CoreSettings(BaseSettings):
     TRINO_SCHEMA: str = "simple_retail"
     TRINO_HTTP_SCHEME: str = "http"
     TRINO_REQUEST_TIMEOUT: float = 30.0
+    # Session time zone for current_date / now(); otherwise the client sends the machine's zone (UTC in Docker).
+    TRINO_TIMEZONE: str = "Asia/Jerusalem"
     TRINO_ENABLED: bool = True
     TRINO_VERIFY: bool | str = False
     TRINO_CERT_PATH: str | None = None

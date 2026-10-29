@@ -58,6 +58,9 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_LANGFUSE_PROMPTS: bool = False      # serve deep-agent/<name> prompts from Langfuse (packaged .md fallback)
     DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
     DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
+    # Serving (see deep_agent/service.py)
+    AGENT_ENGINE: Literal["legacy", "deep"] = "legacy"   # default engine for chat_with_agent (per-call `engine` overrides)
+    DEEP_AGENT_CHECKPOINT_DB_URL: str | None = None       # postgresql://... for durable deep-agent threads; unset = in-memory
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

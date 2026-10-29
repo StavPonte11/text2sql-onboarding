@@ -51,6 +51,7 @@ class DeepAgentRuntimeState(AgentState):
     jeen_catalog: NotRequired[str]  # the connection's catalog, loaded once per run (deep_agent.catalog)
     executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
     final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
+    turn_execution_start: NotRequired[int]  # index into executed_queries where the current turn began
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:
