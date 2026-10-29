@@ -69,7 +69,7 @@ def build_run_config(
     if user_id:
         metadata["langfuse_user_id"] = user_id
     if handlers:
-        from deep_agent.prompt_registry import load_prompt
+        from deep_agent.prompts.registry import load_prompt
 
         prompt = load_prompt("system")
         if prompt.client is not None:
@@ -112,7 +112,7 @@ _REVIEWED = {"passed", "failed", "disputed"}  # verdicts that judged the final S
 @dataclass(frozen=True)
 class RunMetrics:
     """Plain counts and timing for one run, plus whether the submitted final SQL actually ran
-    (from the structured-answer verification in deep_agent.answer)."""
+    (from the structured-answer verification in deep_agent.answer.verification)."""
 
     model_calls: int
     tool_calls: int

@@ -10,7 +10,7 @@ named here instead:
 """
 
 from core.trino import TrinoExecutionResult
-from deep_agent.envelope import error
+from deep_agent.tools.envelope import error
 
 FORBIDDEN_STATEMENT = "FORBIDDEN_STATEMENT"
 CONNECTION_ERROR = "CONNECTION_ERROR"

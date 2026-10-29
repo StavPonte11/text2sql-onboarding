@@ -2,12 +2,14 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import core.trino as core_trino
 import pytest
 import trino.exceptions
-
-import core.trino as core_trino
 from core.trino import TrinoExecutionResult
-from deep_agent import tools, trino_errors
+
+from deep_agent import tools
+from deep_agent.tools import sql as sql_tools
+from deep_agent.tools import trino_errors
 
 FIXTURES = json.loads((Path(__file__).parent.parent / "fixtures" / "trino_errors.json").read_text(encoding="utf-8"))
 
@@ -59,7 +61,7 @@ def test_execute_tool_returns_trinos_error():
         success=False, error_message="line 1:8: Function 'st_geomfromtext' not registered",
         error_name="FUNCTION_NOT_FOUND", error_type="USER_ERROR", error_location=(1, 8), query_id="q1",
     )
-    with patch.object(tools, "execute_query_sync", return_value=res):
+    with patch.object(sql_tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT ST_GeomFromText('POINT(1 1)')"}))
     assert out == {
         "ok": False,
@@ -76,7 +78,7 @@ def test_execute_tool_returns_trinos_error():
 
 
 def test_execute_tool_reports_exceptions_as_connection_error():
-    with patch.object(tools, "execute_query_sync", side_effect=OSError("connection refused")):
+    with patch.object(sql_tools, "execute_query_sync", side_effect=OSError("connection refused")):
         out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT 1"}))
     assert out["error"]["name"] == "CONNECTION_ERROR"
     assert out["error"]["message"] == "connection refused"
@@ -87,7 +89,7 @@ def test_validate_returns_trinos_error():
         success=False, error_message="line 1:32: Column 'x' cannot be resolved",
         error_name="COLUMN_NOT_FOUND", error_type="USER_ERROR", error_location=(1, 32),
     )
-    with patch.object(tools, "execute_query_sync", return_value=res):
+    with patch.object(sql_tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT x FROM t"}))
     assert out["ok"] is False
     assert out["error"]["name"] == "COLUMN_NOT_FOUND"
@@ -100,7 +102,7 @@ def test_validate_reports_location_against_the_callers_sql():
         success=False, error_message="line 1:32: Column 'x' cannot be resolved",
         error_name="COLUMN_NOT_FOUND", error_type="USER_ERROR", error_location=(1, 32),
     )
-    with patch.object(tools, "execute_query_sync", return_value=res):
+    with patch.object(sql_tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT x FROM t"}))
     assert out["error"]["location"] == {"line": 1, "column": 8}
     assert out["error"]["message"] == "line 1:32: Column 'x' cannot be resolved"  # Trino's message stays raw
@@ -111,6 +113,6 @@ def test_validate_leaves_later_lines_alone():
         success=False, error_message="line 3:7: Column 'x' cannot be resolved",
         error_name="COLUMN_NOT_FOUND", error_type="USER_ERROR", error_location=(3, 7),
     )
-    with patch.object(tools, "execute_query_sync", return_value=res):
+    with patch.object(sql_tools, "execute_query_sync", return_value=res):
         out = json.loads(tools.validate_sql.invoke({"sql": "SELECT a\nFROM t\nWHERE x = 1"}))
     assert out["error"]["location"] == {"line": 3, "column": 7}

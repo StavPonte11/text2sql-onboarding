@@ -1,20 +1,23 @@
 """Independent semantic review of answers (deep_agent.validator): "always" gate and "on_demand" subagent."""
 
+import itertools
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
-import itertools
-from types import SimpleNamespace
-from contextlib import contextmanager
-
 import pytest
+from core.trino import TrinoExecutionResult
 from langchain_core.messages import AIMessage
 
-from core.trino import TrinoExecutionResult
-from deep_agent import answer, tools
 from deep_agent.agent import create_deep_agent
-from deep_agent.answer import ANSWER_RECEIVED, answer_schema, render_markdown, validation_summary
+from deep_agent.answer import verification
+from deep_agent.answer.render import render_markdown
+from deep_agent.answer.schema import ANSWER_RECEIVED, answer_schema
+from deep_agent.answer.verification import validation_summary
 from deep_agent.observability import run_metrics
-from deep_agent.validator import VALIDATOR_TOOLS, SubmitVerdict, feedback_text
+from deep_agent.tools import sql as sql_tools
+from deep_agent.validator.modes import feedback_text
+from deep_agent.validator.reviewer import VALIDATOR_TOOLS, SubmitVerdict
 
 SQL = "SELECT COUNT(*) AS n FROM orders WHERE status = 'shipped'"
 FIXED = "SELECT COUNT(DISTINCT order_id) AS n FROM orders WHERE status = 'shipped'"
@@ -29,8 +32,8 @@ def _trino(*args, **kwargs):
 @contextmanager
 def _fake_trino():
     """Every execution in the run (agent, reviewer, re-execution) — never the real Trino."""
-    with patch.object(tools, "execute_query_sync", side_effect=_trino), \
-            patch.object(answer, "execute_query_sync", side_effect=_trino):
+    with patch.object(sql_tools, "execute_query_sync", side_effect=_trino), \
+            patch.object(verification, "execute_query_sync", side_effect=_trino):
         yield
 ISSUE = {"problem": "סופרים שורות ולא הזמנות", "evidence": "COUNT(*)=42 אבל COUNT(DISTINCT order_id)=40"}
 
@@ -374,8 +377,7 @@ async def test_no_reminder_after_a_failed_review(scripted_model):
 def test_reminder_is_not_the_users_words():
     from langchain_core.messages import HumanMessage
 
-    from deep_agent.answer import current_turn
-    from deep_agent.context import REMINDER_NAME, user_request
+    from deep_agent.context import REMINDER_NAME, current_turn, user_request
 
     messages = [HumanMessage("the question"), AIMessage("text"), HumanMessage("submit!", name=REMINDER_NAME)]
     assert current_turn(messages) == messages[1:]

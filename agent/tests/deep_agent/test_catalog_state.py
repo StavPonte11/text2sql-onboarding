@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 
 from deep_agent import tools
 from deep_agent.agent import create_deep_agent
+from deep_agent.tools import enrichment as enrichment_tools
 
 CATALOG = '# Jeen Catalog\n"postgres"."public"."flights_table"\n| launch_country | varchar | categorical |'
 QUESTION = "כמה טיסות המריאו מצרפת"
@@ -37,7 +38,7 @@ def enrichment(fake_catalog):
     client = MagicMock(get_catalog_prompt=AsyncMock(return_value=CATALOG))
     with patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", enrich), \
          patch("agent.nodes.refiner.parse_jeen_catalog_tables", parse), \
-         patch.object(tools, "get_jeen_metadata_client", return_value=client):
+         patch.object(enrichment_tools, "get_jeen_metadata_client", return_value=client):
         fake_catalog.get_catalog_prompt.return_value = CATALOG  # what CatalogMiddleware loads for the run
         yield SimpleNamespace(enrich=enrich, parse=parse, client=client, run_catalog=fake_catalog)
 

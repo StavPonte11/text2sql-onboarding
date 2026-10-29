@@ -12,7 +12,7 @@ import pytest
 import sqlglot
 
 from deep_agent.agent import SYSTEM_PROMPT
-from deep_agent.prompt_registry import local_prompt
+from deep_agent.prompts.registry import local_prompt
 from deep_agent.resources import DEFAULT_SKILLS_DIR, EXPECTED_SKILLS
 from deep_agent.tools import DEEP_AGENT_TOOLS
 

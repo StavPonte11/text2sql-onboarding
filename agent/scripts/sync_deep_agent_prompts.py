@@ -11,7 +11,7 @@ picks it up within DEEP_AGENT_PROMPT_CACHE_TTL_S, no redeploy.
 
 import argparse
 
-from deep_agent.prompt_registry import PROMPT_KEYS, langfuse_name, local_prompt
+from deep_agent.prompts.registry import PROMPT_KEYS, langfuse_name, local_prompt
 
 
 def sync(client, label: str, dry_run: bool = False) -> list[str]:

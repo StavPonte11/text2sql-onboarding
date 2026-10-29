@@ -25,7 +25,7 @@ from agent.config import settings
 
 logger = logging.getLogger(__name__)
 
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parent  # the .md files sit next to this module
 PROMPT_KEYS = ("system", "validator")
 
 

@@ -5,12 +5,14 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from core.trino import TrinoExecutionResult
 from langchain_core.messages import AIMessage
 
-from core.trino import TrinoExecutionResult
-from deep_agent import answer, service, tools
+from deep_agent import service
 from deep_agent.agent import create_deep_agent
+from deep_agent.answer import verification
 from deep_agent.service import run_deep_chat, to_response
+from deep_agent.tools import sql as sql_tools
 
 SQL = "SELECT COUNT(*) AS orders FROM orders WHERE status = 'shipped'"
 OK = TrinoExecutionResult(success=True, rows=[[466]], columns=["orders"], row_count=1, query_id="q-1")
@@ -78,7 +80,7 @@ def test_clarification_maps_to_free_text_hitl():
 @pytest.mark.asyncio
 async def test_clarify_then_resume_on_the_same_thread(policy_model, published):
     agent = create_deep_agent(model=policy_model(_policy), clarifications_enabled=True)
-    with patch.object(tools, "execute_query_sync", return_value=OK):
+    with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         first = await run_deep_chat(connection_id=89, query="כמה הזמנות נשלחו", thread_id="deep-t1", agent=agent)
         second = await run_deep_chat(connection_id=89, thread_id="deep-t1", agent=agent,
                                      resume_value={"approved": False, "feedback": "שנשלחו"})
@@ -103,7 +105,7 @@ async def test_turn_without_new_answer_does_not_repeat_the_previous_one(scripted
         AIMessage("still no answer"),  # reply to the submit reminder
     )
     agent = create_deep_agent(model=model)
-    with patch.object(tools, "execute_query_sync", return_value=OK):
+    with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         first = await run_deep_chat(connection_id=89, query="q1", thread_id="deep-t2", agent=agent)
         second = await run_deep_chat(connection_id=89, query="ותודה", thread_id="deep-t2", agent=agent)
     assert first["verification"] == "matched"
@@ -119,8 +121,8 @@ async def test_answer_only_matches_sql_executed_in_its_own_turn(scripted_model, 
         _answer(),
     )
     agent = create_deep_agent(model=model)
-    with patch.object(tools, "execute_query_sync", return_value=OK), \
-         patch.object(answer, "execute_query_sync", return_value=OK) as rerun:
+    with patch.object(sql_tools, "execute_query_sync", return_value=OK), \
+         patch.object(verification, "execute_query_sync", return_value=OK) as rerun:
         first = await run_deep_chat(connection_id=89, query="q1", thread_id="deep-t3", agent=agent)
         second = await run_deep_chat(connection_id=89, query="ושוב", thread_id="deep-t3", agent=agent)
     assert first["verification"] == "matched"
@@ -133,7 +135,7 @@ async def test_checkpoints_hold_only_plain_data(scripted_model, published, caplo
     """The answer object isn't kept in thread state (checkpoints can't restore its class); final_result is."""
     agent = create_deep_agent(model=scripted_model(
         AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]), _answer()))
-    with patch.object(tools, "execute_query_sync", return_value=OK):
+    with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         await run_deep_chat(connection_id=89, query="q", thread_id="deep-t5", agent=agent)
     state = (await agent.aget_state({"configurable": {"thread_id": "deep-t5"}})).values
     assert state.get("structured_response") is None
@@ -154,7 +156,7 @@ async def test_timeout_s_cancels_the_run(scripted_model, published):
         return OK
 
     # A query already running in a worker thread can't be interrupted; the run stops there.
-    with patch.object(tools, "execute_query_sync", side_effect=slow_query):
+    with patch.object(sql_tools, "execute_query_sync", side_effect=slow_query):
         r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t4", agent=agent, timeout_s=0.3)
     assert r["verification"] == "no_answer" and r["executed"] is False and r["is_unanswerable"] is True
     assert "stopped after 0.3s" in r["summary"]
@@ -234,7 +236,7 @@ async def test_reviewer_tools_are_labelled_in_the_stream(scripted_model, publish
         AIMessage("", tool_calls=[{"name": "submit_verdict", "args": {"verdict": "pass"}, "id": "v1"}]),
     )
     agent = create_deep_agent(model=main, semantic_validation="always", validator_model=reviewer)
-    with patch.object(tools, "execute_query_sync", return_value=OK):
+    with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t6", agent=agent)
     assert r["execution_path"] == ["deep:execute_trino_query", "deep:review:get_sample_rows"]
     assert r["semantic_validation"]["verdict"] == "passed"

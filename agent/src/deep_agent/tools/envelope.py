@@ -4,7 +4,7 @@ The single return contract for every Deep Agent tool:
     {"ok": true,  "data": <payload>, "error": null}
     {"ok": false, "data": null,      "error": {"name", "message", ...details}}
 
-error.name is Trino's own errorName for SQL failures (see deep_agent.trino_errors), or one of
+error.name is Trino's own errorName for SQL failures (see deep_agent.tools.trino_errors), or one of
 the names below for failures of our own tools.
 
 Serialised compactly (no indentation whitespace, raw Unicode) to keep tool output tokens low.

@@ -4,7 +4,7 @@ Request-scoped runtime context and state for the Deep Agent.
 Nothing request-specific lives in module globals:
 - DeepAgentContext is passed per invocation (`agent.ainvoke(..., context=DeepAgentContext(...))`)
   and read by tools through `ToolRuntime.context`.
-- The connection's catalog is loaded once per run by CatalogMiddleware (deep_agent.catalog)
+- The connection's catalog is loaded once per run by CatalogMiddleware (deep_agent.middleware.catalog)
   into graph state (`jeen_catalog`) and read back by tools through `ToolRuntime.state`.
 - Today's date is added to the latest human message on every model call, in the
   context's timezone, so long-running processes never serve a stale date.
@@ -28,6 +28,10 @@ class DeepAgentContext:
     connection_id: int | None = None   # Jeen metadata connection; None -> JEEN_METADATA_CONNECTION_ID
     user_id: str | None = None
     timezone: str = DEFAULT_TIMEZONE
+
+
+# What tools receive as `runtime`: state, config, tool_call_id and our per-request context.
+Runtime = ToolRuntime[DeepAgentContext]
 
 
 def merge_executions(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -71,20 +75,28 @@ def merge_reviews(left: list[dict[str, Any]] | None, right: list[dict[str, Any]]
 
 
 class DeepAgentRuntimeState(AgentState):
-    jeen_catalog: NotRequired[Annotated[str, latest]]  # the connection's catalog, loaded once per run (deep_agent.catalog)
+    jeen_catalog: NotRequired[Annotated[str, latest]]  # the connection's catalog, loaded once per run (deep_agent.middleware.catalog)
     executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
-    final_result: NotRequired[Annotated[dict[str, Any], latest]]  # verified answer + rows (see deep_agent.answer)
+    final_result: NotRequired[Annotated[dict[str, Any], latest]]  # verified answer + rows (see deep_agent.answer.verification)
     turn_execution_start: NotRequired[Annotated[int, latest]]  # index into executed_queries where the current turn began
     semantic_validations: NotRequired[Annotated[list[dict[str, Any]], merge_reviews]]  # this turn's reviews (deep_agent.validator)
 
 
-# Name of the one-time "submit now" message (deep_agent.answer.SubmitReminderMiddleware): not the user's words.
+# Name of the one-time "submit now" message (deep_agent.answer.middleware.SubmitReminderMiddleware): not the user's words.
 REMINDER_NAME = "submit_reminder"
 
 
 def is_user_message(msg: Any) -> bool:
     """A message the user wrote (not the harness's submit reminder)."""
     return isinstance(msg, HumanMessage) and getattr(msg, "name", None) != REMINDER_NAME
+
+
+def current_turn(messages: list) -> list:
+    """Messages after the latest user message (this run's turn)."""
+    for i in range(len(messages) - 1, -1, -1):
+        if is_user_message(messages[i]):
+            return messages[i + 1:]
+    return messages
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:

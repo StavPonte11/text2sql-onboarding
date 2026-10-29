@@ -1,10 +1,11 @@
 """
 Agent logic and LangGraph harness for the Deep Agent.
 
-The system prompt is served by deep_agent.prompt_registry (Langfuse `deep-agent/system` when
+The system prompt is served by deep_agent.prompts.registry (Langfuse `deep-agent/system` when
 DEEP_AGENT_LANGFUSE_PROMPTS is on, else the packaged prompts/system.md). The connection's catalog
-is added to every model call by CatalogMiddleware (deep_agent.catalog).
+is added to every model call by CatalogMiddleware (deep_agent.middleware.catalog).
 """
+
 
 from deepagents import create_deep_agent as create_harness_agent
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, DEFAULT_SUBAGENT_PROMPT
@@ -13,26 +14,16 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from agent.config import settings
 from agent.llm import get_llm
-from deep_agent.answer import (
-    TOOL_NAME,
-    AnswerRecoveryMiddleware,
-    AnswerVerificationMiddleware,
-    SubmitReminderMiddleware,
-    answer_schema,
-    submission_strategy,
-)
-from deep_agent.catalog import CatalogMiddleware
+from deep_agent.answer.middleware import AnswerRecoveryMiddleware, AnswerVerificationMiddleware, SubmitReminderMiddleware
+from deep_agent.answer.schema import TOOL_NAME, answer_schema, submission_strategy
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
-from deep_agent.prompt_registry import PromptRefreshMiddleware, load_prompt, local_prompt
+from deep_agent.middleware.catalog import CatalogMiddleware
+from deep_agent.middleware.tool_filter import BuiltinToolFilterMiddleware
+from deep_agent.prompts.registry import PromptRefreshMiddleware, load_prompt, local_prompt
 from deep_agent.resources import build_resources
-from deep_agent.tool_filter import BuiltinToolFilterMiddleware
 from deep_agent.tools import DEEP_AGENT_TOOLS
-from deep_agent.validator import (
-    ReviewTurnMiddleware,
-    SemanticValidationMiddleware,
-    ValidationMode,
-    validator_subagent,
-)
+from deep_agent.validator.modes import ReviewTurnMiddleware, SemanticValidationMiddleware, validator_subagent
+from deep_agent.validator.reviewer import ValidationMode
 
 # Packaged system prompt (the Langfuse-managed version, when enabled, is loaded per agent build and refreshed per call).
 SYSTEM_PROMPT = local_prompt("system")

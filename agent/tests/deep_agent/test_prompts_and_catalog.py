@@ -2,19 +2,19 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage
 
 from agent.config import settings
-from deep_agent import observability, prompt_registry
+from deep_agent import observability
 from deep_agent.agent import CLARIFICATION_PROMPT, create_deep_agent
-from deep_agent.catalog import CatalogLoadError
 from deep_agent.context import merge_executions
-from deep_agent.prompt_registry import PROMPT_KEYS, load_prompt, local_prompt
+from deep_agent.middleware.catalog import CatalogLoadError
+from deep_agent.prompts import registry as prompt_registry
+from deep_agent.prompts.registry import PROMPT_KEYS, load_prompt, local_prompt
 from tests.deep_agent.conftest import TEST_CATALOG, system_text
-
 
 # ── deterministic catalog ────────────────────────────────────────────────────
 

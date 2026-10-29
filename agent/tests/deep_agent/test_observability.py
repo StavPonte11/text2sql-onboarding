@@ -3,14 +3,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
+from core.trino import TrinoExecutionResult
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from core.trino import TrinoExecutionResult
 from deep_agent import observability, tools
 from deep_agent.agent import create_deep_agent
 from deep_agent.observability import RunMetrics, build_run_config, run_metrics
+from deep_agent.tools import metadata as metadata_tools
+from deep_agent.tools import sql as sql_tools
 
 
 class RunTreeRecorder(BaseCallbackHandler):
@@ -74,8 +76,8 @@ async def test_one_trace_tree_with_no_orphans(policy_model):
     agent = create_deep_agent(model=policy_model(_policy))
     config = build_run_config("thread-obs", user_id="u-1", callbacks=[recorder], tracing=False)
 
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client), \
-         patch.object(tools, "execute_query_sync", return_value=trino), \
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client), \
+         patch.object(sql_tools, "execute_query_sync", return_value=trino), \
          patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=({"t": {}}, ["t"])), \
          patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", side_effect=fake_enrich):
         await agent.ainvoke({"messages": [("user", "כמה טיסות")]}, config)
@@ -122,16 +124,16 @@ def test_agent_version_prefers_explicit_env(monkeypatch):
 def test_trino_tools_annotate_the_tool_span():
     ok_res = TrinoExecutionResult(success=True, rows=[[1], [2]], columns=["a"], row_count=2, query_id="q-9",
                                   execution_time_ms=34)
-    with patch.object(tools, "execute_query_sync", return_value=ok_res), \
-         patch.object(tools, "annotate_current_span") as annotate:
+    with patch.object(sql_tools, "execute_query_sync", return_value=ok_res), \
+         patch.object(sql_tools, "annotate_current_span") as annotate:
         out = tools.execute_trino_query.invoke({"sql": "SELECT a FROM t", "limit": 1})
     annotate.assert_called_once_with({"trino_query_id": "q-9", "execution_time_ms": 34, "row_count": 1, "truncated": True})
     assert '"execution_time_ms":34' in out and '"query_id":"q-9"' in out
 
     err = TrinoExecutionResult(success=False, error_message="line 1:8: Column 'x' cannot be resolved",
                                error_name="COLUMN_NOT_FOUND", query_id="q-10", execution_time_ms=5)
-    with patch.object(tools, "execute_query_sync", return_value=err), \
-         patch.object(tools, "annotate_current_span") as annotate:
+    with patch.object(sql_tools, "execute_query_sync", return_value=err), \
+         patch.object(sql_tools, "annotate_current_span") as annotate:
         tools.execute_trino_query.invoke({"sql": "SELECT x FROM t"})
     metadata, = annotate.call_args.args
     assert metadata["error_name"] == "COLUMN_NOT_FOUND" and metadata["trino_query_id"] == "q-10"
@@ -181,7 +183,9 @@ async def test_real_langfuse_handler_produces_a_single_trace(policy_model):
     """End-to-end through the real Langfuse v4 CallbackHandler, exported to memory (no network)."""
     from langfuse import Langfuse
     from langfuse.langchain import CallbackHandler
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
 
     exporter = InMemorySpanExporter()
     langfuse = Langfuse(public_key="pk-lf-unit-test", secret_key="sk-lf-unit-test", host="http://127.0.0.1:9",
@@ -194,8 +198,8 @@ async def test_real_langfuse_handler_produces_a_single_trace(policy_model):
                                  execution_time_ms=9)
     agent = create_deep_agent(model=policy_model(_policy))
     with patch.object(observability, "_langfuse_handler", return_value=CallbackHandler(public_key="pk-lf-unit-test")), \
-         patch.object(tools, "get_jeen_metadata_client", return_value=MagicMock(get_catalog_prompt=AsyncMock(return_value="# c"))), \
-         patch.object(tools, "execute_query_sync", return_value=trino), \
+         patch.object(metadata_tools, "get_jeen_metadata_client", return_value=MagicMock(get_catalog_prompt=AsyncMock(return_value="# c"))), \
+         patch.object(sql_tools, "execute_query_sync", return_value=trino), \
          patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=({"t": {}}, ["t"])), \
          patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", side_effect=fake_enrich):
         config = build_run_config("thread-lf", user_id="user-lf", tracing=True)

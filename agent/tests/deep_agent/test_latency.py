@@ -2,17 +2,20 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import core.trino as core_trino
 import pytest
+from core.trino import TrinoExecutionResult
 from langchain_core.messages import AIMessage
 
 import agent.utils.jeen_metadata_client as jmc
-import core.trino as core_trino
 from agent.config import settings
-from agent.utils.jeen_metadata_client import JeenMetadataClient, JeenMetadataError, close_mcp_sessions
-from core.trino import TrinoExecutionResult
-from deep_agent import tools
+from agent.utils.jeen_metadata_client import (
+    JeenMetadataClient,
+    JeenMetadataError,
+    close_mcp_sessions,
+)
 from deep_agent.agent import create_deep_agent
-from deep_agent.tool_filter import EXCLUDED_BUILTIN_TOOLS
+from deep_agent.middleware.tool_filter import EXCLUDED_BUILTIN_TOOLS
 
 OK = TrinoExecutionResult(success=True, rows=[[7]], columns=["n"], row_count=1, query_id="q")
 

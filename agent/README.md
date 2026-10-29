@@ -38,6 +38,23 @@ graph TD
 
 ## Running the deep agent locally
 
+Code layout (`src/deep_agent/`):
+
+```
+agent.py          create_deep_agent(): wires model, tools, prompt, skills, middleware, subagents
+service.py        run_deep_chat(): serving behind chat_with_agent (threads, timeout_s, streaming, response)
+cli.py            developer CLI
+context.py        per-request context, state fields, user-message helpers, date prefix
+observability.py  Langfuse run config and scores
+resources.py      skills wiring (read-only /skills/)
+tools/            what the model can call: sql, metadata, enrichment, location (+ envelope, trino_errors)
+answer/           the final answer: schema, verification (did the SQL run), middleware, render
+validator/        independent semantic review: reviewer (the agent), modes (always / on_demand)
+middleware/       cross-cutting: catalog in every model call, built-in tool filter
+prompts/          system.md, validator.md + registry.py (Langfuse / packaged)
+skills/           temporal-analyst, spatial-analyst
+```
+
 The deep agent (`src/deep_agent/`) has a CLI entry point:
 
 ```bash
@@ -53,7 +70,7 @@ Run logs are opt-in and git-ignored (`agent/runs/`, `agent/*.jsonl`, `agent/*.cs
 
 ### Semantic validation (deep agent)
 
-An independent reviewer (`src/deep_agent/validator.py`) checks whether a SQL answer really answers the user's request:
+An independent reviewer (`src/deep_agent/validator/`) checks whether a SQL answer really answers the user's request:
 a separate agent with a fresh context (the user's messages, the SQL, its rows, the stated assumptions and the catalog —
 not the main agent's reasoning), read-only diagnostic tools, and a verdict of pass, or fail with issues and evidence.
 Its prompt is `prompts/validator.md` (`deep-agent/validator` in Langfuse). `DEEP_AGENT_SEMANTIC_VALIDATION` picks how it is used:

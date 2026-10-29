@@ -79,7 +79,7 @@ def fake_catalog(monkeypatch):
     """
     from unittest.mock import AsyncMock, MagicMock
 
-    import deep_agent.catalog as catalog_module
+    import deep_agent.middleware.catalog as catalog_module
 
     client = MagicMock(get_catalog_prompt=AsyncMock(return_value=TEST_CATALOG))
     monkeypatch.setattr(catalog_module, "get_jeen_metadata_client", lambda: client)

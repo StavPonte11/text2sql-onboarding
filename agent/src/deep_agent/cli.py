@@ -22,7 +22,7 @@ from agent.config import settings
 from agent.utils.jeen_metadata_client import close_mcp_sessions
 from deep_agent.agent import create_deep_agent
 from deep_agent import observability
-from deep_agent.answer import render_markdown
+from deep_agent.answer.render import render_markdown
 from deep_agent.context import DeepAgentContext
 
 # ANSI Colors for terminal output

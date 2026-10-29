@@ -1,13 +1,15 @@
 from unittest.mock import patch
 
 import pytest
+from core.trino import TrinoExecutionResult
 from langchain_core.messages import AIMessage
 
-from core.trino import TrinoExecutionResult
-from deep_agent import answer as answer_module
-from deep_agent import tools
 from deep_agent.agent import create_deep_agent
-from deep_agent.answer import SubmitAnswer, answer_schema, normalize_sql, render_markdown, verify_answer
+from deep_agent.answer import verification
+from deep_agent.answer.render import render_markdown
+from deep_agent.answer.schema import SubmitAnswer, answer_schema
+from deep_agent.answer.verification import normalize_sql, verify_answer
+from deep_agent.tools import sql as sql_tools
 from tests.deep_agent.conftest import system_text
 
 EXECUTED = "SELECT COUNT(DISTINCT flight_id) AS flights FROM \"postgres\".\"public\".\"flights_table\" WHERE launch_country = 'France'"
@@ -34,8 +36,8 @@ ANSWER = {"sql": RESTATED, "explanation_he": "סופרת טיסות ייחודי
 
 async def _run(policy_model, policy, tool_results, reexecution_results=(), clarifications=False):
     agent = create_deep_agent(model=policy_model(policy), clarifications_enabled=clarifications)
-    with patch.object(tools, "execute_query_sync", side_effect=list(tool_results)) as t1, \
-         patch.object(answer_module, "execute_query_sync", side_effect=list(reexecution_results)) as t2:
+    with patch.object(sql_tools, "execute_query_sync", side_effect=list(tool_results)) as t1, \
+         patch.object(verification, "execute_query_sync", side_effect=list(reexecution_results)) as t2:
         result = await agent.ainvoke({"messages": [("user", "כמה טיסות המריאו מצרפת")]},
                                      {"configurable": {"thread_id": "a"}})
     return result, t1, t2
@@ -145,7 +147,7 @@ def test_clarifications_are_off_by_default():
 async def test_clarification_only_mentioned_in_prompt_when_enabled(scripted_model, enabled):
     model = scripted_model(AIMessage("", tool_calls=[{"name": "submit_answer", "args": {**ANSWER}, "id": "f"}]))
     agent = create_deep_agent(model=model, clarifications_enabled=enabled)
-    with patch.object(answer_module, "execute_query_sync", return_value=_trino([[1]])):
+    with patch.object(verification, "execute_query_sync", return_value=_trino([[1]])):
         await agent.ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": f"c{enabled}"}})
     assert ("needs_clarification" in system_text(model.seen[0])) is enabled
 
@@ -169,9 +171,9 @@ async def test_matched_exploration_sample_is_re_executed_for_the_full_answer(pol
 
 
 def test_re_execution_without_a_row_ceiling(monkeypatch):
-    monkeypatch.setattr(answer_module.settings, "DEEP_AGENT_MAX_ROWS", None)
+    monkeypatch.setattr(verification.settings, "DEEP_AGENT_MAX_ROWS", None)
     answer = SubmitAnswer(sql="SELECT a FROM t", explanation_he="הסבר", confidence="high")
-    with patch.object(answer_module, "execute_query_sync", return_value=_trino([[i] for i in range(500)])) as run:
+    with patch.object(verification, "execute_query_sync", return_value=_trino([[i] for i in range(500)])) as run:
         final = verify_answer(answer, [])
     assert run.call_args.args[0] == "SELECT a FROM t"       # no LIMIT added
     assert final["executed"] is True and final["result"]["row_count"] == 500 and final["result"]["truncated"] is False

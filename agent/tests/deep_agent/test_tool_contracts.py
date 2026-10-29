@@ -4,25 +4,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import tiktoken
+from core.trino import TrinoExecutionResult
 
 import agent.utils.jeen_metadata_client as jmc
 from agent.utils.jeen_metadata_client import JeenMetadataClient, JeenMetadataError
-from core.trino import TrinoExecutionResult
 from deep_agent import tools
-from deep_agent.tools import DEEP_AGENT_TOOLS, UNREGISTERED_TOOLS
+from deep_agent.tools import DEEP_AGENT_TOOLS
+from deep_agent.tools import enrichment as enrichment_tools
+from deep_agent.tools import location as location_tools
+from deep_agent.tools import metadata as metadata_tools
+from deep_agent.tools import sql as sql_tools
 
-ALL_TOOLS = [*DEEP_AGENT_TOOLS, *UNREGISTERED_TOOLS]
+ALL_TOOLS = DEEP_AGENT_TOOLS
 
-# Minimal valid arguments for every tool (registered and unregistered — both must honour the envelope).
+# Minimal valid arguments for every tool (each must honour the envelope).
 TOOL_ARGS = {
-    "get_database_tables": {},
-    "get_table_columns": {"table_name": "t"},
-    "get_table_relationships": {},
-    "get_table_profile": {"table_name": "t"},
     "get_column_profile": {"table_name": "t", "column_name": "c"},
-    "search_metadata": {"query": "q"},
-    "search_business_terms": {"query": "q"},
-    "search_knowledge_pairs": {"query": "q"},
     "search_column_values": {"search_term": "תל אביב"},
     "resolve_location_to_wkt": {"location_name": "חיפה"},
     "execute_trino_query": {"sql": "SELECT 1"},
@@ -54,10 +51,11 @@ def patched(request):
                  if fail else TrinoExecutionResult(success=True, rows=[[1]], columns=["a"], row_count=1))
     enrich = (AsyncMock(side_effect=RuntimeError("llm down")) if fail
               else AsyncMock(return_value=("SELECT 1 FROM t WHERE a = 'X'", SimpleNamespace(enrichment_details=[]), True)))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=_client(fail)), \
-         patch.object(tools, "execute_query_sync", return_value=trino_res), \
-         patch.object(tools, "get_geojson_polygon", return_value=None if fail else {"type": "Polygon"}), \
-         patch.object(tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"), \
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=_client(fail)), \
+         patch.object(enrichment_tools, "get_jeen_metadata_client", return_value=_client(fail)), \
+         patch.object(sql_tools, "execute_query_sync", return_value=trino_res), \
+         patch.object(location_tools, "get_geojson_polygon", return_value=None if fail else {"type": "Polygon"}), \
+         patch.object(location_tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"), \
          patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=("s", ["t"])), \
          patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", enrich):
         yield fail
@@ -95,10 +93,11 @@ async def test_tool_returns_envelope(tool, patched):
 
 @pytest.mark.asyncio
 async def test_metadata_failure_says_data_is_not_empty():
-    client = MagicMock(get_tables=AsyncMock(side_effect=JeenMetadataError("auth expired")))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
-        out = json.loads(await tools.get_database_tables.ainvoke({}))
+    client = MagicMock(get_column_profile=AsyncMock(side_effect=JeenMetadataError("auth expired")))
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
+        out = json.loads(await tools.get_column_profile.ainvoke({"table_name": "t", "column_name": "c"}))
     assert out["error"]["name"] == "METADATA_ERROR"
+    assert "auth expired" in out["error"]["message"]
     assert "does not mean the data is empty" in out["error"]["message"]
 
 
@@ -125,19 +124,9 @@ async def test_unexpected_payload_is_an_error_not_empty(method):
             await getattr(client, method)()
 
 
-@pytest.mark.asyncio
-async def test_relationships_tool_surfaces_mcp_error():
-    client = MagicMock(get_relationships=AsyncMock(side_effect=JeenMetadataError("auth expired")))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
-        out = json.loads(await tools.get_table_relationships.ainvoke({}))
-    assert out["ok"] is False
-    assert out["error"]["name"] == "METADATA_ERROR"
-    assert "auth expired" in out["error"]["message"]
-
-
 async def _search(values):
     client = MagicMock(search_column_values=AsyncMock(return_value={"values": values}))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
         return json.loads(await tools.search_column_values.ainvoke({"search_term": "x"}))
 
 
@@ -174,15 +163,15 @@ async def test_search_values_says_when_the_limit_was_hit():
 @pytest.mark.asyncio
 async def test_search_values_passes_limit_through_unclamped():
     client = MagicMock(search_column_values=AsyncMock(return_value={"values": []}))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
         await tools.search_column_values.ainvoke({"search_term": "x", "limit": 500})
     assert client.search_column_values.call_args.kwargs["limit"] == 500
 
 
 @pytest.mark.asyncio
 async def test_location_returns_the_polygon_once():
-    with patch.object(tools, "get_geojson_polygon", return_value={"type": "Polygon"}), \
-         patch.object(tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"):
+    with patch.object(location_tools, "get_geojson_polygon", return_value={"type": "Polygon"}), \
+         patch.object(location_tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"):
         out = json.loads(tools.resolve_location_to_wkt.invoke({"location_name": "חיפה"}))
     assert out["data"] == {"location": "חיפה", "wkt": "POLYGON((0 0, 1 0, 1 1, 0 0))"}
 
@@ -205,7 +194,7 @@ async def test_search_values_output_is_at_least_40_percent_smaller():
         for i in range(10)
     ]}
     client = MagicMock(search_column_values=AsyncMock(return_value=res))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
         new = await tools.search_column_values.ainvoke({"search_term": "תל אביב"})
     enc = tiktoken.get_encoding("o200k_base")
     old_tokens = len(enc.encode(_old_search_column_values_output("תל אביב", res)))

@@ -7,9 +7,9 @@ import pytest
 from langchain_core.messages import AIMessage
 
 import deep_agent.context as context_module
-from deep_agent import tools
 from deep_agent.agent import create_deep_agent
 from deep_agent.context import DeepAgentContext, date_line
+from deep_agent.tools import metadata as metadata_tools
 from tests.deep_agent.conftest import system_text
 
 CATALOGS = {1: "# catalog for connection 1", 2: "# catalog for connection 2"}
@@ -43,7 +43,7 @@ async def test_concurrent_requests_for_different_connections_are_isolated(policy
     fake_catalog.get_catalog_prompt = _catalog_by_connection()
     client = _value_client()
 
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
+    with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
         r1, r2 = await asyncio.gather(
             agent.ainvoke({"messages": [("user", "q1")]}, {"configurable": {"thread_id": "conn-1"}},
                           context=DeepAgentContext(connection_id=1)),

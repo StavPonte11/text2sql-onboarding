@@ -32,9 +32,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from agent.config import settings
 from agent.utils.redis_publisher import publish_node_event
 from deep_agent import observability
-from deep_agent.answer import current_turn, render_markdown
-from deep_agent.context import DeepAgentContext
-from deep_agent.validator import VALIDATOR_NAME
+from deep_agent.answer.render import render_markdown
+from deep_agent.context import DeepAgentContext, current_turn
+from deep_agent.validator.reviewer import VALIDATOR_NAME
 
 logger = logging.getLogger(__name__)
 

@@ -2,9 +2,10 @@ import json
 from unittest.mock import patch
 
 import pytest
-
 from core.trino import TrinoExecutionResult
+
 from deep_agent import tools
+from deep_agent.tools import sql as sql_tools
 
 
 def _ok(n_rows: int) -> TrinoExecutionResult:
@@ -15,7 +16,7 @@ def _ok(n_rows: int) -> TrinoExecutionResult:
 
 @pytest.fixture
 def trino():
-    with patch.object(tools, "execute_query_sync") as mock:
+    with patch.object(sql_tools, "execute_query_sync") as mock:
         yield mock
 
 
@@ -37,14 +38,14 @@ def test_limit_argument_is_clamped_and_truncation_reported(trino):
 
 
 def test_omitted_limit_uses_the_configured_ceiling(trino, monkeypatch):
-    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", 100)
+    monkeypatch.setattr(sql_tools.settings, "DEEP_AGENT_MAX_ROWS", 100)
     trino.return_value = _ok(5)
     tools.execute_trino_query.invoke({"sql": "SELECT id FROM t"})
     assert trino.call_args.args[0] == "SELECT id FROM t LIMIT 101"
 
 
 def test_no_ceiling_runs_sql_as_written_and_returns_every_row(trino, monkeypatch):
-    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", None)
+    monkeypatch.setattr(sql_tools.settings, "DEEP_AGENT_MAX_ROWS", None)
     trino.return_value = _ok(5000)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t;"}))
     assert trino.call_args.args[0] == "SELECT id FROM t"
@@ -53,7 +54,7 @@ def test_no_ceiling_runs_sql_as_written_and_returns_every_row(trino, monkeypatch
 
 
 def test_no_ceiling_still_honours_an_explicit_limit(trino, monkeypatch):
-    monkeypatch.setattr(tools.settings, "DEEP_AGENT_MAX_ROWS", None)
+    monkeypatch.setattr(sql_tools.settings, "DEEP_AGENT_MAX_ROWS", None)
     trino.return_value = _ok(11)
     out = json.loads(tools.execute_trino_query.invoke({"sql": "SELECT id FROM t", "limit": 10}))
     assert trino.call_args.args[0] == "SELECT id FROM t LIMIT 11"
