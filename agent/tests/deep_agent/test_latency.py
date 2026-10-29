@@ -23,7 +23,7 @@ async def test_unused_builtin_tools_are_not_offered_to_the_model(scripted_model)
     await create_deep_agent(model=model).ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": "t"}})
     offered = set(model.bound_tool_names[-1])
     assert not offered & EXCLUDED_BUILTIN_TOOLS
-    assert {"read_file", "write_todos", "execute_trino_query", "DeepAgentAnswer"} <= offered
+    assert {"read_file", "write_todos", "execute_trino_query", "submit_answer"} <= offered
 
 
 # ── metadata cache ──────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ async def test_benchmark_reports_calls_tokens_and_status(policy_model):
         if not [m for m in messages if m.type == "tool"]:
             msg = AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": "SELECT 7 AS n"}, "id": "e"}])
         else:
-            msg = AIMessage("", tool_calls=[{"name": "DeepAgentAnswer", "id": "f", "args": {
+            msg = AIMessage("", tool_calls=[{"name": "submit_answer", "id": "f", "args": {
                 "sql": "SELECT 7 AS n", "explanation_he": "שבע", "confidence": "high"}}])
         msg.usage_metadata = {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}
         return msg

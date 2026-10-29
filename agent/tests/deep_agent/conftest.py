@@ -58,3 +58,21 @@ def policy_model():
         return model
 
     return _make
+
+
+TEST_CATALOG = '# Database Schema\n\n## Columns\n"catalog"."schema"."orders": Orders\n  - "status" (varchar) [semantic_type=categorical]'
+
+
+@pytest.fixture(autouse=True)
+def fake_catalog(monkeypatch):
+    """Every agent run loads the connection's catalog (CatalogMiddleware); never hit the real Jeen service in tests.
+
+    Tests that need a specific catalog or a failure override `fake_catalog.get_catalog_prompt`.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    import deep_agent.catalog as catalog_module
+
+    client = MagicMock(get_catalog_prompt=AsyncMock(return_value=TEST_CATALOG))
+    monkeypatch.setattr(catalog_module, "get_jeen_metadata_client", lambda: client)
+    return client

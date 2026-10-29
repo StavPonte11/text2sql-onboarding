@@ -16,7 +16,7 @@ from deep_agent.resources import DEFAULT_SKILLS_DIR, EXPECTED_SKILLS
 from deep_agent.tools import DEEP_AGENT_TOOLS
 
 DOMAIN_TOOLS = {t.name for t in DEEP_AGENT_TOOLS}
-HARNESS_TOOLS = {"task", "write_todos", "read_file", "ls", "DeepAgentAnswer"}
+HARNESS_TOOLS = {"task", "write_todos", "read_file", "ls", "submit_answer"}
 
 DOCS: dict[str, str] = {
     "system prompt": SYSTEM_PROMPT,

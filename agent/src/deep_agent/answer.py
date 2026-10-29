@@ -1,7 +1,7 @@
 """
 Structured final answer for the Deep Agent, bound to SQL that actually ran.
 
-The model finishes by submitting a DeepAgentAnswer (ToolStrategy structured output).
+The model finishes by calling the `submit_answer` tool (ToolStrategy structured output).
 AnswerVerificationMiddleware then binds it to evidence. `final_result.executed` says whether
 the final SQL ran and the rows shown are Trino's — it does NOT mean the answer was checked
 to be semantically correct.
@@ -18,11 +18,16 @@ The result table shown to users is always built from Trino rows, never from mode
 """
 
 import asyncio
+import json
 import logging
+import re
+import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import sqlglot
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import BaseModel, Field, create_model
 from sqlglot.errors import SqlglotError
 
@@ -36,9 +41,11 @@ logger = logging.getLogger(__name__)
 VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution_failed", "clarification", "no_answer"]
 
 
-class DeepAgentAnswer(BaseModel):
-    """Submit the final answer. Call this exactly once, when you are done."""
+TOOL_NAME = "submit_answer"
+_SUBMIT_DOC = "Submit your final answer. Call this exactly once, when you are done — it ends your work."
 
+
+class _AnswerFields(BaseModel):
     sql: str = Field(
         description="The exact final Trino SQL whose results answer the question — the same query you executed "
                     "successfully with execute_trino_query.",
@@ -50,11 +57,15 @@ class DeepAgentAnswer(BaseModel):
     confidence: Literal["high", "medium", "low"] = Field(description="Confidence that the SQL answers the question.")
 
 
-# Same tool name ("DeepAgentAnswer"), plus the option to ask a clarifying question instead of answering.
-DeepAgentAnswerWithClarification = create_model(
-    "DeepAgentAnswer",
-    __base__=DeepAgentAnswer,
-    __doc__=DeepAgentAnswer.__doc__,
+# The final-answer tool. LangChain's ToolStrategy names the tool after the schema's __name__, so the
+# model sees a tool called `submit_answer` (the "I'm done" submit convention).
+SubmitAnswer = create_model(TOOL_NAME, __base__=_AnswerFields, __doc__=_SUBMIT_DOC)
+
+# Same tool name, plus the option to ask a clarifying question instead of answering.
+SubmitAnswerWithClarification = create_model(
+    TOOL_NAME,
+    __base__=SubmitAnswer,
+    __doc__=_SUBMIT_DOC,
     sql=(str | None, Field(
         default=None,
         description="The exact final Trino SQL whose results answer the question — the same query you executed "
@@ -66,10 +77,10 @@ DeepAgentAnswerWithClarification = create_model(
 )
 
 
-def answer_schema(clarifications_enabled: bool | None = None) -> type[DeepAgentAnswer]:
+def answer_schema(clarifications_enabled: bool | None = None) -> type[SubmitAnswer]:
     """The final-answer schema; without clarifications the model must always commit to a SQL answer."""
     enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED if clarifications_enabled is None else clarifications_enabled
-    return DeepAgentAnswerWithClarification if enabled else DeepAgentAnswer
+    return SubmitAnswerWithClarification if enabled else SubmitAnswer
 
 
 def normalize_sql(sql: str | None) -> str | None:
@@ -144,7 +155,7 @@ def _result_view(record: dict[str, Any]) -> dict[str, Any]:
 
 def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]:
     """Build `final_result` from the structured answer and the run's successful executions."""
-    if not isinstance(answer, DeepAgentAnswer):
+    if not isinstance(answer, SubmitAnswer):
         return {"status": "no_answer", "executed": False, "answer": None, "sql": None, "result": None, "error": None}
 
     base = {"answer": answer.model_dump(), "error": None}
@@ -161,11 +172,90 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]
     return {**base, "status": status, "executed": True, "sql": record["submitted_sql"], "result": _result_view(record)}
 
 
+RECOVERED_FLAG = "deep_agent_recovered_answer"
+_FENCED_JSON = re.compile(r"^```(?:json)?\s*(\{.*\})\s*```$", re.DOTALL)
+
+
+def _answer_from_text(text: str, schema: type[BaseModel]) -> tuple[dict, BaseModel] | None:
+    """The message text as a valid final answer (a JSON object that passes the answer schema), else None."""
+    body = text.strip()
+    fenced = _FENCED_JSON.match(body)
+    if fenced:
+        body = fenced.group(1)
+    if not (body.startswith("{") and body.endswith("}")):
+        return None
+    try:
+        args = json.loads(body)
+        return args, schema(**args)
+    except (ValueError, TypeError):
+        return None
+
+
+class AnswerRecoveryMiddleware(AgentMiddleware):
+    """Recover a final answer the model wrote as text instead of calling submit_answer.
+
+    With gpt-oss behind the configured OpenAI-compatible server, forced tool choice is not always
+    honoured late in a run: the model sometimes writes the submit_answer JSON as plain text
+    (finish_reason "tool_calls", no parsed tool call). LangChain then sees no tool call and the run
+    ends without an answer. When — and only when — the text is a JSON object that validates against
+    the answer schema, this turns it into the same result a real submit_answer call produces (the
+    tool call, its tool message and `structured_response`), marked with RECOVERED_FLAG.
+    Anything else is left untouched.
+    """
+
+    def _recover(self, request: ModelRequest, response: ModelResponse) -> ModelResponse:
+        schema = getattr(request.response_format, "schema", None)
+        if response.structured_response is not None or schema is None or not response.result:
+            return response
+        output = response.result[-1]
+        if not isinstance(output, AIMessage) or output.tool_calls:
+            return response
+        parsed = _answer_from_text(output.text, schema)
+        if parsed is None:
+            return response
+        args, answer = parsed
+        call_id = f"recovered_{uuid.uuid4().hex[:12]}"
+        logger.warning("Recovered a final answer the model wrote as text instead of a submit_answer call")
+        repaired = AIMessage(
+            content="",
+            tool_calls=[{"name": schema.__name__, "args": args, "id": call_id, "type": "tool_call"}],
+            additional_kwargs={**output.additional_kwargs, RECOVERED_FLAG: True},
+            response_metadata=output.response_metadata,
+            usage_metadata=output.usage_metadata,
+            id=output.id,
+            name=output.name,
+        )
+        tool_message = ToolMessage(
+            content=f"Returning structured response: {answer}", tool_call_id=call_id, name=schema.__name__,
+        )
+        return ModelResponse(result=[*response.result[:-1], repaired, tool_message], structured_response=answer)
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+        return self._recover(request, handler(request))
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        return self._recover(request, await handler(request))
+
+
+def _current_turn(messages: list) -> list:
+    """Messages after the latest human message (this run's turn)."""
+    for i in range(len(messages) - 1, -1, -1):
+        if getattr(messages[i], "type", None) == "human":
+            return messages[i + 1:]
+    return messages
+
+
 class AnswerVerificationMiddleware(AgentMiddleware):
     """After the agent finishes, bind the structured answer to executed SQL and real rows."""
 
     def after_agent(self, state, runtime) -> dict[str, Any] | None:
-        return {"final_result": verify_answer(state.get("structured_response"), state.get("executed_queries") or [])}
+        final = verify_answer(state.get("structured_response"), state.get("executed_queries") or [])
+        final["recovered_from_text"] = any(
+            (getattr(m, "additional_kwargs", None) or {}).get(RECOVERED_FLAG) for m in _current_turn(state.get("messages") or [])
+        )
+        return {"final_result": final}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.after_agent, state, runtime)

@@ -7,7 +7,7 @@ from core.trino import TrinoExecutionResult
 from deep_agent import answer as answer_module
 from deep_agent import tools
 from deep_agent.agent import create_deep_agent
-from deep_agent.answer import DeepAgentAnswer, answer_schema, normalize_sql, render_markdown, verify_answer
+from deep_agent.answer import SubmitAnswer, answer_schema, normalize_sql, render_markdown, verify_answer
 from tests.deep_agent.conftest import system_text
 
 EXECUTED = "SELECT COUNT(DISTINCT flight_id) AS flights FROM \"postgres\".\"public\".\"flights_table\" WHERE launch_country = 'France'"
@@ -24,7 +24,7 @@ def _policy(final_args, content=""):
         tool_msgs = [m for m in messages if m.type == "tool"]
         if not tool_msgs:
             return AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": EXECUTED}, "id": "e1"}])
-        return AIMessage(content, tool_calls=[{"name": "DeepAgentAnswer", "args": final_args, "id": "final"}])
+        return AIMessage(content, tool_calls=[{"name": "submit_answer", "args": final_args, "id": "final"}])
     return policy
 
 
@@ -127,23 +127,23 @@ def test_verify_without_structured_answer():
 
 def test_answer_schema_requires_explanation_and_confidence():
     with pytest.raises(ValueError):
-        DeepAgentAnswer(sql="SELECT 1")
+        SubmitAnswer(sql="SELECT 1")
 
 
 def test_clarifications_are_off_by_default():
     schema = answer_schema()
-    assert schema.__name__ == "DeepAgentAnswer"
+    assert schema.__name__ == "submit_answer"
     assert "needs_clarification" not in schema.model_fields
     assert schema.model_fields["sql"].is_required()          # the model must always commit to a SQL answer
     enabled = answer_schema(True)
-    assert enabled.__name__ == "DeepAgentAnswer"             # same tool name either way
+    assert enabled.__name__ == "submit_answer"             # same tool name either way
     assert "needs_clarification" in enabled.model_fields and not enabled.model_fields["sql"].is_required()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_clarification_only_mentioned_in_prompt_when_enabled(scripted_model, enabled):
-    model = scripted_model(AIMessage("", tool_calls=[{"name": "DeepAgentAnswer", "args": {**ANSWER}, "id": "f"}]))
+    model = scripted_model(AIMessage("", tool_calls=[{"name": "submit_answer", "args": {**ANSWER}, "id": "f"}]))
     agent = create_deep_agent(model=model, clarifications_enabled=enabled)
     with patch.object(answer_module, "execute_query_sync", return_value=_trino([[1]])):
         await agent.ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": f"c{enabled}"}})
@@ -156,7 +156,7 @@ async def test_matched_exploration_sample_is_re_executed_for_the_full_answer(pol
     def policy(messages):
         if not [m for m in messages if m.type == "tool"]:
             return AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": EXECUTED, "limit": 5}, "id": "e1"}])
-        return AIMessage("", tool_calls=[{"name": "DeepAgentAnswer", "args": ANSWER, "id": "final"}])
+        return AIMessage("", tool_calls=[{"name": "submit_answer", "args": ANSWER, "id": "final"}])
 
     sample = _trino([[i] for i in range(6)])                 # 5 + 1 rows -> truncated sample
     full = _trino([[i] for i in range(40)])
@@ -170,8 +170,51 @@ async def test_matched_exploration_sample_is_re_executed_for_the_full_answer(pol
 
 def test_re_execution_without_a_row_ceiling(monkeypatch):
     monkeypatch.setattr(answer_module.settings, "DEEP_AGENT_MAX_ROWS", None)
-    answer = DeepAgentAnswer(sql="SELECT a FROM t", explanation_he="הסבר", confidence="high")
+    answer = SubmitAnswer(sql="SELECT a FROM t", explanation_he="הסבר", confidence="high")
     with patch.object(answer_module, "execute_query_sync", return_value=_trino([[i] for i in range(500)])) as run:
         final = verify_answer(answer, [])
     assert run.call_args.args[0] == "SELECT a FROM t"       # no LIMIT added
     assert final["executed"] is True and final["result"]["row_count"] == 500 and final["result"]["truncated"] is False
+
+
+# ── recovery of answers written as text (gpt-oss behind the configured server) ──
+
+def _text_ending_policy(final_text):
+    def policy(messages):
+        if not [m for m in messages if m.type == "tool"]:
+            return AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": EXECUTED}, "id": "e1"}])
+        return AIMessage(final_text, response_metadata={"finish_reason": "tool_calls"})
+    return policy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrap", [lambda j: j, lambda j: f"```json\n{j}\n```"], ids=["bare", "fenced"])
+async def test_answer_written_as_json_text_is_recovered(policy_model, wrap):
+    import json as _json
+
+    result, _, reexec = await _run(policy_model, _text_ending_policy(wrap(_json.dumps(ANSWER, ensure_ascii=False))),
+                                   [_trino([[466]])])
+    final = result["final_result"]
+    assert final["status"] == "matched" and final["executed"] is True
+    assert final["result"]["rows"] == [[466]]
+    assert final["recovered_from_text"] is True
+    reexec.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "סיימתי, התשובה היא 466",                                  # prose, not an answer object
+    '{"sql": "SELECT 1"}',                                    # JSON, but missing required fields
+    '{"explanation_he": "x", "confidence": "high"',           # broken JSON
+], ids=["prose", "invalid-schema", "broken-json"])
+async def test_text_that_is_not_a_valid_answer_is_not_recovered(policy_model, text):
+    result, _, _ = await _run(policy_model, _text_ending_policy(text), [_trino([[466]])])
+    final = result["final_result"]
+    assert final["status"] == "no_answer" and final["executed"] is False
+    assert final["recovered_from_text"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_real_tool_call_is_not_marked_recovered(policy_model):
+    result, _, _ = await _run(policy_model, _policy(ANSWER), [_trino([[466]])])
+    assert result["final_result"]["recovered_from_text"] is False

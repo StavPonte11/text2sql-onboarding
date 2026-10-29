@@ -9,11 +9,12 @@ import agent.utils.jeen_metadata_client as jmc
 from agent.utils.jeen_metadata_client import JeenMetadataClient, JeenMetadataError
 from core.trino import TrinoExecutionResult
 from deep_agent import tools
-from deep_agent.tools import DEEP_AGENT_TOOLS
+from deep_agent.tools import DEEP_AGENT_TOOLS, UNREGISTERED_TOOLS
 
-# Minimal valid arguments for every tool.
+ALL_TOOLS = [*DEEP_AGENT_TOOLS, *UNREGISTERED_TOOLS]
+
+# Minimal valid arguments for every tool (registered and unregistered — both must honour the envelope).
 TOOL_ARGS = {
-    "get_database_catalog": {},
     "get_database_tables": {},
     "get_table_columns": {"table_name": "t"},
     "get_table_relationships": {},
@@ -63,17 +64,23 @@ def patched(request):
 
 
 def test_every_tool_is_covered():
-    assert {t.name for t in DEEP_AGENT_TOOLS} == set(TOOL_ARGS)
+    assert {t.name for t in ALL_TOOLS} == set(TOOL_ARGS)
+
+
+def test_registered_tool_set():
+    """The catalog is loaded for every run (CatalogMiddleware), so there is no catalog tool, and the
+    tools whose information the catalog already contains are not offered to the model."""
+    assert {t.name for t in DEEP_AGENT_TOOLS} == {
+        "search_column_values", "get_column_distinct_values", "get_column_profile", "resolve_location_to_wkt",
+        "execute_trino_query", "get_sample_rows", "validate_sql", "enrich_sql_filters",
+    }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("patched", [False, True], ids=["success", "failure"], indirect=True)
-@pytest.mark.parametrize("tool", DEEP_AGENT_TOOLS, ids=lambda t: t.name)
+@pytest.mark.parametrize("tool", ALL_TOOLS, ids=lambda t: t.name)
 async def test_tool_returns_envelope(tool, patched):
     raw = await tool.ainvoke(TOOL_ARGS[tool.name])
-    if tool.name == "get_database_catalog" and not patched:
-        assert raw.startswith("# catalog")  # the catalog itself, as plain text
-        return
     out = json.loads(raw)
     assert set(out) == {"ok", "data", "error"}, raw
     assert out["ok"] is (not patched), raw
@@ -84,15 +91,6 @@ async def test_tool_returns_envelope(tool, patched):
     else:
         assert out["error"] is None
     assert "\n  " not in raw, "envelope must be compact (no indentation)"
-
-
-@pytest.mark.asyncio
-async def test_catalog_is_plain_text_with_capabilities_note():
-    client = MagicMock(get_catalog_prompt=AsyncMock(return_value='"postgres"."public"."t": desc\n(no knowledge pairs)'))
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
-        raw = await tools.get_database_catalog.ainvoke({})
-    assert raw.startswith('"postgres"."public"."t"')  # quotes not JSON-escaped
-    assert "Knowledge Pairs: None (skip search_knowledge_pairs)" in raw
 
 
 @pytest.mark.asyncio

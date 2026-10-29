@@ -54,6 +54,10 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
+    # Prompts (see deep_agent/prompt_registry.py). Off until the prompts are finalised and synced to Langfuse.
+    DEEP_AGENT_LANGFUSE_PROMPTS: bool = False      # serve deep-agent/<name> prompts from Langfuse (packaged .md fallback)
+    DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
+    DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""

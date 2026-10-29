@@ -12,37 +12,36 @@ from deep_agent.agent import create_deep_agent
 from deep_agent.context import DeepAgentContext, date_line
 from tests.deep_agent.conftest import system_text
 
-NO_PAIRS_CATALOG = "# catalog for connection 1\n(no knowledge pairs)"
-FULL_CATALOG = "# catalog for connection 2\nknowledge pairs: 3"
+CATALOGS = {1: "# catalog for connection 1", 2: "# catalog for connection 2"}
 
 
-def _catalog_then_pairs_policy(messages):
-    """Thread-local behaviour: fetch catalog, then search knowledge pairs, then answer."""
-    tool_msgs = [m for m in messages if m.type == "tool"]
-    if not tool_msgs:
-        return AIMessage("", tool_calls=[{"name": "get_database_catalog", "args": {}, "id": "c1"}])
-    if tool_msgs[-1].name == "get_database_catalog":
-        return AIMessage("", tool_calls=[{"name": "search_knowledge_pairs", "args": {"query": "כמה טיסות"}, "id": "k1"}])
+def _search_then_answer_policy(messages):
+    """Thread-local behaviour: one value search, then finish."""
+    if not [m for m in messages if m.type == "tool"]:
+        return AIMessage("", tool_calls=[{"name": "search_column_values", "args": {"search_term": "Acme"}, "id": "s1"}])
     return AIMessage("done")
 
 
-def _metadata_client():
+def _catalog_by_connection():
     async def catalog(connection_id=None):
         await asyncio.sleep(0.01)  # force interleaving between the two requests
-        return NO_PAIRS_CATALOG if connection_id == 1 else FULL_CATALOG
+        return CATALOGS.get(connection_id, "# default connection catalog")
+    return AsyncMock(side_effect=catalog)
 
-    async def pairs(query, limit=10, connection_id=None):
+
+def _value_client():
+    async def search(search_term, table=None, column=None, limit=10, raw=False, connection_id=None):
         await asyncio.sleep(0.01)
-        return [{"question": query, "connection": connection_id}]
-
-    return MagicMock(get_catalog_prompt=AsyncMock(side_effect=catalog),
-                     search_knowledge_pairs=AsyncMock(side_effect=pairs))
+        return {"values": [{"value": f"{search_term} @ {connection_id}"}]}
+    return MagicMock(search_column_values=AsyncMock(side_effect=search))
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_for_different_connections_are_isolated(policy_model):
-    agent = create_deep_agent(model=policy_model(_catalog_then_pairs_policy))
-    client = _metadata_client()
+async def test_concurrent_requests_for_different_connections_are_isolated(policy_model, fake_catalog):
+    model = policy_model(_search_then_answer_policy)
+    agent = create_deep_agent(model=model)
+    fake_catalog.get_catalog_prompt = _catalog_by_connection()
+    client = _value_client()
 
     with patch.object(tools, "get_jeen_metadata_client", return_value=client):
         r1, r2 = await asyncio.gather(
@@ -52,28 +51,25 @@ async def test_concurrent_requests_for_different_connections_are_isolated(policy
                           context=DeepAgentContext(connection_id=2)),
         )
 
-    # Each request fetched its own catalog...
-    assert sorted(c.kwargs["connection_id"] for c in client.get_catalog_prompt.await_args_list) == [1, 2]
-    # ...capabilities landed in each thread's own state...
-    assert r1["connection_capabilities"]["knowledge_pairs"] is False
-    assert r2["connection_capabilities"]["knowledge_pairs"] is True
-    # ...so only connection 2 actually searched knowledge pairs, with its own connection id.
-    client.search_knowledge_pairs.assert_awaited_once()
-    assert client.search_knowledge_pairs.await_args.kwargs["connection_id"] == 2
-
-    pairs_1 = json.loads(next(m for m in r1["messages"] if m.type == "tool" and m.name == "search_knowledge_pairs").text)
-    pairs_2 = json.loads(next(m for m in r2["messages"] if m.type == "tool" and m.name == "search_knowledge_pairs").text)
-    assert pairs_1["data"]["pairs"] == [] and "NO knowledge pairs" in pairs_1["data"]["notice"]
-    assert pairs_2["data"] == [{"question": "כמה טיסות", "connection": 2}]
+    # Each run loaded its own connection's catalog into its own state...
+    assert sorted(c.kwargs["connection_id"] for c in fake_catalog.get_catalog_prompt.await_args_list) == [1, 2]
+    assert (r1["jeen_catalog"], r2["jeen_catalog"]) == (CATALOGS[1], CATALOGS[2])
+    # ...each model call saw only its own catalog...
+    prompts = [system_text(seen) for seen in model.seen]
+    for prompt in prompts:
+        assert (CATALOGS[1] in prompt) != (CATALOGS[2] in prompt)
+    # ...and tools called the metadata service with their own connection id.
+    assert sorted(c.kwargs["connection_id"] for c in client.search_column_values.await_args_list) == [1, 2]
+    v1 = json.loads(next(m for m in r1["messages"] if m.type == "tool").text)
+    v2 = json.loads(next(m for m in r2["messages"] if m.type == "tool").text)
+    assert v1["data"]["matches"][0]["value"] == "Acme @ 1" and v2["data"]["matches"][0]["value"] == "Acme @ 2"
 
 
 @pytest.mark.asyncio
-async def test_no_context_falls_back_to_default_connection(policy_model):
-    agent = create_deep_agent(model=policy_model(_catalog_then_pairs_policy))
-    client = _metadata_client()
-    with patch.object(tools, "get_jeen_metadata_client", return_value=client):
-        await agent.ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": "default"}})
-    assert client.get_catalog_prompt.await_args.kwargs["connection_id"] is None  # client uses its configured default
+async def test_no_context_falls_back_to_default_connection(policy_model, fake_catalog):
+    agent = create_deep_agent(model=policy_model(lambda messages: AIMessage("done")))
+    await agent.ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": "default"}})
+    assert fake_catalog.get_catalog_prompt.await_args.kwargs["connection_id"] is None  # client uses its configured default
 
 
 class _FrozenDatetime(datetime):

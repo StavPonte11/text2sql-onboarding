@@ -3,7 +3,11 @@ Deep Agent tools.
 
 Every tool returns the same JSON envelope (see deep_agent.envelope):
     {"ok": true, "data": ..., "error": null} | {"ok": false, "data": null, "error": {"name", "message", ...}}
-except get_database_catalog, whose success result is the catalog itself as plain text.
+
+The connection's catalog is not a tool: it is loaded for every run and shown to the model by
+CatalogMiddleware (deep_agent.catalog). DEEP_AGENT_TOOLS (bottom of this file) is what the model
+gets; a few metadata tools are kept here unregistered because the catalog already contains
+their information.
 """
 
 import logging
@@ -23,7 +27,7 @@ from agent.utils.sql_guard import effective_cap
 from core.trino import execute_query_sync
 from deep_agent import trino_errors
 from deep_agent.answer import executed_query_record
-from deep_agent.context import DeepAgentContext, cached_catalog, capability, connection_id, user_request
+from deep_agent.context import DeepAgentContext, cached_catalog, connection_id, user_request
 from deep_agent.envelope import (
     ENRICHMENT_ERROR,
     LOCATION_NOT_FOUND,
@@ -39,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Database Catalog & Schema
+# Metadata (beyond the catalog)
 # ---------------------------------------------------------------------------
 
 Runtime = ToolRuntime[DeepAgentContext]
@@ -51,54 +55,6 @@ def _metadata_failure(what: str, exc: Exception) -> str:
         METADATA_ERROR,
         f"{what} failed: {exc}. The metadata service failed — this does not mean the data is empty.",
     ))
-
-
-@tool
-async def get_database_catalog(runtime: Runtime = None) -> str | Command:
-    """
-    Retrieves the complete metadata catalog and structural overview for the database.
-
-    Use this FIRST when starting any new query to discover what tables exist, how they relate,
-    and to see column profiling statistics including semantic types, null ratios, and distinct counts.
-
-    On success the result is the catalog as plain text (not JSON): Column/Table Names, Descriptions,
-    Types, Universal Base Metrics (Null Rate, Distinct Count, Cardinality Ratio) and specific Profiling
-    Data Payloads, followed by a note on which discovery sources exist for this connection.
-    On failure it is the usual JSON envelope with ok=false.
-
-    Column semantic_type values to watch for:
-    - 'categorical' — small finite value set; values are in the catalog or via get_column_distinct_values.
-    - 'large_categorical' / 'large_unit_id' — too many values to enumerate; use search_column_values.
-    - 'geo' — WKT geometry column; use resolve_location_to_wkt to build filter values.
-
-    Do NOT use this to fetch live data rows; this only retrieves metadata and schema definitions.
-    """
-    try:
-        catalog_prompt = await get_jeen_metadata_client().get_catalog_prompt(connection_id=connection_id(runtime))
-    except Exception as e:
-        return _metadata_failure("get_database_catalog", e)
-
-    lower_prompt = catalog_prompt.lower()
-    has_kp = "(no knowledge pairs)" not in lower_prompt
-    has_bt = "(no business terms)" not in lower_prompt
-    has_fk = "(no relationships)" not in lower_prompt
-
-    footer_lines = [
-        "\n\n---",
-        "### Discovery Capabilities Note:",
-        f"- Knowledge Pairs: {'Available' if has_kp else 'None (skip search_knowledge_pairs)'}",
-        f"- Business Terms: {'Available' if has_bt else 'None (skip search_business_terms)'}",
-        f"- Foreign Keys: {'Available' if has_fk else 'None (infer joins from column names)'}",
-    ]
-    content = catalog_prompt + "\n".join(footer_lines)
-    if runtime is None or not runtime.tool_call_id:
-        return content
-    # Record capabilities + the raw catalog in this thread's state so later tool calls in the thread can read them.
-    return Command(update={
-        "connection_capabilities": {"knowledge_pairs": has_kp, "business_terms": has_bt, "relationships": has_fk},
-        "jeen_catalog": catalog_prompt,
-        "messages": [ToolMessage(content=content, tool_call_id=runtime.tool_call_id, name="get_database_catalog")],
-    })
 
 
 @tool
@@ -135,11 +91,6 @@ async def get_table_relationships(runtime: Runtime = None) -> str:
     Returns the source-scoped foreign-key and semantic join relationships between tables.
     Use this to identify exact join paths and foreign key pairs.
     """
-    if not capability(runtime, "relationships"):
-        return ok({
-            "relationships": [],
-            "notice": "This connection has NO foreign key relationships defined. Infer joins using matching column names, e.g. customer_id.",
-        })
     try:
         rels = await get_jeen_metadata_client().get_relationships(connection_id=connection_id(runtime))
         return ok({"relationships": rels})
@@ -172,14 +123,12 @@ async def get_table_profile(table_name: str, runtime: Runtime = None) -> str:
 @tool
 async def get_column_profile(table_name: str, column_name: str, runtime: Runtime = None) -> str:
     """
-    Retrieves the latest stored statistics for a single specific column.
+    Retrieves the full stored statistics of one column — detail the catalog does not show:
+    null count / ratio, top values with their frequencies, string lengths, quartiles and a histogram.
 
-    Use this before writing a WHERE clause to learn exactly how values are formatted in the database.
-    If 'domainIsComplete: true', the listed example values are the ENTIRE value set — any other
-    value can be safely ruled out. The 'semanticType' field indicates how to search the column
-    (e.g., categorical, large_categorical, geo).
-
-    Do NOT use this for live dynamic querying of values; this reads pre-computed metadata only.
+    The catalog already lists each column's type, semantic_type, distinct count, range and example
+    values (all values when the domain is complete), so call this only when you need that extra
+    detail — e.g. checking NULLs when a query returns 0 rows, or a value distribution.
 
     Args:
         table_name (str): The fully qualified exact name of the table, e.g., '"catalog"."schema"."table"'.
@@ -322,14 +271,14 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
 
     BEST USED FOR:
     - Low-cardinality `categorical` columns (e.g. status, priority, category) where you want to see all
-      5-20 possible valid values, and they aren't already complete in the catalog (`domainIsComplete: false`).
+      5-20 possible valid values, and the catalog doesn't already list all of them.
 
     DO NOT USE FOR:
     - High-cardinality columns (`large_categorical`, `large_unit_id`, names, SKUs, cities). Dumping 50-100
       random values from a table with thousands of entities wastes tokens and latency without finding the
       specific entity you need. Use `search_column_values` instead for targeted entity search.
     - Numeric, date, or continuous columns (checking unique values is meaningless for value matching).
-    - Columns where the catalog already says `domainIsComplete: true` (all values are already known).
+    - Columns whose values the catalog already lists in full ("values (all)").
 
     Args:
         table_name (str): The fully qualified exact name of the table.
@@ -425,8 +374,6 @@ async def search_business_terms(query: str, limit: int = 10, runtime: Runtime = 
         query (str): A natural language question or phrase (multilingual support).
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    if not capability(runtime, "business_terms"):
-        return ok({"terms": [], "notice": "This connection has NO business terms defined. Do not call this tool again."})
     try:
         terms = await get_jeen_metadata_client().search_business_terms(query, limit, connection_id=connection_id(runtime))
         return ok(terms)
@@ -450,8 +397,6 @@ async def search_knowledge_pairs(query: str, limit: int = 10, runtime: Runtime =
         query (str): The natural language user question (multilingual/Hebrew support).
         limit (int): Maximum number of results to return. Defaults to 10.
     """
-    if not capability(runtime, "knowledge_pairs"):
-        return ok({"pairs": [], "notice": "This connection has NO knowledge pairs defined. Do not call this tool again."})
     try:
         pairs = await get_jeen_metadata_client().search_knowledge_pairs(query, limit, connection_id=connection_id(runtime))
         return ok(pairs)
@@ -649,26 +594,31 @@ def resolve_location_to_wkt(location_name: str) -> str:
     return ok({"location": location_name, "wkt": quoted.strip("'")})
 
 
-# The agent's full domain tool set (order = order shown to the model).
+# The tools the model gets (order = order shown to the model). The catalog itself is loaded for
+# every run by CatalogMiddleware, so there is no catalog tool.
 DEEP_AGENT_TOOLS = [
-    # Discovery & Schema
-    get_database_catalog,
-    get_database_tables,
-    get_table_columns,
-    get_table_relationships,
-    get_table_profile,
-    get_column_profile,
-    # Search & Resolve
-    search_metadata,
-    search_business_terms,
-    search_knowledge_pairs,
+    # Values & places
     search_column_values,
+    get_column_distinct_values,
+    get_column_profile,
     resolve_location_to_wkt,
-    # Query Execution
+    # Query execution
     execute_trino_query,
     get_sample_rows,
-    get_column_distinct_values,
     validate_sql,
     # Post-processing
     enrich_sql_filters,
+]
+
+# Implemented but not registered: the catalog already contains their information (tables, columns,
+# profile stats, relationships, business terms, knowledge pairs). Register again if a connection's
+# catalog grows too large to load whole, or when targeted search over those sections pays off.
+UNREGISTERED_TOOLS = [
+    get_database_tables,
+    get_table_columns,
+    get_table_profile,
+    get_table_relationships,
+    search_metadata,
+    search_business_terms,
+    search_knowledge_pairs,
 ]

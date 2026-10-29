@@ -52,14 +52,14 @@ def test_missing_required_skill_fails_fast(skills_copy):
 
 def test_skill_without_frontmatter_fails_fast(skills_copy):
     skills = skills_copy
-    (skills / "trino-expert" / "SKILL.md").write_text("# no frontmatter", encoding="utf-8")
+    (skills / "temporal-analyst" / "SKILL.md").write_text("# no frontmatter", encoding="utf-8")
     with pytest.raises(DeepAgentResourceError, match="frontmatter"):
         discover_skills(skills)
 
 
 def test_skill_name_must_match_directory(skills_copy):
     skills = skills_copy
-    os.rename(skills / "trino-expert", skills / "trino")
+    os.rename(skills / "temporal-analyst", skills / "temporal")
     with pytest.raises(DeepAgentResourceError, match="must match its directory"):
         discover_skills(skills)
 
@@ -77,7 +77,8 @@ async def test_skills_and_system_prompt_reach_the_model_without_memory(scripted_
     for skill_md in sorted(DEFAULT_SKILLS_DIR.glob("*/SKILL.md")):
         description = _read_frontmatter(skill_md)["description"]
         assert description[:60] in prompt, f"skill {skill_md.parent.name} not loaded"
-    assert "## Phase 1 — Understand (Discovery)" in prompt, "system prompt file not loaded"
+    assert "## Phase 1 — Understand" in prompt, "system prompt file not loaded"
+    assert "# Database Catalog" in prompt, "connection catalog not added to the system message"
     assert "<agent_memory>" not in prompt, "no AGENTS.md memory block (or its boilerplate) is expected"
 
 
@@ -85,7 +86,7 @@ async def test_skills_and_system_prompt_reach_the_model_without_memory(scripted_
 async def test_agent_cannot_write_skills(scripted_model):
     write = AIMessage("", tool_calls=[
         {"name": "write_file", "args": {"file_path": "/skills/evil/SKILL.md", "content": "x"}, "id": "w1"},
-        {"name": "edit_file", "args": {"file_path": "/skills/trino-expert/SKILL.md", "old_string": "Trino", "new_string": "X"}, "id": "w2"},
+        {"name": "edit_file", "args": {"file_path": "/skills/temporal-analyst/SKILL.md", "old_string": "Temporal", "new_string": "X"}, "id": "w2"},
     ])
     model = scripted_model(write, AIMessage("done"))
     agent = create_deep_agent(model=model)
@@ -96,17 +97,17 @@ async def test_agent_cannot_write_skills(scripted_model):
     for msg in tool_results:
         assert "denied" in msg.text.lower() or "permission" in msg.text.lower(), msg.text
     assert not (DEFAULT_SKILLS_DIR / "evil").exists()
-    assert "Trino SQL Expert Reference" in (DEFAULT_SKILLS_DIR / "trino-expert" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Temporal SQL Reference for Trino" in (DEFAULT_SKILLS_DIR / "temporal-analyst" / "SKILL.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
 async def test_agent_can_read_a_skill_file(scripted_model):
     read = AIMessage("", tool_calls=[
-        {"name": "read_file", "args": {"file_path": "/skills/trino-expert/SKILL.md"}, "id": "r1"},
+        {"name": "read_file", "args": {"file_path": "/skills/temporal-analyst/SKILL.md"}, "id": "r1"},
     ])
     model = scripted_model(read, AIMessage("done"))
     agent = create_deep_agent(model=model)
     result = await agent.ainvoke({"messages": [("user", "hi")]}, {"configurable": {"thread_id": "t-read"}})
 
     tool_msg = next(m for m in result["messages"] if m.type == "tool")
-    assert "Trino SQL Expert Reference" in tool_msg.text
+    assert "Temporal SQL Reference for Trino" in tool_msg.text

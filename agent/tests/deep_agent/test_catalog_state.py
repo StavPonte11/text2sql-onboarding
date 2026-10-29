@@ -17,21 +17,17 @@ class Marker(AsyncCallbackHandler):
     """A caller-supplied callback handler; it must reach the enrichment LLM calls."""
 
 
-def _policy(first_tool: str):
+def _policy(enrich_calls: int):
     def policy(messages):
         tool_msgs = [m for m in messages if m.type == "tool"]
-        steps = [first_tool, "enrich_sql_filters", "enrich_sql_filters"] if first_tool == "enrich_sql_filters" \
-            else ["get_database_catalog", "enrich_sql_filters"]
-        if len(tool_msgs) < len(steps):
-            name = steps[len(tool_msgs)]
-            args = {"sql": DRAFT} if name == "enrich_sql_filters" else {}
-            return AIMessage("", tool_calls=[{"name": name, "args": args, "id": f"t{len(tool_msgs)}"}])
+        if len(tool_msgs) < enrich_calls:
+            return AIMessage("", tool_calls=[{"name": "enrich_sql_filters", "args": {"sql": DRAFT}, "id": f"t{len(tool_msgs)}"}])
         return AIMessage("done")
     return policy
 
 
 @pytest.fixture
-def enrichment():
+def enrichment(fake_catalog):
     plan = SimpleNamespace(enrichment_details=[SimpleNamespace(
         changed_filter=True, column="launch_country", original_value="צרפת", refined_values=["France"],
         old_operator="=", new_operator="=",
@@ -42,12 +38,13 @@ def enrichment():
     with patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", enrich), \
          patch("agent.nodes.refiner.parse_jeen_catalog_tables", parse), \
          patch.object(tools, "get_jeen_metadata_client", return_value=client):
-        yield SimpleNamespace(enrich=enrich, parse=parse, client=client)
+        fake_catalog.get_catalog_prompt.return_value = CATALOG  # what CatalogMiddleware loads for the run
+        yield SimpleNamespace(enrich=enrich, parse=parse, client=client, run_catalog=fake_catalog)
 
 
 @pytest.mark.asyncio
-async def test_enrichment_uses_cached_catalog_question_and_parent_config(policy_model, enrichment):
-    agent = create_deep_agent(model=policy_model(_policy("get_database_catalog")))
+async def test_enrichment_uses_the_run_catalog_question_and_parent_config(policy_model, enrichment):
+    agent = create_deep_agent(model=policy_model(_policy(1)))
     marker = Marker()
     result = await agent.ainvoke(
         {"messages": [("user", QUESTION)]},
@@ -55,8 +52,9 @@ async def test_enrichment_uses_cached_catalog_question_and_parent_config(policy_
     )
 
     assert result["jeen_catalog"] == CATALOG
-    enrichment.client.get_catalog_prompt.assert_awaited_once()          # fetched once, by the catalog tool
-    enrichment.parse.assert_called_once_with(CATALOG)                   # exact cached text, not a model re-typing
+    enrichment.run_catalog.get_catalog_prompt.assert_awaited_once()     # loaded once, by CatalogMiddleware
+    enrichment.client.get_catalog_prompt.assert_not_awaited()           # the tool never fetches it itself
+    enrichment.parse.assert_called_once_with(CATALOG)                   # exact loaded text, not a model re-typing
 
     kwargs = enrichment.enrich.await_args.kwargs
     assert kwargs["user_request"] == QUESTION
@@ -71,13 +69,13 @@ async def test_enrichment_uses_cached_catalog_question_and_parent_config(policy_
 
 
 @pytest.mark.asyncio
-async def test_enrichment_before_catalog_fetches_once_and_caches(policy_model, enrichment):
-    agent = create_deep_agent(model=policy_model(_policy("enrich_sql_filters")))
-    result = await agent.ainvoke({"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "e2"}})
+async def test_repeated_enrichment_never_refetches_the_catalog(policy_model, enrichment):
+    agent = create_deep_agent(model=policy_model(_policy(3)))
+    await agent.ainvoke({"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "e2"}})
 
-    assert result["jeen_catalog"] == CATALOG
     assert enrichment.enrich.await_count == 3
-    enrichment.client.get_catalog_prompt.assert_awaited_once()  # later calls hit the state cache
+    enrichment.run_catalog.get_catalog_prompt.assert_awaited_once()
+    enrichment.client.get_catalog_prompt.assert_not_awaited()
 
 
 @pytest.mark.asyncio

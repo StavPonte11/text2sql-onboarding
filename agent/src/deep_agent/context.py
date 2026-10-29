@@ -4,14 +4,12 @@ Request-scoped runtime context and state for the Deep Agent.
 Nothing request-specific lives in module globals:
 - DeepAgentContext is passed per invocation (`agent.ainvoke(..., context=DeepAgentContext(...))`)
   and read by tools through `ToolRuntime.context`.
-- Connection capabilities and the raw catalog fetched by get_database_catalog are written to
-  graph state (`connection_capabilities`, `jeen_catalog`) and read back by tools through
-  `ToolRuntime.state`.
+- The connection's catalog is loaded once per run by CatalogMiddleware (deep_agent.catalog)
+  into graph state (`jeen_catalog`) and read back by tools through `ToolRuntime.state`.
 - Today's date is added to the latest human message on every model call, in the
   context's timezone, so long-running processes never serve a stale date.
 """
 
-import operator
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,22 +30,32 @@ class DeepAgentContext:
     timezone: str = DEFAULT_TIMEZONE
 
 
+def merge_executions(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Append-only reducer for executed_queries that ignores records already present.
+
+    deepagents passes the parent's state into a subagent and returns the subagent's state as
+    an update; a plain list-append reducer would duplicate the parent's history on every
+    `task` call.
+    """
+    merged = list(left or [])
+    seen = {(r.get("query_id"), r.get("executed_sql")) for r in merged}
+    for record in right or []:
+        key = (record.get("query_id"), record.get("executed_sql"))
+        if key not in seen:
+            merged.append(record)
+            seen.add(key)
+    return merged
+
+
 class DeepAgentRuntimeState(AgentState):
-    connection_capabilities: NotRequired[dict[str, bool]]
-    jeen_catalog: NotRequired[str]  # raw catalog text, cached so tools never need the model to re-send it
-    executed_queries: NotRequired[Annotated[list[dict[str, Any]], operator.add]]  # successful executions (append-only)
+    jeen_catalog: NotRequired[str]  # the connection's catalog, loaded once per run (deep_agent.catalog)
+    executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
     final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:
     ctx = getattr(runtime, "context", None)
     return getattr(ctx, "connection_id", None)
-
-
-def capability(runtime: ToolRuntime | None, name: str) -> bool:
-    """Whether the connection has a discovery source; unknown (catalog not fetched yet) counts as available."""
-    state = getattr(runtime, "state", None) or {}
-    return bool((state.get("connection_capabilities") or {}).get(name, True))
 
 
 def cached_catalog(runtime: ToolRuntime | None) -> str | None:

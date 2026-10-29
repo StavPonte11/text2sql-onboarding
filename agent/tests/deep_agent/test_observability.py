@@ -44,7 +44,6 @@ class RunTreeRecorder(BaseCallbackHandler):
 
 
 STEPS = [
-    ("get_database_catalog", {}),
     ("get_sample_rows", {"table_name": '"postgres"."public"."flights_table"'}),
     ("execute_trino_query", {"sql": "SELECT COUNT(*) FROM flights_table WHERE launch_country = 'France'"}),
     ("enrich_sql_filters", {"sql": "SELECT 1 FROM flights_table WHERE launch_country = 'צרפת'"}),
