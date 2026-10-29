@@ -84,6 +84,8 @@ The user's word is almost never the stored string — the value may be spelled d
 - **Per-entity ratios**: mind the granularity of numerator vs denominator — "orders per resident" is `COUNT(orders) / SUM(population)`, not `AVG(count_per_row)`. When the denominator comes from another table, aggregate each side in its own CTE, then join and divide.
 - **Set operations**: prefer `UNION ALL`; `UNION` adds an expensive distributed de-duplication — use it only when de-duplication is required.
 - **Arrays**: membership `contains(arr, 'v')`; expand with `CROSS JOIN UNNEST(arr) AS t(element)`.
+- **Time filters**: a half-open range on the raw column (`col >= start AND col < end`), never a function around the filtered column. Dates the user names are **Israel time** — write `TIMESTAMP '2024-07-01 00:00:00 Asia/Jerusalem'`, not `... UTC` (2–3 hours off at each end). Details in the `temporal-analyst` skill.
+- **Coordinates**: `ST_Point(lon, lat)` and WKT are longitude first; `great_circle_distance(lat1, lon1, lat2, lon2)` is latitude first and returns km. Distances and areas on plain geometry are in degrees — wrap in `to_spherical_geography(...)` for metres. Details in the `spatial-analyst` skill.
 - **When several logic paths seem plausible** (INNER vs LEFT JOIN, different grouping), run 2–3 variants with `LIMIT 10` and compare before choosing — don't guess.
 
 **Functions that do NOT exist in Trino:**
@@ -131,6 +133,7 @@ The user's word is almost never the stored string — the value may be spelled d
 | `INVALID_CAST_ARGUMENT` (`Value cannot be cast to timestamp`) | The text has `T` / `Z` or a custom format — `from_iso8601_timestamp(col)` or `date_parse(col, fmt)` |
 | `INVALID_FUNCTION_ARGUMENT` (`Invalid format` in `date_parse`) | Wrong format specifiers — MySQL style, `%i` is minutes (not `%M`) |
 | `INVALID_FUNCTION_ARGUMENT` (`Latitude must be between -90 and 90`) | Coordinates swapped — `ST_Point(lon, lat)`, longitude first |
+| `FUNCTION_NOT_FOUND` (`Unexpected parameters (SphericalGeography...)` for `st_contains` etc.) | Containment needs geometry — keep `ST_Point` / `ST_GeometryFromText`, or `to_geometry(...)` a geography |
 | `DIVISION_BY_ZERO` | Wrap the divisor in `NULLIF(divisor, 0)` |
 | `SUBQUERY_MULTIPLE_ROWS` | Aggregate or `LIMIT 1` the scalar subquery, or turn it into a JOIN |
 | `EXCEEDED_*` (memory / time limits) | Narrow the time or partition range, select fewer columns, pre-aggregate in a CTE |

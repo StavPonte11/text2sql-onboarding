@@ -110,5 +110,5 @@ def test_guidance_contains_sql_examples():
 @pytest.mark.parametrize("name, sql", SQL_BLOCKS, ids=[n for n, _ in SQL_BLOCKS])
 def test_guidance_sql_parses_as_trino(name, sql):
     # Template placeholders like <filter> stand for a boolean expression.
-    sql = re.sub(r"<[^<>]+>", "1 = 1", sql)
+    sql = re.sub(r"<[A-Za-z_][\w ]*>", "1 = 1", sql)  # placeholders only — not `a <= x AND b >= y`
     sqlglot.parse_one(sql, read="trino")

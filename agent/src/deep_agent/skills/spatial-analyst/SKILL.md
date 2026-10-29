@@ -136,6 +136,31 @@ When the user asks for relative spatial relations, translate the intent into pre
 - **Never**: `ST_GeomFromText()` or `ST_PolygonFromText()` — they do not exist in Trino.
 - `ST_Distance` on WGS84 geometries returns **degrees**, not meters. For meters, wrap both sides in `to_spherical_geography(...)`.
 - `ST_Contains` works on `geometry` (degrees), **NOT** on `SphericalGeography`.
+- `ST_Buffer(geom, r)` takes **degrees**: `ST_Buffer(p, 0.01)` is about 1 km, not 0.01 km. For "within X metres" use a
+  distance in metres (`great_circle_distance` or spherical `ST_Distance`) instead of a buffer.
+- Area / length in real units: `ST_Area(to_spherical_geography(g)) / 1e6` is km², `ST_Length(to_spherical_geography(g))` is metres.
+
+### Parsing geometries
+- WKT text → `ST_GeometryFromText(col)`; unparsable rows → `try(ST_GeometryFromText(col))` and skip the NULLs.
+- WKB hex string → `ST_GeomFromBinary(from_hex(col))`.
+- GeoJSON text → `from_geojson_geometry(col)` returns a **SphericalGeography**: for `ST_Contains` and other geometry
+  functions wrap it, `to_geometry(from_geojson_geometry(col))`.
+
+### Performance
+- **Cheap bounding box first**: filter the raw numeric `lat` / `lon` columns with `BETWEEN` before any `ST_` function or
+  distance. Around Israel, 1° latitude ≈ 111 km and 1° longitude ≈ 94 km.
+- Filter time (and other plain conditions) in a CTE first, so the spatial join only sees the rows it needs.
+- Large point-to-point proximity joins: join on a bing tile first, then check the exact distance
+  (`bing_tile_quadkey(bing_tile_at(lat, lon, 15))` on both sides; pairs across tile edges need `bing_tiles_around`).
+
+```sql
+SELECT e.event_id, great_circle_distance(e.lat, e.lon, 32.08, 34.78) AS dist_km
+FROM "catalog"."schema"."events" e
+WHERE e.lat BETWEEN 32.05 AND 32.11
+  AND e.lon BETWEEN 34.74 AND 34.82
+  AND great_circle_distance(e.lat, e.lon, 32.08, 34.78) <= 3
+ORDER BY dist_km
+```
 
 ### Spatial Joins Acceleration
 Put `ST_Contains` directly in the `JOIN ... ON` clause so Trino invokes its internal spatial join optimization:
