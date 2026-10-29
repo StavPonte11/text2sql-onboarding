@@ -447,9 +447,11 @@ async def search_column_values(
       (e.g., finding 'Acme Corporation LLC' from 'Acme Corp', or the stored spelling of a Hebrew term). Multilingual,
       keyword, and vector search finds the exact database spelling.
 
-    Returns data.matches — every matching value (use each 'value' verbatim in SQL) with:
+    Returns data.matches — up to `limit` matching values (use each 'value' verbatim in SQL) with:
     - 'keyword_similarity' close to 1.0 = strong lexical match
     - 'semantic_distance' close to 0.0 = strong semantic match
+    data.limit_reached is true when exactly `limit` matches came back: there may be more — call again
+    with a higher `limit` before filtering on the list.
 
     Args:
         search_term (str): The specific value to look for (partial or full string, Hebrew or English).
@@ -467,10 +469,18 @@ async def search_column_values(
 
     values = (res.get("values") or []) if isinstance(res, dict) else []
     matches = [_value_match(v) for v in values]
+    limit_reached = len(matches) >= limit
+    if not matches:
+        notice = "No matches — the value may not exist in this column, or the column is not indexed (only large_categorical / large_unit_id are)."
+    elif limit_reached:
+        notice = f"Returned the first {limit} matches (the limit); there may be more — call again with a higher limit."
+    else:
+        notice = None
     return ok({
         "search_term": search_term,
         "matches": matches,
-        "notice": None if matches else "No matches — the value may not exist in this column, or the column is not indexed (only large_categorical / large_unit_id are).",
+        "limit_reached": limit_reached,
+        "notice": notice,
     })
 
 

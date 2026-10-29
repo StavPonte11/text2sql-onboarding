@@ -164,6 +164,14 @@ async def test_search_values_returns_every_match_without_prefix_guessing():
 
 
 @pytest.mark.asyncio
+async def test_search_values_says_when_the_limit_was_hit():
+    full = await _search([{"value": f"v{i}"} for i in range(10)])  # default limit 10
+    assert full["data"]["limit_reached"] is True and "higher limit" in full["data"]["notice"]
+    fewer = await _search([{"value": "v1"}, {"value": "v2"}])
+    assert fewer["data"]["limit_reached"] is False and fewer["data"]["notice"] is None
+
+
+@pytest.mark.asyncio
 async def test_search_values_passes_limit_through_unclamped():
     client = MagicMock(search_column_values=AsyncMock(return_value={"values": []}))
     with patch.object(tools, "get_jeen_metadata_client", return_value=client):
