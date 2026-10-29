@@ -80,6 +80,7 @@ class ChatResponse(BaseModel):
     confidence: str | None = None      # Deep Agent self-reported confidence (high / medium / low)
     executed: bool | None = None       # Deep Agent: the submitted final SQL ran and the rows are Trino's
     recovered_from_text: bool | None = None  # Deep Agent: final answer was written as text and recovered
+    semantic_validation: dict | None = None  # Deep Agent: independent review (verdict, rounds, issues, response)
 
 
 # ---------------------------------------------------------------------------

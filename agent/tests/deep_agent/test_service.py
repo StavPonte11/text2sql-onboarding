@@ -100,6 +100,7 @@ async def test_turn_without_new_answer_does_not_repeat_the_previous_one(scripted
         AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]),
         _answer(),
         AIMessage("small talk, no answer"),
+        AIMessage("still no answer"),  # reply to the submit reminder
     )
     agent = create_deep_agent(model=model)
     with patch.object(tools, "execute_query_sync", return_value=OK):
@@ -222,3 +223,18 @@ async def test_threads_survive_a_restart_with_postgres(scripted_model, monkeypat
     state = await second_process.aget_state({"configurable": {"thread_id": thread}})
     assert [m.text for m in state.values["messages"] if m.type == "human"] == ["שאלה ראשונה"]
     await service._pg_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_reviewer_tools_are_labelled_in_the_stream(scripted_model, published):
+    main = scripted_model(
+        AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]), _answer())
+    reviewer = scripted_model(
+        AIMessage("", tool_calls=[{"name": "get_sample_rows", "args": {"table_name": "orders"}, "id": "r1"}]),
+        AIMessage("", tool_calls=[{"name": "submit_verdict", "args": {"verdict": "pass"}, "id": "v1"}]),
+    )
+    agent = create_deep_agent(model=main, semantic_validation="always", validator_model=reviewer)
+    with patch.object(tools, "execute_query_sync", return_value=OK):
+        r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t6", agent=agent)
+    assert r["execution_path"] == ["deep:execute_trino_query", "deep:review:get_sample_rows"]
+    assert r["semantic_validation"]["verdict"] == "passed"

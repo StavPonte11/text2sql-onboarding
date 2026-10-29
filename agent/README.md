@@ -51,6 +51,24 @@ uv run deep-agent "..." --log-file runs/runs.jsonl    # append one JSON line per
 It reads the same `agent/.env` settings as the API (LLM, Trino, Jeen metadata MCP, Langfuse).
 Run logs are opt-in and git-ignored (`agent/runs/`, `agent/*.jsonl`, `agent/*.csv`); Langfuse is the system of record for traces.
 
+### Semantic validation (deep agent)
+
+An independent reviewer (`src/deep_agent/validator.py`) checks whether a SQL answer really answers the user's request:
+a separate agent with a fresh context (the user's messages, the SQL, its rows, the stated assumptions and the catalog —
+not the main agent's reasoning), read-only diagnostic tools, and a verdict of pass, or fail with issues and evidence.
+Its prompt is `prompts/validator.md` (`deep-agent/validator` in Langfuse). `DEEP_AGENT_SEMANTIC_VALIDATION` picks how it is used:
+
+| Mode | |
+|---|---|
+| `on_demand` | a `semantic-validator` subagent the agent calls through `task` when it judges a review worthwhile; the verdict comes back to the agent, which decides what to do |
+| `always` (default) | every submitted answer is reviewed before the run ends; on fail the agent fixes the SQL (reviewed again) or resubmits it with a justification (`validation_response`, recorded as disputed). `DEEP_AGENT_VALIDATOR_MAX_ROUNDS` optionally limits reviews per turn (default none) |
+| `off` | no reviewer |
+
+The outcome for the final answer is the response's `semantic_validation`: `verdict` (`passed` / `failed` / `disputed` /
+`not_validated`), `rounds`, `issues`, `reviewed_final_sql` (a review of an earlier SQL doesn't count for the final one).
+Langfuse gets `validation_rounds` and, when the final SQL was reviewed, `semantic_validation_passed` — compare the modes
+on accuracy and cost, then keep one.
+
 ### SQL safety (deep agent)
 
 Every SQL the deep agent runs goes through `agent/utils/sql_guard.py` (sqlglot, Trino dialect):
@@ -86,7 +104,7 @@ The UI → backend → agent path is the `chat_with_agent` MCP tool. It runs the
 The deep agent is built once per process and streams the same Redis `agent_stream:{thread_id}` events as the legacy graph
 (nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `engine`, `verification`
 (matched / re_executed / rejected / re_execution_failed / no_answer), `executed` (the final SQL ran and the rows are
-Trino's), `recovered_from_text` and `confidence`. Each turn's answer is checked only against SQL executed in that turn.
+Trino's), `recovered_from_text`, `semantic_validation` and `confidence`. Each turn's answer is checked only against SQL executed in that turn.
 
 Clarifications are off (`DEEP_AGENT_CLARIFICATIONS_ENABLED=false`). When on, a clarification comes back as
 `status: "interrupted"` with `interrupt_details.type = "hitl_escalation"` (`subtype: "clarification"`); the user's answer

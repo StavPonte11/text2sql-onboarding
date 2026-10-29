@@ -7,10 +7,11 @@ Serving the Deep Agent behind the existing `chat_with_agent` MCP tool.
   replicas, survives restarts), otherwise an in-memory saver.
 - Streaming: the same Redis events the legacy graph publishes (`agent_stream:{thread_id}`,
   {"thread_id", "node", "status"}), so the backend SSE relay and UI work unchanged. Nodes are
-  named `deep:<tool>` (e.g. deep:execute_trino_query) plus `deep:answer`.
+  named `deep:<tool>` (e.g. deep:execute_trino_query), `deep:review:<tool>` for the independent
+  reviewer's tools (deep_agent.validator), plus `deep:answer`.
 - Response: the legacy JSON contract (status / summary / sql_query / sql_explanation /
   interrupt_details / trace_id / execution_path / is_unanswerable) plus `engine`,
-  `verification`, `executed`, `recovered_from_text` and `confidence`.
+  `verification`, `executed`, `recovered_from_text`, `semantic_validation` and `confidence`.
 - Run limit: none by default. A caller that stops waiting after N seconds passes `timeout_s`;
   the run is then cancelled at that point (no tokens spent on an answer nobody receives).
 - Clarification (only with DEEP_AGENT_CLARIFICATIONS_ENABLED): an answer with needs_clarification returns status "interrupted" with
@@ -33,6 +34,7 @@ from agent.utils.redis_publisher import publish_node_event
 from deep_agent import observability
 from deep_agent.answer import current_turn, render_markdown
 from deep_agent.context import DeepAgentContext
+from deep_agent.validator import VALIDATOR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +96,9 @@ class StreamPublisher(AsyncCallbackHandler):
     async def _publish(self, node: str, status: str) -> None:
         await publish_node_event(self.thread_id, node, status)
 
-    async def on_tool_start(self, serialized, input_str, *, run_id, **kwargs) -> None:
-        name = f"deep:{(serialized or {}).get('name') or kwargs.get('name') or 'tool'}"
+    async def on_tool_start(self, serialized, input_str, *, run_id, tags=None, **kwargs) -> None:
+        tool = (serialized or {}).get("name") or kwargs.get("name") or "tool"
+        name = f"deep:review:{tool}" if VALIDATOR_NAME in (tags or []) else f"deep:{tool}"
         self._names[run_id] = name
         self.execution_path.append(name)
         await self._publish(name, "active")
@@ -117,6 +120,7 @@ def to_response(thread_id: str, final_result: dict[str, Any], trace_id: str | No
         "verification": status,
         "executed": bool(final_result.get("executed")),
         "recovered_from_text": bool(final_result.get("recovered_from_text")),
+        "semantic_validation": final_result.get("semantic_validation"),
         "confidence": answer.get("confidence"),
         "trace_id": trace_id,
         "execution_path": execution_path,

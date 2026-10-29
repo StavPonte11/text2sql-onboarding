@@ -21,9 +21,9 @@ from tests.deep_agent.conftest import TEST_CATALOG, system_text
 @pytest.mark.asyncio
 async def test_catalog_is_in_every_model_call_but_not_in_history(scripted_model):
     model = scripted_model(AIMessage("", tool_calls=[{"name": "write_todos", "args": {"todos": []}, "id": "w"}]),
-                           AIMessage("done"))
+                           AIMessage("done"), AIMessage("done"))  # last: reply to the submit reminder
     result = await create_deep_agent(model=model).ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": "c"}})
-    assert len(model.seen) == 2
+    assert len(model.seen) == 3
     assert all(TEST_CATALOG in system_text(seen) for seen in model.seen)
     assert all(TEST_CATALOG not in m.text for m in result["messages"])  # never duplicated into the message history
     assert "get_database_catalog" not in model.bound_tool_names[-1]
@@ -121,14 +121,14 @@ def test_langfuse_unavailable_falls_back(langfuse_enabled, behaviour):
 async def test_prompt_label_change_takes_effect_without_rebuild(scripted_model, langfuse_enabled):
     served = {"text": local_prompt("system")}
     fake = MagicMock(get_prompt=MagicMock(side_effect=lambda *a, **k: _served(served["text"])))
-    model = scripted_model(AIMessage("one"), AIMessage("two"))
+    model = scripted_model(AIMessage("one"), AIMessage("one"), AIMessage("two"), AIMessage("two"))  # each + reminder reply
     with patch("agent.langfuse_client.langfuse_client", fake):
         agent = create_deep_agent(model=model)
         await agent.ainvoke({"messages": [("user", "a")]}, {"configurable": {"thread_id": "p1"}})
         served["text"] = "You are the NEW deep analyst prompt v4."
         await agent.ainvoke({"messages": [("user", "b")]}, {"configurable": {"thread_id": "p2"}})
 
-    first, second = system_text(model.seen[0]), system_text(model.seen[1])
+    first, second = system_text(model.seen[0]), system_text(model.seen[2])
     assert first.startswith(local_prompt("system")[:80])
     assert second.startswith("You are the NEW deep analyst prompt v4.")
     assert "Skills System" in second  # harness / skills sections after our prompt are preserved
@@ -185,7 +185,7 @@ def test_miss_expires_after_ttl(langfuse_enabled, monkeypatch):
 @pytest.mark.asyncio
 async def test_prompt_refresh_keeps_the_clarification_suffix(scripted_model, langfuse_enabled):
     fake = MagicMock(get_prompt=MagicMock(side_effect=lambda *a, **k: _served("NEW system prompt v5.")))
-    model = scripted_model(AIMessage("done"))
+    model = scripted_model(AIMessage("done"), AIMessage("done"))
     with patch("agent.langfuse_client.langfuse_client", fake):
         agent = create_deep_agent(model=model, clarifications_enabled=True)
         fake.get_prompt.side_effect = lambda *a, **k: _served("NEWER system prompt v6.")

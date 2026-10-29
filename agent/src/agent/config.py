@@ -52,6 +52,11 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
     DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
+    # Independent semantic review of answers (see deep_agent/validator.py):
+    # always = every submitted answer is reviewed before the run ends;
+    # on_demand = a `semantic-validator` subagent the agent calls when it judges a review worthwhile; off = no reviewer.
+    DEEP_AGENT_SEMANTIC_VALIDATION: Literal["always", "on_demand", "off"] = "always"
+    DEEP_AGENT_VALIDATOR_MAX_ROUNDS: int | None = Field(default=None, gt=0)  # "always" only: reviews per turn; "none" = no limit
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
     # Prompts (see deep_agent/prompt_registry.py). Off until the prompts are finalised and synced to Langfuse.
@@ -113,10 +118,10 @@ class AgentSettings(BaseSettings):
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────
     SCHEMA_CACHE_TTL: int = Field(default=600, gt=0)    # seconds — DDL content
 
-    @field_validator("DEEP_AGENT_MAX_ROWS", "DEEP_AGENT_MAX_SAMPLE_ROWS", mode="before")
+    @field_validator("DEEP_AGENT_MAX_ROWS", "DEEP_AGENT_MAX_SAMPLE_ROWS", "DEEP_AGENT_VALIDATOR_MAX_ROUNDS", mode="before")
     @classmethod
-    def _no_row_ceiling(cls, value):
-        # Env vars can't hold None; these spellings mean "no ceiling".
+    def _no_limit(cls, value):
+        # Env vars can't hold None; these spellings mean "no limit".
         if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "unlimited"):
             return None
         return value

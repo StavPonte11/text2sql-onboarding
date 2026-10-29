@@ -64,6 +64,14 @@ TEST_CATALOG = '# Database Schema\n\n## Columns\n"catalog"."schema"."orders": Or
 
 
 @pytest.fixture(autouse=True)
+def no_semantic_validation(monkeypatch):
+    """Scripted models answer the main agent only; tests that cover the reviewer turn it on explicitly."""
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_SEMANTIC_VALIDATION", "off")
+
+
+@pytest.fixture(autouse=True)
 def fake_catalog(monkeypatch):
     """Every agent run loads the connection's catalog (CatalogMiddleware); never hit the real Jeen service in tests.
 

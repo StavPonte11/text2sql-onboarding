@@ -106,6 +106,9 @@ def annotate_current_span(metadata: dict[str, Any], level: str | None = None) ->
         logger.debug("annotate_current_span skipped: %s", exc)
 
 
+_REVIEWED = {"passed", "failed", "disputed"}  # verdicts that judged the final SQL
+
+
 @dataclass(frozen=True)
 class RunMetrics:
     """Plain counts and timing for one run, plus whether the submitted final SQL actually ran
@@ -116,16 +119,22 @@ class RunMetrics:
     sql_executions: int
     latency_s: float
     final_sql_executed: bool = False  # the submitted final SQL ran and its rows are Trino's (not a correctness check)
+    # Independent review (deep_agent.validator). None -> no score: reviewer off, or the final SQL wasn't reviewed.
+    semantic_validation_passed: bool | None = None
+    validation_rounds: int | None = None  # reviews this turn (0 = the agent didn't ask for one); None = reviewer off
 
 
 def run_metrics(messages: list[BaseMessage], latency_s: float, final_result: dict | None = None) -> RunMetrics:
     ai = [m for m in messages if m.type == "ai"]
+    review = (final_result or {}).get("semantic_validation") or {}
     return RunMetrics(
         model_calls=len(ai),
         tool_calls=sum(len(getattr(m, "tool_calls", None) or []) for m in ai),
         sql_executions=sum(1 for m in messages if m.type == "tool" and m.name == "execute_trino_query"),
         latency_s=round(latency_s, 2),
         final_sql_executed=bool(final_result and final_result.get("executed")),
+        semantic_validation_passed=(review["verdict"] == "passed") if review.get("verdict") in _REVIEWED else None,
+        validation_rounds=review.get("rounds", 0) if review else None,
     )
 
 
@@ -137,6 +146,8 @@ def score_run(trace_id: str | None, metrics: RunMetrics) -> None:
         from agent.langfuse_client import langfuse_client
 
         for name, value in asdict(metrics).items():
+            if value is None:
+                continue
             data_type = "BOOLEAN" if isinstance(value, bool) else "NUMERIC"
             langfuse_client.create_score(
                 trace_id=trace_id, name=f"{AGENT_NAME}.{name}", value=float(value), data_type=data_type

@@ -25,7 +25,7 @@ DEFAULT_SKILLS_DIR = PACKAGE_DIR / "skills"
 
 SKILLS_ROUTE = "/skills/"
 
-EXPECTED_SKILLS = frozenset({"temporal-analyst", "spatial-analyst", "semantic-validation"})
+EXPECTED_SKILLS = frozenset({"temporal-analyst", "spatial-analyst"})
 
 
 class DeepAgentResourceError(RuntimeError):

@@ -12,14 +12,16 @@ import pytest
 import sqlglot
 
 from deep_agent.agent import SYSTEM_PROMPT
+from deep_agent.prompt_registry import local_prompt
 from deep_agent.resources import DEFAULT_SKILLS_DIR, EXPECTED_SKILLS
 from deep_agent.tools import DEEP_AGENT_TOOLS
 
 DOMAIN_TOOLS = {t.name for t in DEEP_AGENT_TOOLS}
-HARNESS_TOOLS = {"task", "write_todos", "read_file", "ls", "submit_answer"}
+HARNESS_TOOLS = {"task", "write_todos", "read_file", "ls", "submit_answer", "submit_verdict"}
 
 DOCS: dict[str, str] = {
     "system prompt": SYSTEM_PROMPT,
+    "validator prompt": local_prompt("validator"),
     **{f"skill {p.parent.name}": p.read_text(encoding="utf-8") for p in sorted(DEFAULT_SKILLS_DIR.glob("*/SKILL.md"))},
     **{f"docstring {t.name}": t.description for t in DEEP_AGENT_TOOLS},
 }
@@ -47,6 +49,7 @@ BANNED = [
     (r"validate_sql_syntax", "the tool is validate_sql (#39)"),
     (r"needs_clarification", "clarifications are off by default; only the flag adds them to the prompt (#41)"),
     (r"AGENTS\.md|agent_memory", "there is no AGENTS.md memory; always-on guidance is the system prompt (#40)"),
+    (r"prefix pattern", "use every matching stored value, never a guessed prefix (#45)"),
 ]
 
 # Catalog-specific names: guidance must stay general text-to-SQL knowledge, not one deployment's data.
@@ -99,7 +102,9 @@ SQL_BLOCKS = [b for name, text in DOCS.items() if not name.startswith("docstring
 
 
 def test_guidance_contains_sql_examples():
-    assert len(SQL_BLOCKS) >= 15
+    # The parse check below must not pass vacuously: the system prompt and every skill carry checked SQL.
+    sources = {name.split("#")[0] for name, _ in SQL_BLOCKS}
+    assert {"system prompt", *(f"skill {s}" for s in EXPECTED_SKILLS)} <= sources
 
 
 @pytest.mark.parametrize("name, sql", SQL_BLOCKS, ids=[n for n, _ in SQL_BLOCKS])

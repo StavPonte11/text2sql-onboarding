@@ -90,7 +90,7 @@ def test_date_is_computed_in_jerusalem_time(monkeypatch):
 @pytest.mark.asyncio
 async def test_date_is_injected_per_model_call_not_at_construction(scripted_model, monkeypatch):
     monkeypatch.setattr(context_module, "datetime", _FrozenDatetime)
-    model = scripted_model(AIMessage("first"), AIMessage("second"))
+    model = scripted_model(AIMessage("first"), AIMessage("first"), AIMessage("second"), AIMessage("second"))  # + reminder replies
     agent = create_deep_agent(model=model)  # built "yesterday"
 
     _FrozenDatetime.instant = datetime(2026, 10, 20, 20, 30, tzinfo=timezone.utc)  # 23:30 Oct 20 in Israel
@@ -102,15 +102,15 @@ async def test_date_is_injected_per_model_call_not_at_construction(scripted_mode
         return next(m for m in reversed(messages) if m.type == "human").text
 
     assert last_human(model.seen[0]).startswith("[Today's date: 2026-10-20")
-    assert last_human(model.seen[1]).startswith("[Today's date: 2026-10-21")
-    assert last_human(model.seen[1]).endswith("b")
+    assert last_human(model.seen[2]).startswith("[Today's date: 2026-10-21")
+    assert last_human(model.seen[2]).endswith("b")
     # The system prompt is byte-identical across days, so provider prompt caching keeps working.
-    assert system_text(model.seen[0]) == system_text(model.seen[1])
+    assert system_text(model.seen[0]) == system_text(model.seen[2])
     assert "Today's date" not in system_text(model.seen[1])
 
 
 @pytest.mark.asyncio
 async def test_date_prefix_is_not_persisted_to_state(scripted_model):
-    agent = create_deep_agent(model=scripted_model(AIMessage("ok")))
+    agent = create_deep_agent(model=scripted_model(AIMessage("ok"), AIMessage("ok")))
     result = await agent.ainvoke({"messages": [("user", "שאלה")]}, {"configurable": {"thread_id": "p1"}})
     assert result["messages"][0].text == "שאלה"

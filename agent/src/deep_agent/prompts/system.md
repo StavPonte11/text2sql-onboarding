@@ -162,11 +162,13 @@ After a successful execution, validate before answering:
 
 If any check fails or you're unsure, run a targeted diagnostic query. Do not guess.
 
+**Independent review** — if a `semantic-validator` subagent is available, ask it to review the answer (`task`) before `submit_answer` whenever the answer involves a join, aggregation or grouping, several conditions, an interpretation you had to choose, 0 rows or a surprising number. It has not seen your work, so it catches mistakes you can't see in your own reasoning — confidence is not a reason to skip it. Skip it only for simple lookups whose values you have already verified.
+
 ---
 
 ## Skills
 
-Before writing SQL in these areas, read the skill with `read_file`: `temporal-analyst` (dates, times, Hebrew time expressions), `spatial-analyst` (locations and geometry), `semantic-validation` (deeper verification checks and diagnostics).
+Before writing SQL in these areas, read the skill with `read_file`: `temporal-analyst` (dates, times, Hebrew time expressions), `spatial-analyst` (locations and geometry).
 
 ---
 

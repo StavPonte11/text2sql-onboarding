@@ -26,14 +26,16 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import sqlglot
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse, hook_config
+from langchain.agents.structured_output import ToolStrategy
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field, create_model
 from sqlglot.errors import SqlglotError
 
 from agent.config import settings
 from agent.utils import sql_guard
 from agent.utils.sql import clean_sql
+from deep_agent.context import REMINDER_NAME, is_user_message
 from core.trino import execute_query_sync
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,8 @@ VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution
 
 
 TOOL_NAME = "submit_answer"
+# Content of the tool message for an accepted submission (anything else there is an error or a review's feedback).
+ANSWER_RECEIVED = "Answer received."
 _SUBMIT_DOC = "Submit your final answer. Call this exactly once, when you are done — it ends your work."
 
 
@@ -77,10 +81,48 @@ SubmitAnswerWithClarification = create_model(
 )
 
 
-def answer_schema(clarifications_enabled: bool | None = None) -> type[SubmitAnswer]:
-    """The final-answer schema; without clarifications the model must always commit to a SQL answer."""
-    enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED if clarifications_enabled is None else clarifications_enabled
-    return SubmitAnswerWithClarification if enabled else SubmitAnswer
+_VALIDATION_RESPONSE = (str | None, Field(
+    default=None,
+    description="Only when an independent review rejected your previous answer and you submit the same SQL again: "
+                "why that SQL is correct despite the review (Hebrew).",
+))
+
+
+def _with_validation_response(base: type[SubmitAnswer]) -> type[SubmitAnswer]:
+    return create_model(TOOL_NAME, __base__=base, __doc__=_SUBMIT_DOC, validation_response=_VALIDATION_RESPONSE)
+
+
+_SCHEMAS: dict[tuple[bool, bool], type[SubmitAnswer]] = {
+    (False, False): SubmitAnswer,
+    (True, False): SubmitAnswerWithClarification,
+    (False, True): _with_validation_response(SubmitAnswer),
+    (True, True): _with_validation_response(SubmitAnswerWithClarification),
+}
+
+
+def answer_schema(
+    clarifications_enabled: bool | None = None, validation_enabled: bool | None = None
+) -> type[SubmitAnswer]:
+    """The final-answer schema; without clarifications the model must always commit to a SQL answer.
+
+    With semantic validation "always", it also has `validation_response` (to stand by a rejected answer).
+    """
+    if clarifications_enabled is None:
+        clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED
+    if validation_enabled is None:
+        validation_enabled = settings.DEEP_AGENT_SEMANTIC_VALIDATION == "always"
+    return _SCHEMAS[(bool(clarifications_enabled), bool(validation_enabled))]
+
+
+def submission_strategy(schema: type[BaseModel]) -> ToolStrategy:
+    """ToolStrategy whose accepted-submission tool message is ANSWER_RECEIVED (see accepted_submission)."""
+    return ToolStrategy(schema, tool_message_content=ANSWER_RECEIVED)
+
+
+def last_submission(messages: list, tool_name: str = TOOL_NAME) -> ToolMessage | None:
+    """The tool message answering a submit call, when it is the latest message (i.e. the model just submitted)."""
+    last = messages[-1] if messages else None
+    return last if isinstance(last, ToolMessage) and last.name == tool_name else None
 
 
 def normalize_sql(sql: str | None) -> str | None:
@@ -114,7 +156,7 @@ def executed_query_record(
     }
 
 
-def _match(answer_sql: str, executed: list[dict[str, Any]]) -> dict[str, Any] | None:
+def match_execution(answer_sql: str, executed: list[dict[str, Any]]) -> dict[str, Any] | None:
     target = normalize_sql(answer_sql)
     for record in reversed(executed):  # latest execution wins
         if target in (normalize_sql(record["submitted_sql"]), normalize_sql(record["executed_sql"])):
@@ -162,7 +204,7 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]
     if getattr(answer, "needs_clarification", None) or not answer.sql:
         return {**base, "status": "clarification", "executed": False, "sql": None, "result": None}
 
-    record = _match(answer.sql, executed)
+    record = match_execution(answer.sql, executed)
     if record is not None and not _is_sample(record):
         return {**base, "status": "matched", "executed": True, "sql": record["submitted_sql"], "result": _result_view(record)}
 
@@ -225,9 +267,7 @@ class AnswerRecoveryMiddleware(AgentMiddleware):
             id=output.id,
             name=output.name,
         )
-        tool_message = ToolMessage(
-            content=f"Returning structured response: {answer}", tool_call_id=call_id, name=schema.__name__,
-        )
+        tool_message = ToolMessage(content=ANSWER_RECEIVED, tool_call_id=call_id, name=schema.__name__)
         return ModelResponse(result=[*response.result[:-1], repaired, tool_message], structured_response=answer)
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
@@ -240,11 +280,42 @@ class AnswerRecoveryMiddleware(AgentMiddleware):
 
 
 def current_turn(messages: list) -> list:
-    """Messages after the latest human message (this run's turn)."""
+    """Messages after the latest user message (this run's turn)."""
     for i in range(len(messages) - 1, -1, -1):
-        if getattr(messages[i], "type", None) == "human":
+        if is_user_message(messages[i]):
             return messages[i + 1:]
     return messages
+
+
+class SubmitReminderMiddleware(AgentMiddleware):
+    """Send the model back once per turn when it stops without calling its submit tool.
+
+    The configured model server sometimes ends a run with plain text instead of the forced
+    submit call (and AnswerRecoveryMiddleware can only rescue text that is valid JSON for the
+    schema). The work is then lost — e.g. a reviewer that found a real problem but never
+    returned its verdict. One reminder (a message named REMINDER_NAME, not counted as the
+    user's words) asks for the submit call; if the model still doesn't comply, the run ends as before.
+    """
+
+    def __init__(self, tool_name: str) -> None:
+        super().__init__()
+        self.tool_name = tool_name
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime) -> dict[str, Any] | None:
+        messages = state.get("messages") or []
+        last = messages[-1] if messages else None
+        if not isinstance(last, AIMessage) or last.tool_calls or state.get("structured_response") is not None:
+            return None
+        if any(getattr(m, "name", None) == REMINDER_NAME for m in current_turn(messages)):
+            return None  # already reminded this turn
+        reminder = (f"You stopped without calling `{self.tool_name}`. Your work is delivered only through "
+                    f"`{self.tool_name}` — call it now with your result.")
+        return {"messages": [HumanMessage(reminder, name=REMINDER_NAME)], "jump_to": "model"}
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state, runtime) -> dict[str, Any] | None:
+        return self.after_model(state, runtime)
 
 
 class AnswerVerificationMiddleware(AgentMiddleware):
@@ -254,9 +325,24 @@ class AnswerVerificationMiddleware(AgentMiddleware):
     again on a turn that ends without a new one) and marks where this turn's executions start,
     so an answer can only match SQL that ran in its own turn.
 
+    after_model sends the model back after a rejected submit_answer call (arguments that fail the
+    schema). LangChain would retry on its own only while `structured_response` has never been set
+    in the thread; from the first reset on, it ends the run instead.
+
     after_agent keeps the answer only as plain data in final_result and drops the pydantic object:
     checkpoints can't restore the dynamically built `submit_answer` class.
     """
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime) -> dict[str, Any] | None:
+        submission = last_submission(state.get("messages") or [])
+        if submission is not None and submission.text != ANSWER_RECEIVED:
+            return {"jump_to": "model"}
+        return None
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state, runtime) -> dict[str, Any] | None:
+        return self.after_model(state, runtime)
 
     def before_agent(self, state, runtime) -> dict[str, Any] | None:
         return {"structured_response": None, "turn_execution_start": len(state.get("executed_queries") or [])}
@@ -270,10 +356,45 @@ class AnswerVerificationMiddleware(AgentMiddleware):
         final["recovered_from_text"] = any(
             (getattr(m, "additional_kwargs", None) or {}).get(RECOVERED_FLAG) for m in current_turn(state.get("messages") or [])
         )
+        final["semantic_validation"] = validation_summary(state.get("semantic_validations"), final.get("sql"))
         return {"final_result": final, "structured_response": None}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.after_agent, state, runtime)
+
+
+_VERDICTS = {"pass": "passed", "fail": "failed", "disputed": "disputed"}
+
+
+def _covers(record: dict[str, Any], final_sql: str | None) -> bool | None:
+    """Did this review look at the final SQL? None when it can't be told (an on-demand brief without a ```sql block)."""
+    target = normalize_sql(final_sql)
+    if "sql" in record:
+        return record["sql"] == target
+    return (target in record["sqls"]) if record.get("sqls") else None
+
+
+def validation_summary(records: list[dict[str, Any]] | None, final_sql: str | None = None) -> dict[str, Any] | None:
+    """The review outcome of the final answer, from this turn's review records (None = reviewer off).
+
+    verdict: passed | failed | disputed (the agent resubmitted a rejected SQL with a justification) |
+    not_validated (no review, a review of a different SQL than the final one, round limit, or the review failed).
+    reviewed_final_sql: whether the last review covered the final SQL (None = can't be told).
+    """
+    if records is None:
+        return None
+    rounds = sum(1 for r in records if r["verdict"] in ("pass", "fail"))
+    summary = {"verdict": "not_validated", "rounds": rounds, "issues": [], "response": None, "reason": None,
+               "reviewed_final_sql": None}
+    if not records:
+        return {**summary, "reason": "no review"}
+    last = records[-1]
+    covers = _covers(last, final_sql)
+    summary.update(issues=last.get("issues") or [], response=last.get("response"), reviewed_final_sql=covers,
+                   reason=last.get("reason"))
+    if covers is False:
+        return {**summary, "issues": [], "reason": "the final SQL changed after the last review"}
+    return {**summary, "verdict": _VERDICTS.get(last["verdict"], "not_validated")}
 
 
 def _cell(value: Any) -> str:
@@ -302,6 +423,13 @@ def render_markdown(final_result: dict[str, Any]) -> str:
         parts.append("⚠️ לא התקבלה תשובה סופית" + (f": {reason}" if reason else "."))
     elif final_result.get("error"):
         parts.append(f"⚠️ לא ניתן היה להריץ את השאילתה הסופית: {final_result['error']}")
+
+    review = final_result.get("semantic_validation") or {}
+    if review.get("verdict") in ("failed", "disputed") and review.get("issues"):
+        title = "בדיקה עצמאית מצאה בעיות בתשובה" if review["verdict"] == "failed" else "בדיקה עצמאית העלתה הסתייגות"
+        parts.append(f"⚠️ **{title}:**\n" + "\n".join(f"- {i['problem']}" for i in review["issues"]))
+        if review["verdict"] == "disputed" and review.get("response"):
+            parts.append(f"**תגובת הסוכן:** {review['response']}")
 
     if final_result.get("sql"):
         parts.append(f"```sql\n{final_result['sql']}\n```")

@@ -19,7 +19,7 @@ OK = TrinoExecutionResult(success=True, rows=[[7]], columns=["n"], row_count=1, 
 
 @pytest.mark.asyncio
 async def test_unused_builtin_tools_are_not_offered_to_the_model(scripted_model):
-    model = scripted_model(AIMessage("done"))
+    model = scripted_model(AIMessage("done"), AIMessage("done"))  # second: reply to the submit reminder
     await create_deep_agent(model=model).ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": "t"}})
     offered = set(model.bound_tool_names[-1])
     assert not offered & EXCLUDED_BUILTIN_TOOLS

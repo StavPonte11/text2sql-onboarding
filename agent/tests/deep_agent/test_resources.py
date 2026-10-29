@@ -66,7 +66,7 @@ def test_skill_name_must_match_directory(skills_copy):
 
 @pytest.mark.asyncio
 async def test_skills_and_system_prompt_reach_the_model_without_memory(scripted_model):
-    model = scripted_model(AIMessage("done"))
+    model = scripted_model(AIMessage("done"), AIMessage("done"))  # second: reply to the submit reminder
     agent = create_deep_agent(model=model)
     await agent.ainvoke({"messages": [("user", "hi")]}, {"configurable": {"thread_id": "t-prompt"}})
 
@@ -88,7 +88,7 @@ async def test_agent_cannot_write_skills(scripted_model):
         {"name": "write_file", "args": {"file_path": "/skills/evil/SKILL.md", "content": "x"}, "id": "w1"},
         {"name": "edit_file", "args": {"file_path": "/skills/temporal-analyst/SKILL.md", "old_string": "Temporal", "new_string": "X"}, "id": "w2"},
     ])
-    model = scripted_model(write, AIMessage("done"))
+    model = scripted_model(write, AIMessage("done"), AIMessage("done"))
     agent = create_deep_agent(model=model)
     result = await agent.ainvoke({"messages": [("user", "hi")]}, {"configurable": {"thread_id": "t-write"}})
 
@@ -105,7 +105,7 @@ async def test_agent_can_read_a_skill_file(scripted_model):
     read = AIMessage("", tool_calls=[
         {"name": "read_file", "args": {"file_path": "/skills/temporal-analyst/SKILL.md"}, "id": "r1"},
     ])
-    model = scripted_model(read, AIMessage("done"))
+    model = scripted_model(read, AIMessage("done"), AIMessage("done"))
     agent = create_deep_agent(model=model)
     result = await agent.ainvoke({"messages": [("user", "hi")]}, {"configurable": {"thread_id": "t-read"}})
 

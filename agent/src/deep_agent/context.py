@@ -47,11 +47,44 @@ def merge_executions(left: list[dict[str, Any]] | None, right: list[dict[str, An
     return merged
 
 
+def latest(left: Any, right: Any) -> Any:
+    """Last write wins. deepagents returns a subagent's whole state (minus messages) to the parent, so
+    parallel `task` calls write these keys in the same step; a plain key would reject that."""
+    return right
+
+
+def merge_reviews(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Reducer for semantic_validations: records are merged by their `id`; `None` resets the list.
+
+    A subagent returns the list it was given plus its own record, and parallel reviews return in the
+    same step, so a plain value would either duplicate records or reject the concurrent writes.
+    """
+    if right is None:
+        return []
+    merged = list(left or [])
+    seen = {r.get("id") for r in merged}
+    for record in right:
+        if record.get("id") not in seen:
+            merged.append(record)
+            seen.add(record.get("id"))
+    return merged
+
+
 class DeepAgentRuntimeState(AgentState):
-    jeen_catalog: NotRequired[str]  # the connection's catalog, loaded once per run (deep_agent.catalog)
+    jeen_catalog: NotRequired[Annotated[str, latest]]  # the connection's catalog, loaded once per run (deep_agent.catalog)
     executed_queries: NotRequired[Annotated[list[dict[str, Any]], merge_executions]]  # successful executions
-    final_result: NotRequired[dict[str, Any]]  # verified answer + rows (see deep_agent.answer)
-    turn_execution_start: NotRequired[int]  # index into executed_queries where the current turn began
+    final_result: NotRequired[Annotated[dict[str, Any], latest]]  # verified answer + rows (see deep_agent.answer)
+    turn_execution_start: NotRequired[Annotated[int, latest]]  # index into executed_queries where the current turn began
+    semantic_validations: NotRequired[Annotated[list[dict[str, Any]], merge_reviews]]  # this turn's reviews (deep_agent.validator)
+
+
+# Name of the one-time "submit now" message (deep_agent.answer.SubmitReminderMiddleware): not the user's words.
+REMINDER_NAME = "submit_reminder"
+
+
+def is_user_message(msg: Any) -> bool:
+    """A message the user wrote (not the harness's submit reminder)."""
+    return isinstance(msg, HumanMessage) and getattr(msg, "name", None) != REMINDER_NAME
 
 
 def connection_id(runtime: ToolRuntime | None) -> int | None:
@@ -71,7 +104,7 @@ def user_request(runtime: ToolRuntime | None) -> str:
     request being answered is the original question plus those replies — not just the last one.
     """
     state = getattr(runtime, "state", None) or {}
-    texts = [msg.text for msg in state.get("messages") or [] if isinstance(msg, HumanMessage) and msg.text.strip()]
+    texts = [msg.text for msg in state.get("messages") or [] if is_user_message(msg) and msg.text.strip()]
     return "\n".join(texts)
 
 
@@ -85,7 +118,7 @@ def date_line(tz: str) -> str:
 
 
 def _with_date(request: ModelRequest) -> ModelRequest:
-    """Prefix the latest human message with today's date for this model call only.
+    """Prefix the latest user message with today's date for this model call only.
 
     The date is deliberately *not* put in the system message: deepagents appends its
     skills section after user middleware, so a date there would sit mid-prompt and invalidate
@@ -97,7 +130,7 @@ def _with_date(request: ModelRequest) -> ModelRequest:
     messages = list(request.messages)
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
-        if isinstance(msg, HumanMessage):
+        if is_user_message(msg):
             content: Any = msg.content
             if isinstance(content, str):
                 new_content: Any = f"[{line}]\n\n{content}"
