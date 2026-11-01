@@ -220,3 +220,8 @@ async def test_text_that_is_not_a_valid_answer_is_not_recovered(policy_model, te
 async def test_a_real_tool_call_is_not_marked_recovered(policy_model):
     result, _, _ = await _run(policy_model, _policy(ANSWER), [_trino([[466]])])
     assert result["final_result"]["recovered_from_text"] is False
+
+
+def test_sql_is_required():
+    with pytest.raises(ValueError):
+        SubmitAnswer(sql="", explanation_he="x", confidence="low")

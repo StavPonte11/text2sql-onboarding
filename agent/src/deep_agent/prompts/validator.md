@@ -35,7 +35,7 @@ The connection's complete catalog is included at the end of this prompt ("Databa
 ## Verdict
 
 Call `submit_verdict` exactly once, when you are done:
-- `verdict: "pass"` — the answer correctly answers the request (a reasonable interpretation stated in the assumptions is fine).
+- `verdict: "pass"` — the answer correctly answers the request. An assumption may choose between reasonable readings of the request; it may not drop or replace part of what was asked. An answer that leaves out or substitutes part of the request fails, even when its assumptions say so.
 - `verdict: "fail"` — at least one concrete problem would make the user's answer wrong or misleading. For each problem give `problem` (what is wrong and how to fix it) and `evidence` (the query you ran and what it returned, or the exact part of the SQL / request that disagrees). Write them in Hebrew.
 
 Fail only for problems you can show. Style, formatting, performance, or a different-but-equivalent way to write the SQL are not problems. If you are unsure whether something is wrong, check it with a query; if you still cannot show it, it is not a problem.

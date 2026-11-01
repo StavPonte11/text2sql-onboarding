@@ -18,6 +18,7 @@ _SUBMIT_DOC = "Submit your final answer. Call this exactly once, when you are do
 
 class _AnswerFields(BaseModel):
     sql: str = Field(
+        min_length=1,
         description="The exact final Trino SQL whose results answer the question — the same query you executed "
                     "successfully with execute_trino_query.",
     )

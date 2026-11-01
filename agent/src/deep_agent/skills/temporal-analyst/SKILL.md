@@ -115,52 +115,13 @@ ORDER BY 1
 `year(d)`, `month(d)`, `day_of_week(d)` and `extract(year FROM d)` are fine in `SELECT` and `GROUP BY` — just not in
 `WHERE` on a native column you are filtering.
 
-Group by the **Israel** day / hour, not the UTC one — convert before truncating:
-
-```sql
-SELECT date_trunc('day', event_at AT TIME ZONE 'Asia/Jerusalem') AS day_il, count(*) AS events
-FROM "catalog"."schema"."events"
-GROUP BY 1
-ORDER BY 1
-```
-
 ---
 
 ## Time zones
 
-**Dates and periods the user names are Israel time.** "On July 1st", "the first two weeks of July", "yesterday" start
-and end at midnight in Israel, not in UTC. Write the boundaries as Israel-time literals and let Trino convert them:
-
-```sql
-SELECT count(*) AS events
-FROM "catalog"."schema"."events"
-WHERE event_at >= TIMESTAMP '2024-07-01 00:00:00 Asia/Jerusalem'
-  AND event_at <  TIMESTAMP '2024-07-15 00:00:00 Asia/Jerusalem'
-```
-
-`TIMESTAMP '... UTC'` boundaries are off by 2–3 hours at each end and change the counts. The session time zone is
-Israel, so `current_date`, `current_timestamp` and `date_trunc('day', current_timestamp)` are already Israel time.
-
-If a table is partitioned by a UTC date string (e.g. `dt`), an Israel day spans two UTC partitions — widen the
-partition filter by a day and keep the exact Israel-time filter on the timestamp column:
-
-```sql
-SELECT count(*) AS events
-FROM "catalog"."schema"."events"
-WHERE dt >= '2024-04-30' AND dt <= '2024-05-01'
-  AND event_at >= TIMESTAMP '2024-05-01 00:00:00 Asia/Jerusalem'
-  AND event_at <  TIMESTAMP '2024-05-02 00:00:00 Asia/Jerusalem'
-```
-
-A naive `timestamp` has no zone. To treat it as UTC and show Israel local time:
-
-```sql
-SELECT with_timezone(event_at, 'UTC') AT TIME ZONE 'Asia/Jerusalem' AS event_at_israel
-FROM "catalog"."schema"."events"
-```
-
-For a value that already carries a zone (`timestamp with time zone`, e.g. from `from_iso8601_timestamp('...Z')`),
-`col AT TIME ZONE 'Asia/Jerusalem'` is enough. Israel is UTC+2 in winter and UTC+3 in summer (DST).
+Times are Israel time, and so is the session time zone: plain literals (`TIMESTAMP '2024-07-01 00:00:00'`),
+`current_date` and `current_timestamp` are already Israel time. Don't add zones to literals and don't convert to UTC
+by hand. (Only if a column is a naive `timestamp` documented as UTC: `with_timezone(col, 'UTC')` before comparing.)
 
 ---
 

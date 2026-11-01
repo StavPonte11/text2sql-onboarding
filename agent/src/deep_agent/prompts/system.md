@@ -74,7 +74,7 @@ The user's word is almost never the stored string — the value may be spelled d
 ### Trino dialect essentials
 
 - **Identifiers vs strings**: double quotes for identifiers (`"catalog"."schema"."table"`, `"column"`), single quotes for string literals. Never backticks. `'column_name' = 'val'` compares two strings, not the column.
-- **Integer division truncates** (`5 / 2 = 2`): for ratios and percentages use `CAST(a AS double) / NULLIF(b, 0)` or `1.0 * a / NULLIF(b, 0)` — `NULLIF` also prevents division-by-zero errors.
+- **Integer division truncates** (`5 / 2 = 2`): for ratios and percentages use `CAST(a AS double) / NULLIF(b, 0)` — `NULLIF` also prevents division-by-zero errors. Decimal literals keep their scale: `avg(IF(cond, 1.0, 0.0))` returns `0.3`, not `0.3008` — use `CAST(count_if(cond) AS double) / count(*)` for a rate.
 - **Counting**: `COUNT(*)` counts rows, `COUNT(col)` skips NULLs, `COUNT(DISTINCT col)` counts unique non-null values — count entities with `COUNT(DISTINCT id)`. `approx_distinct(x)` is a fast estimate on large tables.
 - **Idioms**: `count_if(cond)` instead of `SUM(CASE WHEN cond THEN 1 ELSE 0 END)`; `max_by(val, ts)` / `min_by(val, ts)` for the latest/earliest value per entity without a window or self-join.
 - **NULLs**: `IS NULL` / `IS NOT NULL`, never `= NULL`. `AVG()` ignores NULLs — if NULL means zero, `AVG(COALESCE(col, 0))`; `COALESCE(SUM(...), 0)` when an empty group should be 0.
@@ -84,7 +84,7 @@ The user's word is almost never the stored string — the value may be spelled d
 - **Per-entity ratios**: mind the granularity of numerator vs denominator — "orders per resident" is `COUNT(orders) / SUM(population)`, not `AVG(count_per_row)`. When the denominator comes from another table, aggregate each side in its own CTE, then join and divide.
 - **Set operations**: prefer `UNION ALL`; `UNION` adds an expensive distributed de-duplication — use it only when de-duplication is required.
 - **Arrays**: membership `contains(arr, 'v')`; expand with `CROSS JOIN UNNEST(arr) AS t(element)`.
-- **Time filters**: a half-open range on the raw column (`col >= start AND col < end`), never a function around the filtered column. Dates the user names are **Israel time** — write `TIMESTAMP '2024-07-01 00:00:00 Asia/Jerusalem'`, not `... UTC` (2–3 hours off at each end). Details in the `temporal-analyst` skill.
+- **Time filters**: a half-open range on the raw column (`col >= start AND col < end`), never a function around the filtered column. Times are Israel time and so is the session: write plain literals (`TIMESTAMP '2024-07-01 00:00:00'`, `DATE '2024-07-01'`) — don't add a time zone and don't convert to UTC yourself.
 - **Coordinates**: `ST_Point(lon, lat)` and WKT are longitude first; `great_circle_distance(lat1, lon1, lat2, lon2)` is latitude first and returns km. Distances and areas on plain geometry are in degrees — wrap in `to_spherical_geography(...)` for metres. Details in the `spatial-analyst` skill.
 - **When several logic paths seem plausible** (INNER vs LEFT JOIN, different grouping), run 2–3 variants with `LIMIT 10` and compare before choosing — don't guess.
 

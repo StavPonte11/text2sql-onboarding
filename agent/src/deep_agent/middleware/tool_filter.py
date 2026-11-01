@@ -5,14 +5,14 @@ Every model call carries the schema of every bound tool; dropping these saves ~1
 tokens per call and removes off-task options:
 - execute: always errors without a sandbox backend
 - write_file / edit_file: skills and memory are read-only; planning goes through write_todos
-- glob / grep: the skills are listed in the prompt with their paths and read with read_file
+- glob / grep / ls: the skills are listed in the prompt with their paths and read with read_file
 """
 
 from collections.abc import Awaitable, Callable
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
-EXCLUDED_BUILTIN_TOOLS = frozenset({"execute", "write_file", "edit_file", "glob", "grep"})
+EXCLUDED_BUILTIN_TOOLS = frozenset({"execute", "write_file", "edit_file", "glob", "grep", "ls"})
 
 
 class BuiltinToolFilterMiddleware(AgentMiddleware):
