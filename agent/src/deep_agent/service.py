@@ -42,7 +42,7 @@ _agent = None
 _agent_lock: asyncio.Lock | None = None
 _pg_pool = None
 
-UNANSWERED = {"no_answer", "rejected", "re_execution_failed"}
+UNANSWERED = {"no_answer", "rejected", "re_execution_failed", "not_executed"}
 
 
 async def build_checkpointer():

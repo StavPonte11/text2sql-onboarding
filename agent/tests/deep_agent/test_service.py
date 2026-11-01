@@ -113,21 +113,23 @@ async def test_turn_without_new_answer_does_not_repeat_the_previous_one(scripted
 
 
 @pytest.mark.asyncio
-async def test_answer_only_matches_sql_executed_in_its_own_turn(scripted_model, published):
-    """Turn 2 submits turn 1's SQL without running it: not 'matched' — it is re-executed to get real rows."""
+async def test_answer_must_run_in_its_own_turn(scripted_model, published):
+    """Turn 2 submits turn 1's SQL without running it: refused; the agent runs it and submits again."""
     model = scripted_model(
         AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]),
         _answer(),
+        _answer(),                                                                           # turn 2: not run yet
+        AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e2"}]),
         _answer(),
     )
     agent = create_deep_agent(model=model)
-    with patch.object(sql_tools, "execute_query_sync", return_value=OK), \
-         patch.object(verification, "execute_query_sync", return_value=OK) as rerun:
+    with patch.object(sql_tools, "execute_query_sync", side_effect=lambda *a, **k: TrinoExecutionResult(
+            success=True, rows=[[466]], columns=["orders"], row_count=1, query_id=str(uuid.uuid4()))), \
+         patch.object(verification, "execute_query_sync") as rerun:
         first = await run_deep_chat(connection_id=89, query="q1", thread_id="deep-t3", agent=agent)
         second = await run_deep_chat(connection_id=89, query="ושוב", thread_id="deep-t3", agent=agent)
-    assert first["verification"] == "matched"
-    assert second["verification"] == "re_executed" and second["executed"] is True
-    rerun.assert_called_once()
+    assert first["verification"] == second["verification"] == "matched"
+    rerun.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -229,14 +231,18 @@ async def test_threads_survive_a_restart_with_postgres(scripted_model, monkeypat
 
 @pytest.mark.asyncio
 async def test_reviewer_tools_are_labelled_in_the_stream(scripted_model, published):
+    brief = f"```sql\n{SQL}\n```"
     main = scripted_model(
-        AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]), _answer())
+        AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]),
+        AIMessage("", tool_calls=[{"name": "task", "args": {"description": brief, "subagent_type": "semantic-validator"},
+                                   "id": "r1"}]),
+        _answer())
     reviewer = scripted_model(
-        AIMessage("", tool_calls=[{"name": "get_sample_rows", "args": {"table_name": "orders"}, "id": "r1"}]),
+        AIMessage("", tool_calls=[{"name": "get_sample_rows", "args": {"table_name": "orders"}, "id": "x1"}]),
         AIMessage("", tool_calls=[{"name": "submit_verdict", "args": {"verdict": "pass"}, "id": "v1"}]),
     )
     agent = create_deep_agent(model=main, semantic_validation="always", validator_model=reviewer)
     with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t6", agent=agent)
-    assert r["execution_path"] == ["deep:execute_trino_query", "deep:review:get_sample_rows"]
+    assert r["execution_path"] == ["deep:execute_trino_query", "deep:task", "deep:review:get_sample_rows"]
     assert r["semantic_validation"]["verdict"] == "passed"

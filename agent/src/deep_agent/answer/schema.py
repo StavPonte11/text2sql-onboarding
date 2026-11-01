@@ -51,8 +51,8 @@ SubmitAnswerWithClarification = create_model(
 
 _VALIDATION_RESPONSE = (str | None, Field(
     default=None,
-    description="Only when an independent review rejected your previous answer and you submit the same SQL again: "
-                "why that SQL is correct despite the review (Hebrew).",
+    description="Only when the semantic-validator failed this SQL and you submit it anyway: why it is correct "
+                "despite the review (Hebrew).",
 ))
 
 
@@ -73,7 +73,7 @@ def answer_schema(
 ) -> type[SubmitAnswer]:
     """The final-answer schema; without clarifications the model must always commit to a SQL answer.
 
-    With semantic validation "always", it also has `validation_response` (to stand by a rejected answer).
+    With semantic validation "always", it also has `validation_response` (to dispute a failed review).
     """
     if clarifications_enabled is None:
         clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED

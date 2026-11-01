@@ -1,149 +1,69 @@
 """
-How the reviewer (deep_agent.validator.reviewer) is used — DEEP_AGENT_SEMANTIC_VALIDATION:
+How the reviewer (deep_agent.validator.reviewer) is wired into the agent — DEEP_AGENT_SEMANTIC_VALIDATION:
 
-- always     SemanticValidationMiddleware reviews every accepted submit_answer call; on fail the model
-             gets the feedback and fixes the SQL or disputes it (see the package docstring)
-- on_demand  validator_subagent(): the reviewer as a `task` subagent the model may call
-- (both)     ReviewTurnMiddleware starts every turn with no review records
+- always     the `semantic-validator` subagent is available through `task`, and submit_answer is accepted
+             only for SQL it passed (or that the agent disputes) — see SubmitApprovalMiddleware
+             (deep_agent.answer.middleware). REVIEW_PROMPT tells the agent the order of steps.
+- on_demand  the subagent is available and the agent decides whether to call it (ON_DEMAND_PROMPT);
+             submit_answer only requires that the SQL ran.
+- off        no reviewer; submit_answer still requires that the SQL ran.
+
+ReviewTurnMiddleware starts every turn with no review records and copies the user's messages into
+state for the reviewer (subagents don't receive the conversation).
 """
 
-import logging
-import uuid
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware, hook_config
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
 
-from deep_agent.answer.schema import ANSWER_RECEIVED, TOOL_NAME, last_submission
-from deep_agent.answer.verification import normalize_sql
-from deep_agent.context import DeepAgentRuntimeState
-from deep_agent.validator.reviewer import VALIDATOR_NAME, build_validator, review_record, review_request
+from deep_agent.context import DeepAgentRuntimeState, is_user_message
+from deep_agent.validator.reviewer import VALIDATOR_NAME, build_validator
 
-logger = logging.getLogger(__name__)
-
-# What the main agent sees about the on-demand subagent (in the `task` tool's list of subagents).
-ON_DEMAND_DESCRIPTION = (
-    "Independent reviewer: checks whether a SQL answer really answers the user's request, using read-only "
-    "diagnostic queries, and returns JSON {verdict: pass|fail, issues: [{problem, evidence}]}. It has not seen "
-    "your work, which is the point. Worth it before submit_answer when the answer involves joins, aggregation "
-    "or grouping, date ranges, several conditions, an interpretation you had to choose, 0 rows or a surprising "
-    "number. Skip it for simple lookups you have already verified. In the task description send only: the "
-    "user's messages verbatim (all of them, for a follow-up), the SQL to review in a ```sql block, its result "
-    "rows, and your stated assumptions — not your reasoning or your conclusion. On fail, fix the SQL (and "
-    "review again if the change is substantial), or keep it only if you can show why the issue is wrong."
+# What the main agent sees about the subagent (in the `task` tool's list of subagents).
+_HOW_TO_SEND = (
+    "It checks whether a SQL query really answers the user's request, with read-only diagnostic queries, and "
+    "returns JSON {verdict: pass|fail, issues: [{problem, evidence}]}. Send exactly two things in the description: "
+    "the SQL in a ```sql block, and your interpretation choices as a list of lines starting with '- '. Nothing else "
+    "is read: the reviewer gets the user's messages and this SQL's result rows itself."
 )
+VALIDATOR_DESCRIPTION = {
+    "always": "Independent reviewer — required before submit_answer. " + _HOW_TO_SEND,
+    "on_demand": ("Independent reviewer — worth it before submit_answer when the answer involves a join, aggregation "
+                  "or grouping, several conditions, an interpretation you had to choose, 0 rows or a surprising "
+                  "number. " + _HOW_TO_SEND),
+}
+
+# Appended to the main system prompt when review is required.
+REVIEW_PROMPT = """
+## Before you submit (required)
+
+1. The final SQL must have run successfully with `execute_trino_query` in this turn — check its rows.
+2. Ask the `semantic-validator` to review it: `task` with subagent_type `semantic-validator`, the SQL in a ```sql block and your assumptions as `- ` lines.
+3. Pass → call `submit_answer` with exactly that SQL (any change needs a new review). Fail → fix the SQL and repeat 1–2. If you are sure the reviewer is wrong, you may submit the same SQL with `validation_response` explaining why.
+
+`submit_answer` is refused for SQL that hasn't run, or that the reviewer hasn't passed.
+"""
+
+# Appended to the main system prompt when review is on demand.
+ON_DEMAND_PROMPT = """
+An independent reviewer is available: `task` with subagent_type `semantic-validator` (its description says when it is worth calling and what to send). `submit_answer` is refused for SQL that hasn't run successfully in this turn.
+"""
 
 
 class ReviewTurnMiddleware(AgentMiddleware):
-    """Start every turn with no reviews (both modes)."""
+    """Start every turn with no review records, and give the reviewer the user's messages."""
 
     state_schema = DeepAgentRuntimeState
 
     def before_agent(self, state, runtime) -> dict[str, Any] | None:
-        return {"semantic_validations": None}  # None resets (context.merge_reviews)
+        user_messages = [m.text for m in state.get("messages") or [] if is_user_message(m) and m.text.strip()]
+        return {"semantic_validations": None, "user_messages": user_messages}  # None resets (context.merge_reviews)
 
     async def abefore_agent(self, state, runtime) -> dict[str, Any] | None:
         return self.before_agent(state, runtime)
 
 
-def validator_subagent(model: BaseChatModel) -> dict[str, Any]:
-    """The on-demand reviewer as a deepagents CompiledSubAgent (called through `task`)."""
-    return {"name": VALIDATOR_NAME, "description": ON_DEMAND_DESCRIPTION, "runnable": build_validator(model, on_demand=True)}
-
-
-
-def feedback_text(issues: list[dict[str, str]]) -> str:
-    listed = "\n".join(f"{n}. {i['problem']}\n   Evidence: {i['evidence']}" for n, i in enumerate(issues, 1))
-    return (
-        "An independent reviewer checked this answer against the user's request and found problems:\n"
-        f"{listed}\n\n"
-        f"Fix the SQL, execute it, and call {TOOL_NAME} again. If you are sure the answer is correct as it is, "
-        f"call {TOOL_NAME} again with the same SQL and explain why in `validation_response`."
-    )
-
-
-class SemanticValidationMiddleware(AgentMiddleware):
-    """`always` mode: reviews every accepted submit_answer call (see module docstring)."""
-
-    state_schema = DeepAgentRuntimeState
-
-    def __init__(self, model: BaseChatModel, max_rounds: int | None = None) -> None:
-        super().__init__()
-        self.model = model
-        self.max_rounds = max_rounds
-        self._validator = None
-
-    @property
-    def validator(self):
-        if self._validator is None:
-            self._validator = build_validator(self.model)
-        return self._validator
-
-    def _pending(self, state) -> tuple[Any, ToolMessage, list[dict[str, Any]]] | None:
-        """(answer, its tool message, records) when the model just made an accepted SQL submission."""
-        submission = last_submission(state.get("messages") or [])
-        answer = state.get("structured_response")
-        if submission is None or submission.text != ANSWER_RECEIVED or answer is None:
-            return None
-        if getattr(answer, "needs_clarification", None) or not answer.sql:
-            return None
-        return answer, submission, list(state.get("semantic_validations") or [])
-
-    def _without_review(self, answer: Any, records: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """A record that ends the loop without a review (dispute / round limit), else None."""
-        sql = normalize_sql(answer.sql)
-        previous = records[-1] if records else None
-        if previous and previous["verdict"] == "fail" and previous["sql"] == sql:
-            return {"id": uuid.uuid4().hex, "mode": "always", "verdict": "disputed", "sql": sql,
-                    "issues": previous["issues"], "response": getattr(answer, "validation_response", None)}
-        reviews = sum(1 for r in records if r["verdict"] in ("pass", "fail"))
-        if self.max_rounds is not None and reviews >= self.max_rounds:
-            return {"id": uuid.uuid4().hex, "mode": "always", "verdict": "skipped", "sql": sql, "issues": [],
-                    "reason": f"review limit reached ({self.max_rounds})"}
-        return None
-
-    def _update(self, answer, submission, verdict, error: str | None) -> dict[str, Any]:
-        record = review_record("always", verdict, sql=normalize_sql(answer.sql),
-                         reason=None if verdict is not None else error)
-        if verdict is None:
-            logger.warning("Semantic validation produced no verdict: %s", error)
-        if verdict is None or verdict.verdict == "pass":
-            return {"semantic_validations": [record]}
-        feedback = ToolMessage(content=feedback_text(record["issues"]), tool_call_id=submission.tool_call_id,
-                               name=submission.name, id=submission.id)  # same id: replaces "Answer received."
-        return {"messages": [feedback], "semantic_validations": [record], "jump_to": "model"}
-
-    def _review_input(self, state, answer) -> dict[str, Any]:
-        executed = (state.get("executed_queries") or [])[state.get("turn_execution_start") or 0:]
-        return {"messages": [HumanMessage(review_request(state.get("messages") or [], answer, executed))]}
-
-    @hook_config(can_jump_to=["model"])
-    def after_model(self, state, runtime) -> dict[str, Any] | None:
-        pending = self._pending(state)
-        if pending is None:
-            return None
-        answer, submission, records = pending
-        if (record := self._without_review(answer, records)) is not None:
-            return {"semantic_validations": [record]}
-        try:
-            out = self.validator.invoke(self._review_input(state, answer), context=runtime.context)
-            verdict, error = out.get("structured_response"), "the reviewer ended without a verdict"
-        except Exception as exc:  # a broken review must not lose the answer
-            verdict, error = None, f"{type(exc).__name__}: {exc}"
-        return self._update(answer, submission, verdict, error)
-
-    @hook_config(can_jump_to=["model"])
-    async def aafter_model(self, state, runtime) -> dict[str, Any] | None:
-        pending = self._pending(state)
-        if pending is None:
-            return None
-        answer, submission, records = pending
-        if (record := self._without_review(answer, records)) is not None:
-            return {"semantic_validations": [record]}
-        try:
-            out = await self.validator.ainvoke(self._review_input(state, answer), context=runtime.context)
-            verdict, error = out.get("structured_response"), "the reviewer ended without a verdict"
-        except Exception as exc:  # a broken review must not lose the answer
-            verdict, error = None, f"{type(exc).__name__}: {exc}"
-        return self._update(answer, submission, verdict, error)
+def validator_subagent(model: BaseChatModel, mode: str = "always") -> dict[str, Any]:
+    """The reviewer as a deepagents CompiledSubAgent (called through `task`)."""
+    return {"name": VALIDATOR_NAME, "description": VALIDATOR_DESCRIPTION[mode], "runnable": build_validator(model)}

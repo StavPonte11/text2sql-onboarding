@@ -56,27 +56,15 @@ async def test_answer_is_bound_to_the_executed_query(policy_model):
     assert len(result["executed_queries"]) == 1
 
 
-@pytest.mark.asyncio
-async def test_unexecuted_answer_sql_is_re_executed(policy_model):
-    other = {**ANSWER, "sql": "SELECT COUNT(*) AS flights FROM \"postgres\".\"public\".\"flights_table\""}
-    result, _, reexec = await _run(policy_model, _policy(other), [_trino([[466]])], [_trino([[1000]])])
-
-    final = result["final_result"]
-    assert final["status"] == "re_executed" and final["executed"] is True
-    assert final["result"]["rows"] == [[1000]]
-    reexec.assert_called_once()
-    assert reexec.call_args.args[0].endswith("LIMIT 101")  # re-execution goes through the guard
-
-
-@pytest.mark.asyncio
-async def test_forbidden_answer_sql_is_rejected(policy_model):
-    bad = {**ANSWER, "sql": "DELETE FROM \"postgres\".\"public\".\"flights_table\""}
-    result, _, reexec = await _run(policy_model, _policy(bad), [_trino([[466]])])
-
-    final = result["final_result"]
-    assert final["status"] == "rejected" and final["executed"] is False
-    assert final["result"] is None
-    reexec.assert_not_called()
+@pytest.mark.parametrize("sql", ["SELECT COUNT(*) AS flights FROM \"postgres\".\"public\".\"flights_table\"",
+                                 "DELETE FROM \"postgres\".\"public\".\"flights_table\""], ids=["select", "delete"])
+def test_sql_that_never_ran_is_never_executed_or_shown(sql):
+    """submit_answer refuses such SQL (SubmitApprovalMiddleware); if it ever reached verification, nothing runs."""
+    answer = SubmitAnswer(sql=sql, explanation_he="הסבר", confidence="high")
+    with patch.object(verification, "execute_query_sync") as run:
+        final = verify_answer(answer, [])
+    run.assert_not_called()
+    assert final["status"] == "not_executed" and final["executed"] is False and final["result"] is None
 
 
 @pytest.mark.asyncio
@@ -145,9 +133,10 @@ def test_clarifications_are_off_by_default():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_clarification_only_mentioned_in_prompt_when_enabled(scripted_model, enabled):
-    model = scripted_model(AIMessage("", tool_calls=[{"name": "submit_answer", "args": {**ANSWER}, "id": "f"}]))
+    model = scripted_model(AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": EXECUTED}, "id": "e"}]),
+                           AIMessage("", tool_calls=[{"name": "submit_answer", "args": {**ANSWER}, "id": "f"}]))
     agent = create_deep_agent(model=model, clarifications_enabled=enabled)
-    with patch.object(verification, "execute_query_sync", return_value=_trino([[1]])):
+    with patch.object(sql_tools, "execute_query_sync", return_value=_trino([[1]])):
         await agent.ainvoke({"messages": [("user", "q")]}, {"configurable": {"thread_id": f"c{enabled}"}})
     assert ("needs_clarification" in system_text(model.seen[0])) is enabled
 
@@ -173,8 +162,11 @@ async def test_matched_exploration_sample_is_re_executed_for_the_full_answer(pol
 def test_re_execution_without_a_row_ceiling(monkeypatch):
     monkeypatch.setattr(verification.settings, "DEEP_AGENT_MAX_ROWS", None)
     answer = SubmitAnswer(sql="SELECT a FROM t", explanation_he="הסבר", confidence="high")
+    sample = verification.executed_query_record(  # the approved SQL ran with limit=5
+        "SELECT a FROM t", "SELECT a FROM t LIMIT 6",
+        {"columns": ["a"], "rows": [[i] for i in range(5)], "row_count": 5, "truncated": True}, 5)
     with patch.object(verification, "execute_query_sync", return_value=_trino([[i] for i in range(500)])) as run:
-        final = verify_answer(answer, [])
+        final = verify_answer(answer, [sample])
     assert run.call_args.args[0] == "SELECT a FROM t"       # no LIMIT added
     assert final["executed"] is True and final["result"]["row_count"] == 500 and final["result"]["truncated"] is False
 

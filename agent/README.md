@@ -49,7 +49,7 @@ observability.py  Langfuse run config and scores
 resources.py      skills wiring (read-only /skills/)
 tools/            what the model can call: sql, metadata, enrichment, location (+ envelope, trino_errors)
 answer/           the final answer: schema, verification (did the SQL run), middleware, render
-validator/        independent semantic review: reviewer (the agent), modes (always / on_demand)
+validator/        independent semantic review before submit: reviewer (the agent), modes (wiring)
 middleware/       cross-cutting: catalog in every model call, built-in tool filter
 prompts/          system.md, validator.md + registry.py (Langfuse / packaged)
 skills/           temporal-analyst, spatial-analyst
@@ -70,21 +70,29 @@ Run logs are opt-in and git-ignored (`agent/runs/`, `agent/*.jsonl`, `agent/*.cs
 
 ### Semantic validation (deep agent)
 
-An independent reviewer (`src/deep_agent/validator/`) checks whether a SQL answer really answers the user's request:
-a separate agent with a fresh context (the user's messages, the SQL, its rows, the stated assumptions and the catalog —
-not the main agent's reasoning), read-only diagnostic tools, and a verdict of pass, or fail with issues and evidence.
-Its prompt is `prompts/validator.md` (`deep-agent/validator` in Langfuse). `DEEP_AGENT_SEMANTIC_VALIDATION` picks how it is used:
+A SQL answer needs two approvals **before** it is submitted:
 
-| Mode | |
-|---|---|
-| `on_demand` | a `semantic-validator` subagent the agent calls through `task` when it judges a review worthwhile; the verdict comes back to the agent, which decides what to do |
-| `always` (default) | every submitted answer is reviewed before the run ends; on fail the agent fixes the SQL (reviewed again) or resubmits it with a justification (`validation_response`, recorded as disputed). `DEEP_AGENT_VALIDATOR_MAX_ROUNDS` optionally limits reviews per turn (default none) |
-| `off` | no reviewer |
+1. **It ran:** the SQL executed successfully with `execute_trino_query` in this turn (a limited sample counts; the
+   full rows are fetched once more for the user).
+2. **It answers the question:** the `semantic-validator` subagent (`src/deep_agent/validator/`) passed it. The agent
+   calls it through `task` with the SQL and its assumptions; the reviewer's input is built by our code from facts — the
+   user's own messages, the SQL, its recorded rows, the assumptions as claims to check, the catalog and the date —
+   never from the agent's reasoning. It has read-only diagnostic tools and returns pass, or fail with issues and
+   evidence (prompt: `prompts/validator.md`, `deep-agent/validator` in Langfuse).
 
-The outcome for the final answer is the response's `semantic_validation`: `verdict` (`passed` / `failed` / `disputed` /
-`not_validated`), `rounds`, `issues`, `reviewed_final_sql` (a review of an earlier SQL doesn't count for the final one).
-Langfuse gets `validation_rounds` and, when the final SQL was reviewed, `semantic_validation_passed` — compare the modes
-on accuracy and cost, then keep one.
+`submit_answer` only checks those records. Without them it is refused with the reason and the agent continues; a SQL
+changed after its review needs a new one. After a fail the agent fixes the SQL, or disputes: it submits the same SQL
+with `validation_response` (recorded as disputed and shown to the user).
+
+| Setting | Default | |
+|---|---|---|
+| `DEEP_AGENT_SEMANTIC_VALIDATION` | `always` | `on_demand` = the reviewer is offered and the agent decides whether to call it; `off` = no reviewer. In both, only approval 1 is required |
+| `DEEP_AGENT_VALIDATOR_MAX_ROUNDS` | none | optional: after this many reviews in a turn, an unreviewed SQL is accepted as `not_validated` |
+| `DEEP_AGENT_STRICT_SUBMIT` | `false` | `true` = no recovery of answers written as text and no reminder: a model that doesn't call `submit_answer` ends without an answer |
+
+The response's `semantic_validation` reports the review of the **final** SQL: `verdict` (`passed` / `disputed` /
+`not_validated`), `rounds`, `issues`, `reviewed_final_sql`. Langfuse gets `validation_rounds` and, when the final SQL
+was reviewed, `semantic_validation_passed`.
 
 ### SQL safety (deep agent)
 

@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from agent.config import settings
 from agent.llm import get_llm
-from deep_agent.answer.middleware import AnswerRecoveryMiddleware, AnswerVerificationMiddleware, SubmitReminderMiddleware
+from deep_agent.answer.middleware import AnswerVerificationMiddleware, SubmitApprovalMiddleware, submit_fallback
 from deep_agent.answer.schema import TOOL_NAME, answer_schema, submission_strategy
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
 from deep_agent.middleware.catalog import CatalogMiddleware
@@ -22,7 +22,7 @@ from deep_agent.middleware.tool_filter import BuiltinToolFilterMiddleware
 from deep_agent.prompts.registry import PromptRefreshMiddleware, load_prompt, local_prompt
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
-from deep_agent.validator.modes import ReviewTurnMiddleware, SemanticValidationMiddleware, validator_subagent
+from deep_agent.validator.modes import ON_DEMAND_PROMPT, REVIEW_PROMPT, ReviewTurnMiddleware, validator_subagent
 from deep_agent.validator.reviewer import ValidationMode
 
 # Packaged system prompt (the Langfuse-managed version, when enabled, is loaded per agent build and refreshed per call).
@@ -61,7 +61,7 @@ def create_deep_agent(
         model: Chat model override (tests); defaults to the configured LLM.
         clarifications_enabled: Override DEEP_AGENT_CLARIFICATIONS_ENABLED (tests).
         checkpointer: Thread persistence (e.g. AsyncPostgresSaver); defaults to an in-memory saver.
-        semantic_validation: Override DEEP_AGENT_SEMANTIC_VALIDATION: on_demand | always | off (tests).
+        semantic_validation: Override DEEP_AGENT_SEMANTIC_VALIDATION: always | on_demand | off (tests).
         validator_model: Model for the independent reviewer; defaults to the agent's model.
     """
     if clarifications_enabled is None:
@@ -70,17 +70,14 @@ def create_deep_agent(
     llm = model or get_llm()
     memory = checkpointer or MemorySaver()
     resources = build_resources()
-    suffix = CLARIFICATION_PROMPT if clarifications_enabled else ""
+    review_required = mode == "always"            # submit needs a validator pass
+    has_reviewer = mode in ("always", "on_demand")  # the semantic-validator subagent is available
+    review_prompt = {"always": REVIEW_PROMPT, "on_demand": ON_DEMAND_PROMPT}.get(mode, "")
+    suffix = (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
     system_prompt = load_prompt("system").text + suffix
-    reviewer = validator_model or llm
     subagents = [_general_purpose_subagent()]
-    review_middleware = []
-    if mode == "on_demand":
-        subagents.append(validator_subagent(reviewer))
-        review_middleware = [ReviewTurnMiddleware()]
-    elif mode == "always":
-        review_middleware = [ReviewTurnMiddleware(),
-                             SemanticValidationMiddleware(reviewer, settings.DEEP_AGENT_VALIDATOR_MAX_ROUNDS)]
+    if has_reviewer:
+        subagents.append(validator_subagent(validator_model or llm, mode))
 
     agent = create_harness_agent(
         model=llm,
@@ -91,13 +88,13 @@ def create_deep_agent(
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
             PromptRefreshMiddleware("system", system_prompt, suffix=suffix),
-            AnswerRecoveryMiddleware(),
-            SubmitReminderMiddleware(TOOL_NAME),
-            AnswerVerificationMiddleware(),
-            *review_middleware,
+            *submit_fallback(TOOL_NAME),
+            AnswerVerificationMiddleware(has_reviewer),
+            *([ReviewTurnMiddleware()] if has_reviewer else []),
+            SubmitApprovalMiddleware(review_required, settings.DEEP_AGENT_VALIDATOR_MAX_ROUNDS),
             BuiltinToolFilterMiddleware(),
         ],
-        response_format=submission_strategy(answer_schema(clarifications_enabled, mode == "always")),
+        response_format=submission_strategy(answer_schema(clarifications_enabled, review_required)),
         context_schema=DeepAgentContext,
         checkpointer=memory,
         backend=resources.backend,

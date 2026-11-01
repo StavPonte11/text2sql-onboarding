@@ -80,6 +80,9 @@ class DeepAgentRuntimeState(AgentState):
     final_result: NotRequired[Annotated[dict[str, Any], latest]]  # verified answer + rows (see deep_agent.answer.verification)
     turn_execution_start: NotRequired[Annotated[int, latest]]  # index into executed_queries where the current turn began
     semantic_validations: NotRequired[Annotated[list[dict[str, Any]], merge_reviews]]  # this turn's reviews (deep_agent.validator)
+    # The user's messages in this thread, oldest first, copied at the start of each turn. Subagents don't receive the
+    # conversation (deepagents leaves `messages` out of their state), so the reviewer reads the real request from here.
+    user_messages: NotRequired[Annotated[list[str], latest]]
 
 
 # Name of the one-time "submit now" message (deep_agent.answer.middleware.SubmitReminderMiddleware): not the user's words.

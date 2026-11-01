@@ -52,11 +52,14 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
     DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
-    # Independent semantic review of answers (see deep_agent/validator/):
-    # always = every submitted answer is reviewed before the run ends;
-    # on_demand = a `semantic-validator` subagent the agent calls when it judges a review worthwhile; off = no reviewer.
+    # Independent semantic review (see deep_agent/validator/), by the `semantic-validator` subagent:
+    # always = submit_answer is accepted only for SQL it passed (or that the agent disputes);
+    # on_demand = the agent may call it, submit only requires that the SQL ran; off = no reviewer.
     DEEP_AGENT_SEMANTIC_VALIDATION: Literal["always", "on_demand", "off"] = "always"
-    DEEP_AGENT_VALIDATOR_MAX_ROUNDS: int | None = Field(default=None, gt=0)  # "always" only: reviews per turn; "none" = no limit
+    DEEP_AGENT_VALIDATOR_MAX_ROUNDS: int | None = Field(default=None, gt=0)  # reviews per turn before submit stops requiring one; "none" = no limit
+    # Strict submit: no recovery of answers written as text and no "submit now" reminder — a model that doesn't
+    # call submit_answer (or the reviewer submit_verdict) simply ends without an answer.
+    DEEP_AGENT_STRICT_SUBMIT: bool = False
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
     # Prompts (see deep_agent/prompts/registry.py). Off until the prompts are finalised and synced to Langfuse.

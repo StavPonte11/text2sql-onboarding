@@ -7,10 +7,12 @@ the final SQL ran and the rows shown are Trino's — it does NOT mean the answer
 to be semantically correct.
 
 - "matched":      answer.sql equals (sqlglot-normalised) a query that executed successfully in
-                  this run -> the result rows are that execution's rows
-- "re_executed":  no match, or the match was only a smaller sample than the configured row
-                  ceiling -> answer.sql is run once through the read-only guard; rows come from that run
-- "rejected" / "re_execution_failed": the answer's SQL is forbidden or fails -> not executed
+                  this turn -> the result rows are that execution's rows
+- "re_executed":  it matched only a sample (a smaller limit than the configured row ceiling) -> the same,
+                  already approved SQL is run once more to show all its rows
+- "re_execution_failed": that full-rows run failed -> not executed
+- "not_executed": the SQL never ran in this turn (SubmitApprovalMiddleware refuses such a submission,
+                  so this only marks a broken invariant)
 - "clarification": the model asked a clarifying question instead of answering
                   (only possible when DEEP_AGENT_CLARIFICATIONS_ENABLED is on)
 
@@ -28,7 +30,8 @@ from agent.utils.sql import clean_sql
 from core.trino import execute_query_sync
 from deep_agent.answer.schema import SubmitAnswer
 
-VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution_failed", "clarification", "no_answer"]
+VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution_failed", "not_executed", "clarification",
+                             "no_answer"]
 
 
 def normalize_sql(sql: str | None) -> str | None:
@@ -111,10 +114,13 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]
         return {**base, "status": "clarification", "executed": False, "sql": None, "result": None}
 
     record = match_execution(answer.sql, executed)
-    if record is not None and not _is_sample(record):
+    if record is None:
+        return {**base, "status": "not_executed", "executed": False, "sql": clean_sql(answer.sql), "result": None,
+                "error": "the submitted SQL did not run in this turn"}
+    if not _is_sample(record):
         return {**base, "status": "matched", "executed": True, "sql": record["submitted_sql"], "result": _result_view(record)}
 
-    status, record, error = _re_execute(answer.sql)
+    status, record, error = _re_execute(answer.sql)  # the approved SQL ran only as a sample: fetch all its rows
     if record is None:
         return {**base, "status": status, "executed": False, "sql": clean_sql(answer.sql), "result": None, "error": error}
     return {**base, "status": status, "executed": True, "sql": record["submitted_sql"], "result": _result_view(record)}
@@ -123,32 +129,22 @@ def verify_answer(answer: Any, executed: list[dict[str, Any]]) -> dict[str, Any]
 _VERDICTS = {"pass": "passed", "fail": "failed", "disputed": "disputed"}
 
 
-def _covers(record: dict[str, Any], final_sql: str | None) -> bool | None:
-    """Did this review look at the final SQL? None when it can't be told (an on-demand brief without a ```sql block)."""
-    target = normalize_sql(final_sql)
-    if "sql" in record:
-        return record["sql"] == target
-    return (target in record["sqls"]) if record.get("sqls") else None
-
-
 def validation_summary(records: list[dict[str, Any]] | None, final_sql: str | None = None) -> dict[str, Any] | None:
-    """The review outcome of the final answer, from this turn's review records (None = reviewer off).
+    """The review outcome of the final answer, from this turn's review records (None = review off).
 
-    verdict: passed | failed | disputed (the agent resubmitted a rejected SQL with a justification) |
-    not_validated (no review, a review of a different SQL than the final one, round limit, or the review failed).
-    reviewed_final_sql: whether the last review covered the final SQL (None = can't be told).
+    verdict: the latest record for the final SQL — passed | disputed (the agent submitted a failed SQL with a
+    justification) | failed | not_validated (no review of the final SQL, review limit, or the review errored).
+    rounds: reviews this turn (any SQL).
     """
     if records is None:
         return None
     rounds = sum(1 for r in records if r["verdict"] in ("pass", "fail"))
     summary = {"verdict": "not_validated", "rounds": rounds, "issues": [], "response": None, "reason": None,
-               "reviewed_final_sql": None}
-    if not records:
-        return {**summary, "reason": "no review"}
-    last = records[-1]
-    covers = _covers(last, final_sql)
-    summary.update(issues=last.get("issues") or [], response=last.get("response"), reviewed_final_sql=covers,
-                   reason=last.get("reason"))
-    if covers is False:
-        return {**summary, "issues": [], "reason": "the final SQL changed after the last review"}
-    return {**summary, "verdict": _VERDICTS.get(last["verdict"], "not_validated")}
+               "reviewed_final_sql": False}
+    target = normalize_sql(final_sql)
+    relevant = [r for r in records if target is not None and r.get("sql") == target]
+    if not relevant:
+        return {**summary, "reason": "no review of the final SQL"}
+    last = relevant[-1]
+    return {**summary, "verdict": _VERDICTS.get(last["verdict"], "not_validated"), "issues": last.get("issues") or [],
+            "response": last.get("response"), "reason": last.get("reason"), "reviewed_final_sql": True}

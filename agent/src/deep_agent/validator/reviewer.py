@@ -1,23 +1,38 @@
 """
-The reviewer agent: a separate agent with a fresh context (the user's messages, the SQL, its rows,
-the stated assumptions and the catalog — never the main agent's reasoning), read-only diagnostic
-tools, and a `submit_verdict` (pass / fail + issues with evidence). Its prompt is prompts/validator.md.
+The reviewer agent (the `semantic-validator` subagent): a separate agent with a fresh context, read-only
+diagnostic tools and a `submit_verdict` (pass / fail + issues with evidence). Its prompt is
+prompts/validator.md.
+
+Independence: the agent that asks for the review writes a brief, but the reviewer never reads it as
+such. ReviewInputMiddleware replaces the brief with an input our code builds from facts:
+
+- the user's messages, from the thread (state `user_messages`) — never from the brief
+- the SQL to review and the agent's assumptions — the only two things taken from the brief
+  (a ```sql block and a "- " list); any other text in the brief is discarded
+- that SQL's result rows, from the recorded execution (state `executed_queries`) — never from the brief
+- plus, like every model call: today's date and the connection's catalog
+
+Not given: the agent's reasoning, notes, other attempts, confidence, the user-facing explanation,
+or the reviewer's own earlier verdicts. ReviewRecordMiddleware records the verdict for the reviewed
+SQL in `semantic_validations`, which submit_answer checks (deep_agent.answer.middleware).
 """
 
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field, create_model, model_validator
 
-from deep_agent.answer.middleware import AnswerRecoveryMiddleware, SubmitReminderMiddleware
+from deep_agent.answer.middleware import submit_fallback
 from deep_agent.answer.schema import submission_strategy
 from deep_agent.answer.verification import match_execution, normalize_sql
-from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware, DeepAgentRuntimeState, is_user_message
+from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware, DeepAgentRuntimeState
 from deep_agent.middleware.catalog import CatalogMiddleware
 from deep_agent.prompts.registry import PromptRefreshMiddleware, load_prompt
 from deep_agent.tools import (
@@ -30,13 +45,14 @@ from deep_agent.tools import (
 
 logger = logging.getLogger(__name__)
 
-ValidationMode = Literal["on_demand", "always", "off"]
+ValidationMode = Literal["always", "on_demand", "off"]
 
 VERDICT_TOOL = "submit_verdict"
 VALIDATOR_NAME = "semantic-validator"
 REVIEW_CONFIG = {"run_name": VALIDATOR_NAME, "tags": [VALIDATOR_NAME]}  # the tag marks the reviewer's nested runs
 VALIDATOR_TOOLS = [execute_trino_query, get_sample_rows, get_column_distinct_values, search_column_values,
                    get_column_profile]
+
 
 class Issue(BaseModel):
     problem: str = Field(description="What is wrong and how to fix it (Hebrew).")
@@ -45,7 +61,7 @@ class Issue(BaseModel):
 
 
 class _VerdictFields(BaseModel):
-    verdict: Literal["pass", "fail"] = Field(description="pass = the answer answers the request; fail = it doesn't.")
+    verdict: Literal["pass", "fail"] = Field(description="pass = the SQL answers the request; fail = it doesn't.")
     issues: list[Issue] = Field(default_factory=list, description="Every problem found (required for fail).")
 
     @model_validator(mode="after")
@@ -61,46 +77,113 @@ SubmitVerdict = create_model(
 )
 
 _SQL_BLOCK = re.compile(r"```sql\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$")
 
 
-def review_record(mode: ValidationMode, verdict: Any, **fields: Any) -> dict[str, Any]:
+def parse_brief(brief: str) -> tuple[str | None, list[str]]:
+    """The two things taken from the agent's brief: the SQL (first ```sql block) and its assumptions (bullets)."""
+    blocks = _SQL_BLOCK.findall(brief or "")
+    sql = blocks[0].strip() if blocks else None
+    outside = _SQL_BLOCK.sub("", brief or "")
+    assumptions = [m.group(1) for line in outside.splitlines() if (m := _BULLET.match(line))]
+    return sql or None, assumptions
+
+
+def _result_section(record: dict[str, Any] | None) -> str:
+    if record is None:
+        return "This SQL has not run successfully in this turn — run it yourself to see the result."
+    if record.get("truncated"):
+        note = " (only part of the result: more rows exist)"
+    else:
+        note = ""
+    lines = [f"Columns: {record['columns']}", f"Rows returned: {record['row_count']}{note}"]
+    lines += [str(row) for row in record["rows"]]
+    return "\n".join(lines)
+
+
+def review_request(user_messages: list[str], sql: str | None, assumptions: list[str],
+                   executed: list[dict[str, Any]]) -> str:
+    """The reviewer's input, built from facts: the user's own messages, the SQL, its assumptions, its real rows."""
+    parts = []
+    if user_messages[:-1]:
+        parts.append("## Earlier user messages (context)\n" + "\n".join(f"- {text}" for text in user_messages[:-1]))
+    parts.append(f"## Current user request\n{user_messages[-1] if user_messages else ''}")
+    if sql is None:
+        parts.append("## SQL to review\n(none was provided — fail the review with the issue "
+                     "\"no SQL was sent for review\")")
+        return "\n\n".join(parts)
+    parts.append(f"## SQL to review\n```sql\n{sql}\n```")
+    listed = "\n".join(f"- {a}" for a in assumptions) or "(none stated)"
+    parts.append("## The analyst's interpretation choices — claims to check, not facts\n" + listed)
+    parts.append(f"## Result of this SQL\n{_result_section(match_execution(sql, executed))}")
+    return "\n\n".join(parts)
+
+
+def _turn_executions(state: dict) -> list[dict[str, Any]]:
+    return (state.get("executed_queries") or [])[state.get("turn_execution_start") or 0:]
+
+
+class ReviewInputMiddleware(AgentMiddleware):
+    """Inside the reviewer: replace the agent's brief with the input built from facts (module docstring)."""
+
+    state_schema = DeepAgentRuntimeState
+
+    def _with_review_input(self, request: ModelRequest) -> ModelRequest:
+        messages = list(request.messages)
+        if not messages or not isinstance(messages[0], HumanMessage):
+            return request
+        state = request.state or {}
+        sql, assumptions = parse_brief(messages[0].text)
+        text = review_request(list(state.get("user_messages") or []), sql, assumptions, _turn_executions(state))
+        messages[0] = HumanMessage(text, id=messages[0].id)
+        return request.override(messages=messages)
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+        return handler(self._with_review_input(request))
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        return await handler(self._with_review_input(request))
+
+
+def review_record(verdict: Any, **fields: Any) -> dict[str, Any]:
     if verdict is None:
-        return {"id": uuid.uuid4().hex, "mode": mode, "verdict": "error", "issues": [], **fields}
-    return {"id": uuid.uuid4().hex, "mode": mode, "verdict": verdict.verdict,
+        return {"id": uuid.uuid4().hex, "verdict": "error", "issues": [], **fields}
+    return {"id": uuid.uuid4().hex, "verdict": verdict.verdict,
             "issues": [issue.model_dump() for issue in verdict.issues], **fields}
 
 
 class ReviewRecordMiddleware(AgentMiddleware):
-    """Inside the on-demand reviewer: record its verdict and which SQL it reviewed (```sql blocks of the brief)."""
+    """Inside the reviewer: record its verdict for the SQL it reviewed (state `semantic_validations`)."""
 
     state_schema = DeepAgentRuntimeState
 
     def after_agent(self, state, runtime) -> dict[str, Any] | None:
         messages = state.get("messages") or []
-        brief = messages[0].text if messages else ""
-        sqls = [normalize_sql(block) for block in _SQL_BLOCK.findall(brief)]
-        reason = None if state.get("structured_response") else "the reviewer ended without a verdict"
-        return {"semantic_validations": [review_record("on_demand", state.get("structured_response"),
-                                                 sqls=[s for s in sqls if s], reason=reason)]}
+        sql, _ = parse_brief(messages[0].text if messages else "")
+        verdict = state.get("structured_response")
+        reason = None if verdict else "the reviewer ended without a verdict"
+        return {"semantic_validations": [review_record(verdict, sql=normalize_sql(sql), reason=reason)]}
 
     async def aafter_agent(self, state, runtime) -> dict[str, Any] | None:
         return self.after_agent(state, runtime)
 
 
-def build_validator(model: BaseChatModel, *, on_demand: bool = False):
-    """The reviewer agent: catalog + date in context, read-only tools, verdict as structured output."""
+def build_validator(model: BaseChatModel):
+    """The reviewer agent: facts-only input, catalog + date in context, read-only tools, verdict via submit_verdict."""
     prompt = load_prompt("validator").text
     agent = create_agent(
         model=model,
         tools=VALIDATOR_TOOLS,
         system_prompt=prompt,
         middleware=[
+            ReviewInputMiddleware(),  # first: the date is then added to the built input, not to the brief
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
             PromptRefreshMiddleware("validator", prompt),
-            AnswerRecoveryMiddleware(),
-            SubmitReminderMiddleware(VERDICT_TOOL),
-            *([ReviewRecordMiddleware()] if on_demand else []),
+            *submit_fallback(VERDICT_TOOL),
+            ReviewRecordMiddleware(),
         ],
         response_format=submission_strategy(SubmitVerdict),
         context_schema=DeepAgentContext,
@@ -108,33 +191,3 @@ def build_validator(model: BaseChatModel, *, on_demand: bool = False):
         name=VALIDATOR_NAME,
     )
     return agent.with_config(REVIEW_CONFIG)
-
-
-def _human_messages(messages: list) -> list[str]:
-    return [m.text for m in messages if is_user_message(m) and m.text.strip()]
-
-
-def _result_section(record: dict[str, Any] | None) -> str:
-    if record is None:
-        return "The analyst did not execute this exact SQL in this turn — run it yourself to see the result."
-    note = " (truncated by the row ceiling: more rows exist)" if record.get("truncated") else ""
-    lines = [f"Columns: {record['columns']}", f"Rows returned: {record['row_count']}{note}"]
-    lines += [str(row) for row in record["rows"]]
-    return "\n".join(lines)
-
-
-def review_request(messages: list, answer: Any, executed: list[dict[str, Any]]) -> str:
-    """The reviewer's only input: the user's messages, the answer as the user will see it, and its rows."""
-    humans = _human_messages(messages)
-    earlier = "\n".join(f"- {text}" for text in humans[:-1])
-    parts = []
-    if earlier:
-        parts.append(f"## Earlier user messages (context)\n{earlier}")
-    parts.append(f"## Current user request\n{humans[-1] if humans else ''}")
-    assumptions = "\n".join(f"- {a}" for a in answer.assumptions) or "(none)"
-    parts.append(
-        f"## Answer to review\n```sql\n{answer.sql}\n```\n\n"
-        f"Explanation shown to the user: {answer.explanation_he}\n\nStated assumptions:\n{assumptions}"
-    )
-    parts.append(f"## Result of this SQL\n{_result_section(match_execution(answer.sql, executed))}")
-    return "\n\n".join(parts)
