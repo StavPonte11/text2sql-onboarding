@@ -39,9 +39,20 @@ def agent_version() -> str:
 
 
 def _langfuse_handler() -> BaseCallbackHandler | None:
-    from core.langfuse import get_langfuse_handler
+    """A Langfuse callback bound to our project's keys.
 
-    return get_langfuse_handler()
+    The keys live in agent settings (.env), not in the process environment, so a bare
+    CallbackHandler() would start a disabled client unless something else had already created a
+    keyed one (the legacy graph does; the CLI doesn't). Create our client, then bind to its key.
+    """
+    try:
+        import agent.langfuse_client  # noqa: F401 — creates the Langfuse client with settings' keys
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler(public_key=settings.LANGFUSE_PUBLIC_KEY)
+    except Exception as exc:  # tracing must never break a run
+        logger.warning("Langfuse tracing disabled: %s", exc)
+        return None
 
 
 def build_run_config(
