@@ -20,10 +20,12 @@ def test_chat_forwards_engine_and_returns_verification(mock_call, client):
 
 @patch("app.routers.agent._call_agent_mcp", new_callable=AsyncMock, return_value=DEEP_RESPONSE)
 def test_chat_tells_the_agent_how_long_it_waits(mock_call, client):
-    from app.routers.agent import AGENT_STOP_MARGIN_S, CHAT_TIMEOUT_S
+    from app.config import settings
+    from app.routers.agent import AGENT_STOP_MARGIN_S
 
     client.post("/api/agent/chat", json={"query": "q", "connection_id": 89, "engine": "deep"})
-    assert mock_call.await_args.args[0]["timeout_s"] == CHAT_TIMEOUT_S - AGENT_STOP_MARGIN_S < CHAT_TIMEOUT_S
+    wait = settings.AGENT_READ_TIMEOUT_SECONDS
+    assert mock_call.await_args.args[0]["timeout_s"] == wait - AGENT_STOP_MARGIN_S < wait
 
 
 @patch("app.routers.agent._call_agent_mcp", new_callable=AsyncMock,

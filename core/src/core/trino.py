@@ -56,8 +56,14 @@ class TrinoExecutionResult(BaseModel):
     query_id: str | None = None
 
 
-def get_trino_connection():
-    """Create a real Trino DBAPI connection from settings."""
+def get_trino_connection(catalog: str | None = None, schema: str | None = None):
+    """Create a real Trino DBAPI connection from settings.
+
+    Args:
+        catalog: Override the default catalog (settings.TRINO_CATALOG).
+                 Pass a table's specific catalog to run queries in the right context.
+        schema:  Override the default schema (settings.TRINO_SCHEMA).
+    """
     auth = None
     if settings.TRINO_CERT_PATH and settings.TRINO_KEY_PATH:
         auth = trino.auth.CertificateAuthentication(
@@ -72,8 +78,8 @@ def get_trino_connection():
         host=settings.TRINO_HOST,
         port=settings.TRINO_PORT,
         user=settings.TRINO_USER,
-        catalog=settings.TRINO_CATALOG,
-        schema=settings.TRINO_SCHEMA,
+        catalog=catalog or settings.TRINO_CATALOG,
+        schema=schema or settings.TRINO_SCHEMA,
         http_scheme=settings.TRINO_HTTP_SCHEME,
         auth=auth,
         request_timeout=settings.TRINO_REQUEST_TIMEOUT,
@@ -87,13 +93,17 @@ def execute_query_sync(
     table_id: str = "",
     params: tuple | dict | list | None = None,
     reuse_connection: bool = False,
+    catalog: str | None = None,
+    schema: str | None = None,
 ) -> TrinoExecutionResult:
     """
     Execute a SQL query against the real Trino cluster.
 
     reuse_connection=True keeps one DBAPI connection per thread (no new HTTP/TLS setup per
-    query); a failed query drops it so the next call reconnects.
+    query); a failed query drops it so the next call reconnects. The kept connection uses the
+    default catalog/schema, so a catalog or schema override always gets its own connection.
     """
+    reuse_connection = reuse_connection and catalog is None and schema is None
     start_time = time.time()
     log_sql = sql.strip().replace("\n", " ")[:300]
     logger.info(f"[CoreTrinoClient] table_id={table_id} | {log_sql}")
@@ -109,7 +119,7 @@ def execute_query_sync(
     conn = None
     cur = None
     try:
-        conn = _reusable_connection() if reuse_connection else get_trino_connection()
+        conn = _reusable_connection() if reuse_connection else get_trino_connection(catalog=catalog, schema=schema)
         cur = conn.cursor()
         if params is not None:
             cur.execute(sql, params)

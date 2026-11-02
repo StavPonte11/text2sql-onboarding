@@ -4,14 +4,9 @@ import dayjs from 'dayjs';
 import { FlaskConical } from 'lucide-react';
 
 import { ErrorState } from '../components/common/ErrorState';
+import { ScoreRing } from '../components/common/EvalUI';
 import { SkeletonTable } from '../components/common/Skeleton';
 import { useAllEvalRuns } from '../hooks/useEvaluations';
-
-function ScoreRing({ score }: { score: number }) {
-  const pct = Math.round(score * 100);
-  const cls = pct >= 50 ? 'score-ring--high' : 'score-ring--low';
-  return <div className={`score-ring ${cls}`}>{pct}%</div>;
-}
 
 export function SandboxPage() {
   const { t } = useTranslation();
@@ -79,7 +74,9 @@ export function SandboxPage() {
                     </Link>
                   </td>
                   <td>
-                    <ScoreRing score={run.score} />
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <ScoreRing score={run.score} status={run.status} />
+                    </div>
                   </td>
                   <td>
                     <span

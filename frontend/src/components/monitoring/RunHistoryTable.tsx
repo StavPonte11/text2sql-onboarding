@@ -2,19 +2,79 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
-import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
+import { useStopEvalRun } from '../../hooks/useEvaluations';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 
 import './RunHistoryTable.css';
 
+// Runs saved before the rename store these two scores under their old names
+// (same meaning: 1 = good)
+const RENAMED_DIMENSIONS: Record<string, string> = {
+  schema_hallucination: 'schema_validity',
+  dialect_error: 'dialect_validity',
+};
+
+const dimensionLabel = (dim: string) => (RENAMED_DIMENSIONS[dim] ?? dim).replace(/_/g, ' ');
+
+/** Pass rate over the questions finished so far, e.g. "40% so far" */
+function livePassRate(perQuestion: { status: string }[] | undefined): string {
+  const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
+  if (!finished.length) return 'Calculating…';
+  const passed = finished.filter((q) => q.status === 'pass').length;
+  return `${Math.round((passed / finished.length) * 100)}% so far`;
+}
+
+/** "Evaluating 36 of 58 questions" with a bar, shown while a run is in progress */
+function RunProgress({ completed, total }: { completed: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  return (
+    <div className="card" style={{ padding: '14px 18px' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 13,
+          fontWeight: 600,
+          marginBottom: 8,
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#f59e0b' }}>
+          <Spinner size={13} color="#f59e0b" />
+          Evaluating {completed} of {total} questions
+        </span>
+        <span style={{ color: 'var(--text-secondary)' }}>{pct}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={completed}
+        aria-valuemin={0}
+        aria-valuemax={total}
+        style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: '#f59e0b',
+            transition: 'width 0.4s ease',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
+  const stopMut = useStopEvalRun();
   const { data: report, isLoading } = useQuery({
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
     enabled: !!runId,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 4000 : false),
   });
 
   const isRegressionRun = report?.triggered_by === 'promotion-regression';
@@ -39,9 +99,38 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
       <div className="run-detail-panel">
         <div className="run-detail-header">
           <div className="run-detail-title">Run Details</div>
-          <button className="btn btn--ghost btn--sm" onClick={onClose}>
-            ✕ Close
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {report?.status === 'running' && (
+              <button
+                className="btn btn--danger btn--sm"
+                disabled={stopMut.isPending}
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to stop this evaluation run?')) {
+                    stopMut.mutate(runId);
+                  }
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1px solid #dc2626',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                <Square size={12} fill="currentColor" />
+                {stopMut.isPending ? 'Stopping…' : 'Stop Evaluation'}
+              </button>
+            )}
+            <button className="btn btn--ghost btn--sm" onClick={onClose}>
+              ✕ Close
+            </button>
+          </div>
         </div>
 
         {isLoading && (
@@ -52,20 +141,50 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
         {report && (
           <div className="run-detail-content">
+            {report.status === 'running' && (
+              <RunProgress
+                completed={report.completed_questions ?? 0}
+                total={report.total_questions}
+              />
+            )}
+
             {/* Summary */}
             <div className="card summary-grid">
               {[
                 {
                   label: 'Score',
-                  value: `${Math.round(report.overall_score * 100)}%`,
-                  color: report.overall_score >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? 'Evaluating…'
+                      : `${Math.round(report.overall_score * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.overall_score >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
                 {
                   label: 'Pass Rate',
-                  value: `${Math.round(report.pass_rate * 100)}%`,
-                  color: report.pass_rate >= 0.5 ? '#10b981' : '#ef4444',
+                  value:
+                    report.status === 'running'
+                      ? livePassRate(report.per_question)
+                      : `${Math.round(report.pass_rate * 100)}%`,
+                  color:
+                    report.status === 'running'
+                      ? '#f59e0b'
+                      : report.pass_rate >= 0.5
+                        ? '#10b981'
+                        : '#ef4444',
                 },
-                { label: 'Questions', value: report.total_questions, color: 'var(--text-primary)' },
+                {
+                  label: 'Questions',
+                  value:
+                    report.status === 'running'
+                      ? `${report.completed_questions ?? 0}/${report.total_questions}`
+                      : report.total_questions,
+                  color: 'var(--text-primary)',
+                },
                 {
                   label: 'Duration',
                   value: report.duration_seconds ? `${report.duration_seconds}s` : '—',
@@ -83,12 +202,30 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
             {/* Publishable status */}
             <div
-              className={`publishable-status ${report.is_publishable ? 'publishable-status--ready' : 'publishable-status--not-ready'}`}
+              className={`publishable-status ${
+                report.status === 'running'
+                  ? 'publishable-status--running'
+                  : report.is_publishable
+                    ? 'publishable-status--ready'
+                    : 'publishable-status--not-ready'
+              }`}
             >
-              <span>{report.is_publishable ? <Check size={14} /> : <X size={14} />}</span>
-              {report.is_publishable
-                ? 'Ready to publish (score ≥ 50%)'
-                : 'Not publishable — score below 50%'}
+              <span>
+                {report.status === 'running' ? (
+                  <Spinner size={14} color="#f59e0b" />
+                ) : report.is_publishable ? (
+                  <Check size={14} />
+                ) : (
+                  <X size={14} />
+                )}
+              </span>
+              {report.status === 'running'
+                ? 'Evaluation running — publishability pending evaluation completion'
+                : report.status === 'failed'
+                  ? 'Not publishable — evaluation run failed'
+                  : report.is_publishable
+                    ? 'Ready to publish (score ≥ 50%)'
+                    : 'Not publishable — score below 50%'}
             </div>
 
             {/* Regression */}
@@ -125,7 +262,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   ([dim, val]) => (
                     <div key={dim} className="dimension-item">
                       <div className="dimension-item__header">
-                        <span className="dimension-item__label">{dim.replace(/_/g, ' ')}</span>
+                        <span className="dimension-item__label">{dimensionLabel(dim)}</span>
                         <span
                           className="dimension-item__score"
                           style={{ color: val >= 0.5 ? '#10b981' : '#ef4444' }}
@@ -158,18 +295,43 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       <div key={q.question_id} className="question-item">
                         <div
                           className="question-item__dot"
-                          style={{ background: q.status === 'pass' ? '#10b981' : '#ef4444' }}
+                          style={{
+                            background:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.status === 'pass'
+                                  ? '#10b981'
+                                  : '#ef4444',
+                            opacity: q.status === 'pending' ? 0.7 : 1,
+                            animation:
+                              q.status === 'pending' ? 'pulse 1.4s ease-in-out infinite' : 'none',
+                          }}
                         />
                         <div className="question-item__id" title={q.question ?? q.question_id}>
                           {(q.question ?? q.question_id).slice(0, 16)}…
                         </div>
                         <div
                           className="question-item__score"
-                          style={{ color: q.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                          style={{
+                            color:
+                              q.status === 'pending'
+                                ? '#f59e0b'
+                                : q.score >= 0.5
+                                  ? '#10b981'
+                                  : '#ef4444',
+                          }}
                         >
-                          {q.score >= 0.5 ? 100 : 0}%
+                          {q.status === 'pending' ? '—' : q.score >= 0.5 ? '100%' : '0%'}
                         </div>
-                        {q.failure_type && (
+                        {q.status === 'pending' && (
+                          <span
+                            className="question-item__failure-type"
+                            style={{ color: '#f59e0b' }}
+                          >
+                            evaluating…
+                          </span>
+                        )}
+                        {q.status !== 'pending' && q.failure_type && (
                           <span className="question-item__failure-type">{q.failure_type}</span>
                         )}
                       </div>
@@ -310,11 +472,20 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 // ── RunHistoryTable ────────────────────────────────────────────────────────────
 interface RunHistoryTableProps {
   tableId?: string;
+  connectionId?: number;
   limit?: number;
   compact?: boolean;
+  excludeTableIds?: Set<string>;
 }
 
-export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHistoryTableProps) {
+export function RunHistoryTable({
+  tableId,
+  connectionId,
+  limit = 50,
+  compact = false,
+  excludeTableIds,
+}: RunHistoryTableProps) {
+  const stopMut = useStopEvalRun();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = compact ? 5 : 10;
@@ -325,13 +496,22 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ['eval-runs', tableId, limit],
-    queryFn: () => orchestrationApi.listRuns({ limit, table_id: tableId }),
-    refetchInterval: 15_000,
+    queryKey: ['eval-runs', tableId, connectionId, limit],
+    queryFn: () =>
+      orchestrationApi.listRuns({ limit, table_id: tableId, connection_id: connectionId }),
+    refetchInterval: (query) => {
+      const data = query.state.data as typeof runs;
+      const hasRunning = data?.some((r) => r.status === 'running');
+      return hasRunning ? 5_000 : 15_000;
+    },
   });
 
-  const paged = runs.slice(page * pageSize, (page + 1) * pageSize);
-  const totalPages = Math.ceil(runs.length / pageSize);
+  const visibleRuns = excludeTableIds?.size
+    ? runs.filter((r) => !r.table_id || !excludeTableIds.has(r.table_id))
+    : runs;
+
+  const paged = visibleRuns.slice(page * pageSize, (page + 1) * pageSize);
+  const totalPages = Math.ceil(visibleRuns.length / pageSize);
 
   if (isLoading)
     return (
@@ -366,12 +546,13 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
           <thead>
             <tr>
               {!compact && <th>Run ID</th>}
-              {!tableId && <th>Table</th>}
+              {!tableId && <th>Target / Connection</th>}
               <th>Score</th>
               <th>Pass Rate</th>
               {!compact && <th>Questions</th>}
               <th>Status</th>
               <th>Triggered By</th>
+              {!compact && <th>Catalog</th>}
               <th>Date</th>
               <th style={{ width: 36 }} />
             </tr>
@@ -381,32 +562,78 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
               <tr key={run.id} onClick={() => setSelectedRunId(run.id)} className="run-history-row">
                 {!compact && (
                   <td>
-                    <code className="run-id-text">{run.id.slice(0, 8)}…</code>
+                    <code className="run-id-text" title={run.id}>
+                      {run.id.slice(0, 8)}…
+                    </code>
                   </td>
                 )}
                 {!tableId && (
                   <td className="table-link-cell">
-                    {run.table_id ? (
+                    {run.connection_id ? (
+                      <span
+                        className="table-link run-table-name"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        title={run.connection_name || run.table_name}
+                      >
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            padding: '2px 6px',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            color: '#2563eb',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Connection
+                        </span>
+                        {run.connection_name || run.table_name || `ID: ${run.connection_id}`}
+                      </span>
+                    ) : run.table_id ? (
                       <Link
                         to={`/tables/${run.table_id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="table-link hover:underline"
+                        className="table-link hover:underline run-table-name"
+                        title={run.table_name || run.table_id}
                       >
                         {run.table_name || run.table_id.slice(0, 8)}
                       </Link>
                     ) : (
-                      <span className="table-link">{run.table_name}</span>
+                      <span className="table-link run-table-name" title={run.table_name}>
+                        {run.table_name}
+                      </span>
                     )}
                   </td>
                 )}
                 <td>
                   <div className="score-cell-content">
-                    <span
-                      className="score-text"
-                      style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
-                    >
-                      {Math.round(run.score * 100)}%
-                    </span>
+                    {run.status === 'running' ? (
+                      <span
+                        className="score-text score-text--running"
+                        style={{
+                          color: '#f59e0b',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontSize: 12,
+                        }}
+                      >
+                        <Spinner size={12} color="#f59e0b" />
+                        Evaluating…
+                        {run.completed_questions != null && run.total_questions > 0 && (
+                          <span title="Questions finished so far">
+                            {run.completed_questions}/{run.total_questions}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span
+                        className="score-text"
+                        style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
+                      >
+                        {Math.round(run.score * 100)}%
+                      </span>
+                    )}
                     {run.regression_detected && (
                       <span title="Regression detected">
                         <AlertTriangle size={12} style={{ color: '#ef4444' }} />
@@ -415,7 +642,11 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                   </div>
                 </td>
                 <td className="pass-rate-cell">
-                  <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  {run.status === 'running' ? (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
+                  ) : (
+                    <ScoreBar score={run.pass_rate} height={5} showLabel />
+                  )}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>
@@ -423,14 +654,64 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
                 </td>
                 <td>
                   <span
-                    className={`triggered-by-text${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    className={`triggered-by-text run-triggered-by ${run.triggered_by === 'scheduler' ? ' triggered-by-text--scheduler' : ''}`}
+                    title={run.triggered_by}
                   >
                     {run.triggered_by}
                   </span>
                 </td>
+                {!compact && (
+                  <td>
+                    {(run as any).connection_id != null ? (
+                      <code
+                        style={{
+                          fontSize: 11,
+                          padding: '2px 6px',
+                          background: 'rgba(99,102,241,0.1)',
+                          borderRadius: 4,
+                          color: 'var(--accent)',
+                        }}
+                      >
+                        #{(run as any).connection_id}
+                      </code>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>default</span>
+                    )}
+                  </td>
+                )}
                 <td className="date-cell">{dayjs(run.created_at).format('MMM D, HH:mm')}</td>
-                <td>
-                  <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                <td style={{ textAlign: 'right' }}>
+                  {run.status === 'running' ? (
+                    <button
+                      className="btn btn--danger btn--xs"
+                      title="Stop this evaluation run"
+                      disabled={stopMut.isPending && stopMut.variables === run.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm('Are you sure you want to stop this evaluation run?')) {
+                          stopMut.mutate(run.id);
+                        }
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        color: '#ef4444',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Square size={10} fill="currentColor" />
+                      {stopMut.isPending && stopMut.variables === run.id ? 'Stopping…' : 'Stop'}
+                    </button>
+                  ) : (
+                    <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                  )}
                 </td>
               </tr>
             ))}
@@ -441,8 +722,8 @@ export function RunHistoryTable({ tableId, limit = 50, compact = false }: RunHis
       {totalPages > 1 && (
         <div className="run-history-pagination">
           <span className="pagination-info">
-            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, runs.length)} of{' '}
-            {runs.length} runs
+            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, visibleRuns.length)} of{' '}
+            {visibleRuns.length} runs
           </span>
           <div className="pagination-btns">
             <button

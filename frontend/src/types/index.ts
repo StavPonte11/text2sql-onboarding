@@ -13,7 +13,6 @@ export type HealthStatus = Schemas['HealthStatus'];
 
 // Interfaces
 export type Table = Schemas['TableRead'];
-export type TableCreate = Schemas['TableCreate'];
 
 export type GoldenQuestion = Schemas['GoldenQuestionRead'];
 export type GoldenQuestionCreate = Schemas['GoldenQuestionCreate'];

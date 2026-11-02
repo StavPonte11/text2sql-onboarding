@@ -3,15 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import { Popover, Select, Tooltip } from 'antd';
-import {
-  AlignLeft,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  MapPin,
-  RefreshCw,
-  Table2,
-} from 'lucide-react';
+import { AlignLeft, ChevronDown, ChevronRight, Clock, MapPin, Table2 } from 'lucide-react';
 import { ArrowRight, Database, Link2, Unlink } from 'lucide-react';
 
 import { enrichmentApi, tablesApi } from '../../api/client';
@@ -406,8 +398,6 @@ interface Props {
 
 export function EnrichmentEditor({ tableId }: Props) {
   const { t } = useTranslation();
-  const qc = useQueryClient();
-  const { message } = App.useApp();
 
   const { data, isLoading } = useQuery({
     queryKey: ['enrichment', tableId],
@@ -423,18 +413,6 @@ export function EnrichmentEditor({ tableId }: Props) {
   const { data: foreignKeysData } = useQuery({
     queryKey: ['foreignKeys', tableId],
     queryFn: () => foreignKeysApi.list(tableId),
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: () => tablesApi.syncSchema(tableId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['enrichment', tableId] });
-      qc.invalidateQueries({ queryKey: ['table', tableId] });
-      message.success('Schema synced successfully from OpenMetadata');
-    },
-    onError: (err: any) => {
-      message.error(err.response?.data?.detail || 'Failed to sync schema');
-    },
   });
 
   const [schema, setSchema] = useState<EnrichmentData>({ table_description: '', columns: [] });
@@ -453,22 +431,6 @@ export function EnrichmentEditor({ tableId }: Props) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ fontSize: 17, fontWeight: 700 }}>Schema</h2>
-        <button
-          className="btn btn--ghost btn--sm"
-          disabled={syncMutation.isPending}
-          onClick={() => syncMutation.mutate()}
-          style={{
-            fontSize: 11,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            height: 28,
-            padding: '0 10px',
-          }}
-        >
-          <RefreshCw size={12} className={syncMutation.isPending ? 'animate-spin' : ''} />
-          {syncMutation.isPending ? 'Syncing...' : 'Sync Schema'}
-        </button>
       </div>
 
       {/* Table Description */}

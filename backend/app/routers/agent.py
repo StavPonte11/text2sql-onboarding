@@ -17,11 +17,14 @@ from typing import Literal
 
 import httpx
 import redis.asyncio as redis
-from fastapi import APIRouter, HTTPException
+from core.db.engine import get_session
+from core.models.models import Table, TableRead, TableStatus
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.config import settings
 
@@ -29,9 +32,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-# How long /chat waits for the agent. The agent is told a little less (timeout_s) so it stops the
-# run and its "stopped" response still arrives before we give up.
-CHAT_TIMEOUT_S = 300.0
+# /chat waits settings.AGENT_READ_TIMEOUT_SECONDS for the agent. The deep agent is told a little less
+# (timeout_s) so it stops the run and its "stopped" response still arrives before we give up.
 AGENT_STOP_MARGIN_S = 10.0
 
 # ---------------------------------------------------------------------------
@@ -132,7 +134,9 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
                 result = await session.call_tool(
                     "chat_with_agent",
                     arguments=tool_arguments,
-                    read_timeout_seconds=timedelta(seconds=CHAT_TIMEOUT_S),
+                    read_timeout_seconds=timedelta(
+                        seconds=settings.AGENT_READ_TIMEOUT_SECONDS
+                    ),
                 )
 
                 if not result.content:
@@ -222,13 +226,28 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
-        "timeout_s": CHAT_TIMEOUT_S - AGENT_STOP_MARGIN_S,  # the deep agent stops its run then
+        # the deep agent stops its run then, so its "stopped" reply arrives before we give up
+        "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
     }
     if request.engine is not None:  # only sent when chosen, so older agent services keep working
         tool_arguments["engine"] = request.engine
 
     result = await _call_agent_mcp(tool_arguments)
     return ChatResponse(**result)
+
+
+@router.get("/tables", response_model=list[TableRead])
+def get_agent_tables(
+    status: TableStatus | None = None, session: Session = Depends(get_session)
+):
+    """
+    Internal endpoint for the agent and evaluation service to fetch available tables
+    without requiring user SSO authentication.
+    """
+    q = select(Table)
+    if status:
+        q = q.where(Table.status == status)
+    return session.exec(q).all()
 
 
 @router.get("/stream/{thread_id}")
@@ -352,7 +371,9 @@ async def suggest_fixes(req: SuggestFixesRequest):
             result = await session.call_tool(
                 "suggest_fixes",
                 arguments={"thread_id": req.thread_id, "category": req.category},
-                read_timeout_seconds=timedelta(seconds=300.0),
+                read_timeout_seconds=timedelta(
+                    seconds=settings.AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS
+                ),
             )
             content = result.content[0].text
             return json.loads(content)
@@ -376,3 +397,42 @@ async def list_connections():
     except Exception as e:
         logger.error(f"List connections error: {e}")
         return {"connections": []}
+
+
+@router.get("/connections/{connection_id}/tables")
+async def list_connection_tables(connection_id: int):
+    """Fetch all tables for a given connection from Jeen MCP (list_tables_rich)."""
+    try:
+        async with _get_jeen_mcp_client() as session:
+            result = await session.call_tool(
+                "list_tables_rich",
+                arguments={"connection_id": connection_id},
+                read_timeout_seconds=timedelta(seconds=60.0),
+            )
+            content = result.content[0].text
+            rows = json.loads(content)
+            if not isinstance(rows, list):
+                rows = []
+            # Normalise to a consistent shape for the frontend
+            tables = []
+            for row in rows:
+                name = row.get("name") or row.get("table_name") or ""
+                tables.append(
+                    {
+                        "name": name,
+                        "schema_name": row.get("schema_name")
+                        or row.get("schema")
+                        or "",
+                        "catalog": row.get("catalog") or "",
+                        "description": row.get("description") or "",
+                        "row_count": row.get("rowCount") or row.get("row_count"),
+                        "column_count": row.get("columnCount")
+                        or row.get("column_count"),
+                    }
+                )
+            return tables
+    except Exception as e:
+        logger.error(
+            f"List connection tables error (connection_id={connection_id}): {e}"
+        )
+        return []

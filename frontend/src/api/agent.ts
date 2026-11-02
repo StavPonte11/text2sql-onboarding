@@ -59,4 +59,8 @@ export const agentApi = {
     const response = await api.get<any>('/connections');
     return response.data;
   },
+  listConnectionTables: async (connectionId: number): Promise<any[]> => {
+    const response = await api.get<any[]>(`/connections/${connectionId}/tables`);
+    return response.data;
+  },
 };

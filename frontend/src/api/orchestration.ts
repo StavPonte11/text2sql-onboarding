@@ -7,13 +7,17 @@ export interface EvalRunFull {
   table_id: string;
   table_name?: string;
   dataset_id: string | null;
+  connection_id: number | null;
+  connection_name?: string | null;
   score: number;
   pass_rate: number;
   fail_rate: number;
   total_questions: number;
+  /** Questions with a result so far (set while the run is in progress) */
+  completed_questions?: number | null;
   duration_seconds: number | null;
   triggered_by: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   started_at: string;
   completed_at: string | null;
   failure_breakdown: Record<string, number> | null;
@@ -153,16 +157,80 @@ export interface SystemHealth {
 
 export const orchestrationApi = {
   // Runs
+  triggerConnectionRun: (
+    connection_id: number,
+    connection_name?: string,
+    dataset_name?: string,
+    triggered_by = 'user',
+  ) =>
+    api
+      .post<EvalRunFull>('/evaluations/run-connection', null, {
+        params: {
+          connection_id,
+          ...(connection_name ? { connection_name } : {}),
+          ...(dataset_name ? { dataset_name } : {}),
+          triggered_by,
+        },
+      })
+      .then((r) => r.data),
+
   triggerRun: (table_ids: string[], triggered_by = 'user') =>
     api
       .post<EvalRunFull[]>('/evaluations/run', table_ids, { params: { triggered_by } })
       .then((r) => r.data),
 
-  listRuns: (params?: { limit?: number; offset?: number; status?: string; table_id?: string }) =>
-    api.get<EvalRunFull[]>('/evaluations/runs', { params }).then((r) => r.data),
+  triggerDatasetRun: (dataset_name: string, connection_id?: number, connection_name?: string) =>
+    api
+      .post<EvalRunFull>('/evaluations/run-dataset', null, {
+        params: {
+          dataset_name,
+          ...(connection_id !== undefined ? { connection_id } : {}),
+          ...(connection_name ? { connection_name } : {}),
+        },
+      })
+      .then((r) => r.data),
+
+  triggerTableRunWithConnection: (
+    table_ids: string[],
+    connection_id?: number,
+    triggered_by = 'user',
+  ) =>
+    api
+      .post<EvalRunFull[]>('/evaluations/run', table_ids, {
+        params: { triggered_by, ...(connection_id !== undefined ? { connection_id } : {}) },
+      })
+      .then((r) => r.data),
+
+  // Connection golden questions
+  listConnectionQuestions: (connection_id: number) =>
+    api.get<any[]>(`/connections/${connection_id}/questions`).then((r) => r.data),
+
+  createConnectionQuestion: (
+    connection_id: number,
+    payload: {
+      question: string;
+      expected_sql: string;
+      difficulty?: string;
+      question_type?: string;
+    },
+  ) => api.post(`/connections/${connection_id}/questions`, payload).then((r) => r.data),
+
+  deleteConnectionQuestion: (connection_id: number, question_id: string) =>
+    api.delete(`/connections/${connection_id}/questions/${question_id}`),
+
+  listRuns: (params?: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    table_id?: string;
+    connection_id?: number;
+  }) => api.get<EvalRunFull[]>('/evaluations/runs', { params }).then((r) => r.data),
 
   getRun: (run_id: string) =>
     api.get<EvalRunFull>(`/evaluations/runs/${run_id}`).then((r) => r.data),
+
+  stopRun: (run_id: string) =>
+    api.post<EvalRunFull>(`/evaluations/runs/${run_id}/stop`).then((r) => r.data),
 
   getRunReport: (run_id: string) =>
     api.get(`/evaluations/runs/${run_id}/report`).then((r) => r.data),

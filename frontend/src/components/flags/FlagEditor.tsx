@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, Input, InputNumber, Popconfirm, Switch, Tag, Tooltip } from 'antd';
 import { Edit3, RotateCcw, Save, X } from 'lucide-react';
+
 import { type FeatureFlag } from '../../api/flags';
 import { TYPE_COLORS } from '../../config/flagsConfig';
 
@@ -77,7 +78,11 @@ export function FlagEditor({
         <Input.TextArea
           value={typeof draft === 'string' ? draft : JSON.stringify(draft, null, 2)}
           onChange={(e) => {
-            try { setDraft(JSON.parse(e.target.value)); } catch { setDraft(e.target.value); }
+            try {
+              setDraft(JSON.parse(e.target.value));
+            } catch {
+              setDraft(e.target.value);
+            }
           }}
           autoSize={{ minRows: 2, maxRows: 6 }}
           style={{ width: 280, fontFamily: 'monospace', fontSize: 12 }}
@@ -98,7 +103,9 @@ export function FlagEditor({
     <div className="flag-row">
       <div className="flag-row__meta">
         <span className="flag-row__name">{flag.name}</span>
-        <Tag color={TYPE_COLORS[flag.type]} style={{ fontSize: 10 }}>{flag.type}</Tag>
+        <Tag color={TYPE_COLORS[flag.type]} style={{ fontSize: 10 }}>
+          {flag.type}
+        </Tag>
       </div>
 
       <div className="flag-row__desc">{flag.description}</div>
@@ -108,7 +115,13 @@ export function FlagEditor({
           <div className="flag-row__edit-controls">
             {editor()}
             <Tooltip title="Save">
-              <Button type="primary" size="small" icon={<Save size={12} />} onClick={handleSave} loading={isSaving} />
+              <Button
+                type="primary"
+                size="small"
+                icon={<Save size={12} />}
+                onClick={handleSave}
+                loading={isSaving}
+              />
             </Tooltip>
             <Tooltip title="Cancel">
               <Button size="small" icon={<X size={12} />} onClick={handleCancel} />
@@ -123,7 +136,10 @@ export function FlagEditor({
                   type="text"
                   size="small"
                   icon={<Edit3 size={12} />}
-                  onClick={() => { setDraft(flag.value); setEditing(true); }}
+                  onClick={() => {
+                    setDraft(flag.value);
+                    setEditing(true);
+                  }}
                 />
               </Tooltip>
             )}

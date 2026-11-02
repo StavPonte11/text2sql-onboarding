@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { enrichmentApi, questionsApi, tablesApi } from '../api/client';
 import { QUERY_CONFIG, QUERY_KEYS } from '../config/constants';
 
-import type { GoldenQuestionCreate, TableCreate } from '../types';
+import type { GoldenQuestionCreate } from '../types';
 
 // ── Tables list ────────────────────────────────────────────────────────────────
 export function useTables(params?: { status?: string; owner_id?: string; search?: string }) {
@@ -24,17 +24,6 @@ export function useTableDetails(id: string) {
   });
 }
 
-// ── Create table ───────────────────────────────────────────────────────────────
-export function useCreateTable() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: TableCreate) => tablesApi.create(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
-    },
-  });
-}
-
 // ── Update table status ────────────────────────────────────────────────────────
 export function useUpdateTableStatus() {
   const queryClient = useQueryClient();
@@ -45,18 +34,6 @@ export function useUpdateTableStatus() {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLE_DETAILS, variables.id] });
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.PENDING_TABLES] });
-    },
-  });
-}
-
-// ── Sync table schema ──────────────────────────────────────────────────────────
-export function useSyncTableSchema() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => tablesApi.syncSchema(id),
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLES] });
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.TABLE_DETAILS, id] });
     },
   });
 }

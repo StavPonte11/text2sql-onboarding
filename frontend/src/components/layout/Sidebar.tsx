@@ -5,8 +5,8 @@ import {
   Activity,
   BarChart2,
   ClipboardList,
-  Database,
   LayoutDashboard,
+  Server,
   Shield,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -38,9 +38,12 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: 'Catalog',
+    items: [{ to: '/connections', icon: Server, key: 'nav.connections', label: 'Connections' }],
+  },
+  {
     label: 'Data',
     items: [
-      { to: '/tables', icon: Database, key: 'nav.tables', label: 'Tables' },
       { to: '/monitoring', icon: Activity, key: 'nav.monitoring', label: 'Audit Log' },
       { to: '/permissions', icon: Shield, key: 'nav.permissions', label: 'Permissions' },
     ],
