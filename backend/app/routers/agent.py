@@ -13,6 +13,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from typing import Literal
 
 import httpx
 import redis.asyncio as redis
@@ -30,6 +31,10 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+# /chat waits settings.AGENT_READ_TIMEOUT_SECONDS for the agent. The deep agent is told a little less
+# (timeout_s) so it stops the run and its "stopped" response still arrives before we give up.
+AGENT_STOP_MARGIN_S = 10.0
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -52,6 +57,7 @@ class ChatRequest(BaseModel):
     execution_mode: str | None = None
     hitl_enabled: bool = True
     connection_id: int
+    engine: Literal["legacy", "deep"] | None = None  # None -> the agent service's AGENT_ENGINE
 
 
 class SuggestFixesRequest(BaseModel):
@@ -71,6 +77,12 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     execution_path: list[str] | None = None
     is_unanswerable: bool = False
+    engine: str | None = None          # "deep" when answered by the Deep Agent
+    verification: str | None = None    # Deep Agent answer verification status (matched, re_executed, ...)
+    confidence: str | None = None      # Deep Agent self-reported confidence (high / medium / low)
+    executed: bool | None = None       # Deep Agent: the submitted final SQL ran and the rows are Trino's
+    recovered_from_text: bool | None = None  # Deep Agent: final answer was written as text and recovered
+    semantic_validation: dict | None = None  # Deep Agent: independent review (verdict, rounds, issues, response)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +226,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
+        # the deep agent stops its run then, so its "stopped" reply arrives before we give up
+        "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
     }
+    if request.engine is not None:  # only sent when chosen, so older agent services keep working
+        tool_arguments["engine"] = request.engine
 
     result = await _call_agent_mcp(tool_arguments)
     return ChatResponse(**result)

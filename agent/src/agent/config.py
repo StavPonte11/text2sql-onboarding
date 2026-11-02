@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 
@@ -44,6 +44,31 @@ class AgentSettings(BaseSettings):
     JEEN_METADATA_CONNECTION_ID: int = 89     # Numeric service ID (from list_connections)
     JEEN_METADATA_SEARCH_LIMIT: int = 10     # Max tables returned by the search tool
     JEEN_METADATA_PROFILE_TIMEOUT: float = 30.0  # Per-MCP-call timeout (seconds)
+
+    # ── Deep Agent ────────────────────────────────────────────────────────────
+    DEEP_AGENT_SKILLS_DIR: str | None = None  # Override packaged skills dir (<dir>/<name>/SKILL.md)
+    # Row ceilings for the deep agent's SQL tools. Set to "none" (or empty) to disable the ceiling.
+    DEEP_AGENT_MAX_ROWS: int | None = Field(default=100, gt=0)  # execute_trino_query / get_column_distinct_values
+    DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
+    DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
+    DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
+    # Independent semantic review (see deep_agent/validator/), by the `semantic-validator` subagent:
+    # always = submit_answer is accepted only for SQL it passed (or that the agent disputes);
+    # on_demand = the agent may call it, submit only requires that the SQL ran; off = no reviewer.
+    DEEP_AGENT_SEMANTIC_VALIDATION: Literal["always", "on_demand", "off"] = "always"
+    DEEP_AGENT_VALIDATOR_MAX_ROUNDS: int | None = Field(default=None, gt=0)  # reviews per turn before submit stops requiring one; "none" = no limit
+    # Strict submit: no recovery of answers written as text and no "submit now" reminder — a model that doesn't
+    # call submit_answer (or the reviewer submit_verdict) simply ends without an answer.
+    DEEP_AGENT_STRICT_SUBMIT: bool = False
+    JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
+    JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
+    # Prompts (see deep_agent/prompts/registry.py). Off until the prompts are finalised and synced to Langfuse.
+    DEEP_AGENT_LANGFUSE_PROMPTS: bool = False      # serve deep-agent/<name> prompts from Langfuse (packaged .md fallback)
+    DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
+    DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
+    # Serving (see deep_agent/service.py)
+    AGENT_ENGINE: Literal["legacy", "deep"] = "legacy"   # default engine for chat_with_agent (per-call `engine` overrides)
+    DEEP_AGENT_CHECKPOINT_DB_URL: str | None = None       # postgresql://... for durable deep-agent threads; unset = in-memory
 
     # ── Trino connection info for explicit catalog/schema qualification ──
     TRINO_CATALOG: str = ""
@@ -95,6 +120,14 @@ class AgentSettings(BaseSettings):
 
     # ── G2-05: Redis Schema Cache ─────────────────────────────────────────────
     SCHEMA_CACHE_TTL: int = Field(default=600, gt=0)    # seconds — DDL content
+
+    @field_validator("DEEP_AGENT_MAX_ROWS", "DEEP_AGENT_MAX_SAMPLE_ROWS", "DEEP_AGENT_VALIDATOR_MAX_ROUNDS", mode="before")
+    @classmethod
+    def _no_limit(cls, value):
+        # Env vars can't hold None; these spellings mean "no limit".
+        if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "unlimited"):
+            return None
+        return value
 
 
 settings = AgentSettings()

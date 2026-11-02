@@ -91,9 +91,9 @@ class HybridSearcher:
                 # Schedule search task directly via MCP client
                 # The MCP backend handles semantic_type routing automatically
                 task = client.search_column_values(
-                    query=clean_val, 
-                    table_name=table_lower or None, 
-                    column_name=col_lower or None
+                    search_term=clean_val, 
+                    table=table_lower or None, 
+                    column=col_lower or None
                 )
                     
                 tasks.append(task)
