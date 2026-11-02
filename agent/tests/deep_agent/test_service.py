@@ -230,7 +230,7 @@ async def test_threads_survive_a_restart_with_postgres(scripted_model, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_reviewer_tools_are_labelled_in_the_stream(scripted_model, published):
+async def test_review_appears_in_the_stream(scripted_model, published):
     brief = f"```sql\n{SQL}\n```"
     main = scripted_model(
         AIMessage("", tool_calls=[{"name": "execute_trino_query", "args": {"sql": SQL}, "id": "e1"}]),
@@ -238,11 +238,10 @@ async def test_reviewer_tools_are_labelled_in_the_stream(scripted_model, publish
                                    "id": "r1"}]),
         _answer())
     reviewer = scripted_model(
-        AIMessage("", tool_calls=[{"name": "get_sample_rows", "args": {"table_name": "orders"}, "id": "x1"}]),
         AIMessage("", tool_calls=[{"name": "submit_verdict", "args": {"verdict": "pass"}, "id": "v1"}]),
     )
     agent = create_deep_agent(model=main, semantic_validation="always", validator_model=reviewer)
     with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t6", agent=agent)
-    assert r["execution_path"] == ["deep:execute_trino_query", "deep:task", "deep:review:get_sample_rows"]
+    assert r["execution_path"] == ["deep:execute_trino_query", "deep:task"]  # the reviewer runs no tools
     assert r["semantic_validation"]["verdict"] == "passed"

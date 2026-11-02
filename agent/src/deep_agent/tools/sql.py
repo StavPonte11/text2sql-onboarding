@@ -28,8 +28,13 @@ from deep_agent.tools.envelope import fail, ok
 logger = logging.getLogger(__name__)
 
 
-def _run_sql(sql: str, row_cap: int | None) -> str:
-    return _execute(sql, row_cap)[0]
+def _run_sql(sql: str, row_cap: int | None, requested: int | None = None) -> str:
+    """Run guarded SQL; when the requested row count was reduced to the configured ceiling, say so."""
+    content, payload = _execute(sql, row_cap)
+    if payload is None or requested is None or row_cap is None or requested <= row_cap:
+        return content
+    return ok({**payload, "notice": f"limit reduced from {requested} to {row_cap} (the configured ceiling) — "
+                                    "asking for more returns the same rows"})
 
 
 def _execute(sql: str, row_cap: int | None) -> tuple[str, dict | None]:
@@ -134,12 +139,13 @@ def get_sample_rows(table_name: str, limit: int = 5) -> str:
         table_name (str): The fully qualified exact name of the table, e.g. '"catalog"."schema"."table"'.
         limit (int): The number of rows to sample. Defaults to 5 (bounded by the configured sample ceiling).
     """
-    row_cap = effective_cap(limit if limit is not None else 5, settings.DEEP_AGENT_MAX_SAMPLE_ROWS)
+    requested = limit if limit is not None else 5
+    row_cap = effective_cap(requested, settings.DEEP_AGENT_MAX_SAMPLE_ROWS)
     try:
         sql = sql_guard.sample_rows_sql(table_name, row_cap)
     except sql_guard.GuardError as e:
         return fail(trino_errors.forbidden(str(e)))
-    return _run_sql(sql, row_cap)
+    return _run_sql(sql, row_cap, requested)
 
 
 @tool
@@ -164,12 +170,13 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
         column_name (str): The exact name of the column (plain or double-quoted; spaces and Hebrew are fine).
         limit (int): Maximum distinct values to return. Defaults to 50 (bounded by the configured row ceiling).
     """
-    row_cap = effective_cap(limit if limit is not None else 50, settings.DEEP_AGENT_MAX_ROWS)
+    requested = limit if limit is not None else 50
+    row_cap = effective_cap(requested, settings.DEEP_AGENT_MAX_ROWS)
     try:
         sql = sql_guard.distinct_values_sql(table_name, column_name, row_cap)
     except sql_guard.GuardError as e:
         return fail(trino_errors.forbidden(str(e)))
-    return _run_sql(sql, row_cap)
+    return _run_sql(sql, row_cap, requested)
 
 
 _VALIDATE_PREFIX = "EXPLAIN (TYPE VALIDATE) "

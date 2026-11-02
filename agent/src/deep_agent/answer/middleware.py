@@ -142,11 +142,21 @@ NOT_REVIEWED = ("Not submitted: the semantic-validator has not reviewed this exa
                 "your assumptions as '- ' lines — and submit after a pass.")
 
 
+def _checks_text(checks: list[str]) -> str:
+    listed = "\n".join(f"- {c}" for c in checks)
+    return ("Not submitted: the semantic-validator asks for these checks before it can decide:\n" f"{listed}\n\n"
+            "Run them with execute_trino_query, then ask the semantic-validator to review the SQL again "
+            "(it will see the checks' results).")
+
+
 def _failed_text(issues: list[dict[str, str]]) -> str:
     listed = "\n".join(f"{n}. {i['problem']}\n   Evidence: {i['evidence']}" for n, i in enumerate(issues, 1))
     return ("Not submitted: the semantic-validator failed this SQL:\n" f"{listed}\n\n"
             "Fix it (run it, have it reviewed, submit), or — if you are sure it is right — submit the same SQL "
             "with `validation_response` explaining why.")
+
+
+_REVIEWED = ("pass", "fail", "needs_check")  # verdicts of a completed review
 
 
 class SubmitApprovalMiddleware(AgentMiddleware):
@@ -155,6 +165,7 @@ class SubmitApprovalMiddleware(AgentMiddleware):
     1. ran: the SQL matches a successful execute_trino_query in this turn (a sample counts)
     2. reviewed (when review is required): the latest semantic-validator verdict for this SQL is a pass —
        or a fail and the agent gives `validation_response` (a dispute, recorded and shown to the user).
+       A needs_check verdict is not a pass: the agent runs the checks and asks for review again.
        If DEEP_AGENT_VALIDATOR_MAX_ROUNDS reviews already ran this turn, the SQL is accepted as not validated.
 
     It only looks the records up; the judging happened before (the execution, the reviewer). A refused
@@ -187,16 +198,18 @@ class SubmitApprovalMiddleware(AgentMiddleware):
             return None
         sql = normalize_sql(answer.sql)
         records = list(state.get("semantic_validations") or [])
-        reviews = [r for r in records if r.get("sql") == sql and r["verdict"] in ("pass", "fail")]
+        reviews = [r for r in records if r.get("sql") == sql and r["verdict"] in _REVIEWED]
         if reviews and reviews[-1]["verdict"] == "pass":
             return None
+        if reviews and reviews[-1]["verdict"] == "needs_check":
+            return self._refuse(submission, _checks_text(reviews[-1].get("checks") or []))
         if reviews:  # failed
             if getattr(answer, "validation_response", None):
                 return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "disputed", "sql": sql,
                                                   "issues": reviews[-1]["issues"],
                                                   "response": answer.validation_response}]}
             return self._refuse(submission, _failed_text(reviews[-1]["issues"]))
-        done = sum(1 for r in records if r["verdict"] in ("pass", "fail"))
+        done = sum(1 for r in records if r["verdict"] in _REVIEWED)
         if self.max_rounds is not None and done >= self.max_rounds:
             return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "skipped", "sql": sql, "issues": [],
                                               "reason": f"review limit reached ({self.max_rounds})"}]}

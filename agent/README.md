@@ -77,8 +77,10 @@ A SQL answer needs two approvals **before** it is submitted:
 2. **It answers the question:** the `semantic-validator` subagent (`src/deep_agent/validator/`) passed it. The agent
    calls it through `task` with the SQL and its assumptions; the reviewer's input is built by our code from facts — the
    user's own messages, the SQL, its recorded rows, the assumptions as claims to check, the catalog and the date —
-   never from the agent's reasoning. It has read-only diagnostic tools and returns pass, or fail with issues and
-   evidence (prompt: `prompts/validator.md`, `deep-agent/validator` in Langfuse).
+   never from the agent's reasoning. It judges by reading (no SQL tools) and returns pass, fail with issues and
+   evidence, or — rarely, when only data can settle a doubt it can see — needs_check with specific checks; the agent
+   runs them and asks for review again, and the reviewer then sees their real results (prompt: `prompts/validator.md`,
+   `deep-agent/validator` in Langfuse).
 
 `submit_answer` only checks those records. Without them it is refused with the reason and the agent continues; a SQL
 changed after its review needs a new one. After a fail the agent fixes the SQL, or disputes: it submits the same SQL

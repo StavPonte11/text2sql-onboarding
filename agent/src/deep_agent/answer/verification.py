@@ -133,12 +133,13 @@ def validation_summary(records: list[dict[str, Any]] | None, final_sql: str | No
     """The review outcome of the final answer, from this turn's review records (None = review off).
 
     verdict: the latest record for the final SQL — passed | disputed (the agent submitted a failed SQL with a
-    justification) | failed | not_validated (no review of the final SQL, review limit, or the review errored).
+    justification) | failed | not_validated (no review of the final SQL, checks still pending, review limit,
+    or the review errored).
     rounds: reviews this turn (any SQL).
     """
     if records is None:
         return None
-    rounds = sum(1 for r in records if r["verdict"] in ("pass", "fail"))
+    rounds = sum(1 for r in records if r["verdict"] in ("pass", "fail", "needs_check"))
     summary = {"verdict": "not_validated", "rounds": rounds, "issues": [], "response": None, "reason": None,
                "reviewed_final_sql": False}
     target = normalize_sql(final_sql)
@@ -146,5 +147,7 @@ def validation_summary(records: list[dict[str, Any]] | None, final_sql: str | No
     if not relevant:
         return {**summary, "reason": "no review of the final SQL"}
     last = relevant[-1]
+    if last["verdict"] == "needs_check":
+        return {**summary, "reviewed_final_sql": True, "reason": "checks were requested and not reviewed again"}
     return {**summary, "verdict": _VERDICTS.get(last["verdict"], "not_validated"), "issues": last.get("issues") or [],
             "response": last.get("response"), "reason": last.get("reason"), "reviewed_final_sql": True}

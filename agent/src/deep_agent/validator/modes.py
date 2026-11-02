@@ -22,8 +22,8 @@ from deep_agent.validator.reviewer import VALIDATOR_NAME, build_validator
 
 # What the main agent sees about the subagent (in the `task` tool's list of subagents).
 _HOW_TO_SEND = (
-    "It checks whether a SQL query really answers the user's request, with read-only diagnostic queries, and "
-    "returns JSON {verdict: pass|fail, issues: [{problem, evidence}]}. Send exactly two things in the description: "
+    "It reads a SQL query against the user's request and the catalog (it doesn't run queries) and returns JSON "
+    "{verdict: pass|fail|needs_check, issues: [{problem, evidence}], checks: [...]}. Send exactly two things in the description: "
     "the SQL in a ```sql block, and your interpretation choices as a list of lines starting with '- '. Nothing else "
     "is read: the reviewer gets the user's messages and this SQL's result rows itself."
 )
@@ -40,7 +40,7 @@ REVIEW_PROMPT = """
 
 1. The final SQL must have run successfully with `execute_trino_query` in this turn — check its rows.
 2. Ask the `semantic-validator` to review it: `task` with subagent_type `semantic-validator`, the SQL in a ```sql block and your assumptions as `- ` lines.
-3. Pass → call `submit_answer` with exactly that SQL (any change needs a new review). Fail → fix the SQL and repeat 1–2. If you are sure the reviewer is wrong, you may submit the same SQL with `validation_response` explaining why.
+3. Pass → call `submit_answer` with exactly that SQL (any change needs a new review). Fail → fix the SQL and repeat 1–2; if you are sure the reviewer is wrong, you may submit the same SQL with `validation_response` explaining why. Needs check → run exactly the checks it names with `execute_trino_query`, then ask for review again (it sees their results).
 
 `submit_answer` is refused for SQL that hasn't run, or that the reviewer hasn't passed.
 """

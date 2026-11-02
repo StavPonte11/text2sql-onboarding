@@ -22,7 +22,7 @@ from deep_agent.answer.schema import ANSWER_RECEIVED, answer_schema
 from deep_agent.answer.verification import normalize_sql, validation_summary
 from deep_agent.observability import run_metrics
 from deep_agent.tools import sql as sql_tools
-from deep_agent.validator.reviewer import VALIDATOR_TOOLS, SubmitVerdict, parse_brief, review_request
+from deep_agent.validator.reviewer import SubmitVerdict, parse_brief, review_request
 
 SQL = "SELECT COUNT(*) AS n FROM orders WHERE status = 'shipped'"
 FIXED = "SELECT COUNT(DISTINCT order_id) AS n FROM orders WHERE status = 'shipped'"
@@ -241,7 +241,7 @@ def test_review_request_marks_earlier_messages_and_missing_runs():
     text = review_request(["כמה טיסות יצאו מצרפת?", "ומאיטליה?"], SQL, [], [])
     assert "Earlier user messages" in text and "כמה טיסות יצאו מצרפת?" in text
     assert "Current user request\nומאיטליה?" in text
-    assert "has not run successfully in this turn" in text and "(none stated)" in text
+    assert "has not run in this turn" in text and "(none stated)" in text
 
 
 @pytest.mark.asyncio
@@ -257,12 +257,6 @@ async def test_follow_up_turn_gives_the_reviewer_the_earlier_question(scripted_m
     second = _texts(reviewer.seen[1])
     assert "Earlier user messages" in second and QUESTION in second and "ובלי כפילויות?" in second
     assert state["final_result"]["semantic_validation"]["rounds"] == 1  # counted per turn
-
-
-def test_reviewer_tools_are_read_only_diagnostics():
-    assert {t.name for t in VALIDATOR_TOOLS} == {
-        "execute_trino_query", "get_sample_rows", "get_column_distinct_values", "search_column_values",
-        "get_column_profile"}
 
 
 def test_fail_verdict_needs_evidence():
@@ -347,3 +341,56 @@ async def test_modes_offer_the_reviewer(scripted_model, mode, offered):
     task_tool = next((t for t in main.bound_tool_names[0] if t == "task"), None)
     assert task_tool == "task"  # general-purpose is always there
     assert ("semantic-validator" in _texts(main.seen[0])) is offered
+
+
+def _needs_check(checks, call_id="v1"):
+    return _call("submit_verdict", {"verdict": "needs_check", "checks": checks}, call_id)
+
+
+CHECK = "SELECT COUNT(DISTINCT order_id) FROM orders"
+
+
+@pytest.mark.asyncio
+async def test_needs_check_sends_the_agent_to_run_it_and_the_reviewer_sees_the_result(scripted_model):
+    main = scripted_model(_execute(), _review(), _submit(), _execute(CHECK, "e2"), _review(call_id="r2"),
+                          _submit(call_id="s2"))
+    reviewer = scripted_model(_needs_check(["check whether order_id repeats across rows"]),
+                              _verdict("pass", call_id="v2"))
+    state = await _run(main, reviewer)
+
+    refusal = _submit_results(state)[0]
+    assert refusal.startswith("Not submitted: the semantic-validator asks for these checks")
+    assert "order_id repeats" in refusal
+    second = _texts(reviewer.seen[1])
+    assert "Checks you asked for in your previous review" in second and "order_id repeats" in second
+    assert CHECK in second and "[42]" in second                     # the check's real recorded result
+    final = state["final_result"]
+    assert final["semantic_validation"]["verdict"] == "passed" and final["semantic_validation"]["rounds"] == 2
+
+
+@pytest.mark.asyncio
+async def test_the_reviewer_has_no_sql_tools(scripted_model):
+    reviewer = scripted_model(_verdict("pass"))
+    await _run(scripted_model(_execute(), _review(), _submit()), reviewer)
+    assert reviewer.bound_tool_names[0] == ["submit_verdict"]
+
+
+def test_needs_check_requires_named_checks():
+    with pytest.raises(ValueError):
+        SubmitVerdict(verdict="needs_check")
+    assert SubmitVerdict(verdict="needs_check", checks=["x"]).checks == ["x"]
+
+
+def test_pending_checks_without_new_queries_are_shown_as_none():
+    records = [{"verdict": "needs_check", "checks": ["c1"], "after_execution": 1}]
+    executed = [{"submitted_sql": SQL, "executed_sql": SQL, "columns": ["n"], "rows": [[42]], "row_count": 1,
+                 "truncated": False}]
+    text = review_request([QUESTION], SQL, [], executed, records)
+    assert "- c1" in text and "Queries the analyst ran since\n(none)" in text
+
+
+
+def test_parse_brief_ignores_an_inline_mention_of_a_sql_block():
+    brief = ("Provide the SQL in a ```sql block``` and list assumptions. Also ```sql``` here.\n"
+             "```sql\nSELECT 1\n```\n- a")
+    assert parse_brief(brief) == ("SELECT 1", ["a"])

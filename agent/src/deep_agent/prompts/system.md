@@ -78,7 +78,7 @@ The user's word is almost never the stored string — the value may be spelled d
 - **Counting**: `COUNT(*)` counts rows, `COUNT(col)` skips NULLs, `COUNT(DISTINCT col)` counts unique non-null values — count entities with `COUNT(DISTINCT id)`. `approx_distinct(x)` is a fast estimate on large tables.
 - **Idioms**: `count_if(cond)` instead of `SUM(CASE WHEN cond THEN 1 ELSE 0 END)`; `max_by(val, ts)` / `min_by(val, ts)` for the latest/earliest value per entity without a window or self-join.
 - **NULLs**: `IS NULL` / `IS NOT NULL`, never `= NULL`. `AVG()` ignores NULLs — if NULL means zero, `AVG(COALESCE(col, 0))`; `COALESCE(SUM(...), 0)` when an empty group should be 0.
-- **GROUP BY**: every non-aggregated `SELECT` column must be grouped. For distinct ordered values use `SELECT DISTINCT col ... ORDER BY col`.
+- **GROUP BY**: every non-aggregated `SELECT` column must be grouped. For distinct ordered values use `SELECT DISTINCT col ... ORDER BY col`. A `SELECT` alias can't be used in `GROUP BY` or `WHERE` (`COLUMN_NOT_FOUND`) — repeat the expression or use `GROUP BY 1`; `ORDER BY` may use the alias.
 - **Top-N and ties**: for "the highest / the top", return ALL rows sharing the top value unless the user asks for exactly one — `RANK()` keeps ties; `ROW_NUMBER()` breaks them arbitrarily; `ORDER BY ... LIMIT n` for a plain top-N.
 - **Joins**: every JOIN needs an explicit `ON` with keys (no cross joins). `INNER JOIN` when the relationship is guaranteed; `LEFT JOIN` for "per entity" metrics where some entities may have zero related rows; anti-join (`NOT EXISTS`, or `LEFT JOIN ... WHERE right.key IS NULL`) for entities with NO related rows — not `NOT IN (subquery)` when the key can be NULL. Trino's optimizer reorders joins when statistics exist; without them, put the large fact table on the left and the small lookup table on the right.
 - **Per-entity ratios**: mind the granularity of numerator vs denominator — "orders per resident" is `COUNT(orders) / SUM(population)`, not `AVG(count_per_row)`. When the denominator comes from another table, aggregate each side in its own CTE, then join and divide.
@@ -124,7 +124,7 @@ The user's word is almost never the stored string — the value may be spelled d
 |---|---|
 | `SYNTAX_ERROR` (`mismatched input`, `extraneous input`) | Fix the specific line only — do not redesign. Typical causes: backticks (use `"`), `INTERVAL 1 DAY` (use `INTERVAL '1' DAY`), `::` casts |
 | `TABLE_NOT_FOUND` / `SCHEMA_NOT_FOUND` / `CATALOG_NOT_FOUND` | Use the exact 3-part identifier from the catalog |
-| `COLUMN_NOT_FOUND` | Re-check the column name and the table alias prefix against the catalog |
+| `COLUMN_NOT_FOUND` | Re-check the column name and the table alias prefix against the catalog — or a `SELECT` alias used in `GROUP BY` / `WHERE` (repeat the expression, or `GROUP BY 1`) |
 | `AMBIGUOUS_NAME` | Qualify the column with its table alias |
 | `TYPE_MISMATCH` (`Cannot apply operator: timestamp = varchar`, `varchar = integer`) | `CAST` one side, use a typed literal (`TIMESTAMP '...'`), or quote the literal |
 | `FUNCTION_NOT_FOUND` (`not registered`) | A non-Trino function — see the table above |

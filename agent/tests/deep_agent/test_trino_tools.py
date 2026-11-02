@@ -128,3 +128,13 @@ def test_validate_runs_explain_for_reads(trino):
     trino.return_value = _ok(0)
     assert json.loads(tools.validate_sql.invoke({"sql": "SELECT 1"}))["data"] == {"valid": True}
     assert trino.call_args.args[0] == "EXPLAIN (TYPE VALIDATE) SELECT 1"
+
+
+def test_sample_rows_says_when_the_limit_was_reduced(monkeypatch):
+    monkeypatch.setattr(sql_tools.settings, "DEEP_AGENT_MAX_SAMPLE_ROWS", 10)
+    res = TrinoExecutionResult(success=True, rows=[[i] for i in range(11)], columns=["a"], row_count=11, query_id="q")
+    with patch.object(sql_tools, "execute_query_sync", return_value=res):
+        reduced = json.loads(tools.get_sample_rows.invoke({"table_name": "t", "limit": 200}))
+        normal = json.loads(tools.get_sample_rows.invoke({"table_name": "t", "limit": 5}))
+    assert "limit reduced from 200 to 10" in reduced["data"]["notice"] and reduced["data"]["row_count"] == 10
+    assert "notice" not in normal["data"]
