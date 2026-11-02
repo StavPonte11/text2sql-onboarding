@@ -35,6 +35,9 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field, create_model, model_validator
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
 
 from deep_agent.answer.middleware import submit_fallback
 from deep_agent.answer.schema import submission_strategy
@@ -104,6 +107,35 @@ def _rows_section(record: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def answer_notes(sql: str, record: dict[str, Any] | None) -> list[str]:
+    """Facts our code can see about this answer, put in front of the reviewer so a general rule becomes a
+    specific cue: SQL that keeps a single row (ties), a cut-off result, an empty result."""
+    notes = []
+    try:
+        tree = sqlglot.parse_one(sql, read="trino")
+    except SqlglotError:
+        tree = None
+    if tree is not None:
+        limit = tree.args.get("limit")
+        single = []
+        if isinstance(limit, exp.Limit) and limit.expression.sql() == "1":
+            single.append("it ends with LIMIT 1")
+        if any(isinstance(w.this, exp.RowNumber) for w in tree.find_all(exp.Window)):
+            single.append("it picks rows with row_number(), which keeps one row per group even when values tie")
+        if any(True for _ in tree.find_all(exp.ArgMax, exp.ArgMin)):
+            single.append("it uses max_by / min_by, which return one value even when several tie")
+        if single:
+            notes.append("This SQL keeps a single row: " + "; ".join(single) + ". If the request asks for "
+                         "'the most / the longest / the highest', check whether other rows share the top value — "
+                         "dropping ties the user didn't ask to drop is a fail.")
+    if record is not None and record.get("truncated"):
+        notes.append(f"The result was cut off at {record['row_count']} rows — more rows exist. For a request that "
+                     "expects a short list (a top N, a few items per group), the SQL returns more than was asked.")
+    if record is not None and record.get("row_count") == 0:
+        notes.append("The result is empty (0 rows) — check whether a condition or a join makes it impossible.")
+    return notes
+
+
 def _pending_checks(records: list[dict[str, Any]], executions: list[dict[str, Any]]) -> tuple[list[str], list[dict]]:
     """The checks asked for in the latest needs_check review this turn, and the executions recorded since it."""
     asked = [r for r in records if r.get("verdict") == "needs_check"]
@@ -129,6 +161,9 @@ def review_request(user_messages: list[str], sql: str | None, assumptions: list[
     listed = "\n".join(f"- {a}" for a in assumptions) or "(none stated)"
     parts.append("## The analyst's interpretation choices — claims to check, not facts\n" + listed)
     record = match_execution(sql, executed)
+    notes = answer_notes(sql, record)
+    if notes:
+        parts.append("## Notes on this answer (facts detected by code)\n" + "\n".join(f"- {n}" for n in notes))
     parts.append("## Result of this SQL\n" + (_rows_section(record) if record else "This SQL has not run in this turn."))
     checks, since = _pending_checks(records or [], executed)
     if checks:

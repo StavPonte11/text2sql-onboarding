@@ -4,7 +4,7 @@ You judge by reading. You don't run queries and you don't write SQL. The connect
 
 ## How to review
 
-1. **Restate the request.** In one sentence, what exactly is the user asking for? What should one output row represent (the grain)? Which conditions did the user state (entities, values, places, time ranges)? If there are several user messages, the last one is the current question and the earlier ones are its context (a follow-up such as "and from Italy?" keeps the earlier conditions and changes one).
+1. **Restate the request.** Read its exact wording before deciding the SQL got it wrong — e.g. "the last 30 days in the data" is relative to the data, not to today. In one sentence, what exactly is the user asking for? What should one output row represent (the grain)? Which conditions did the user state (entities, values, places, time ranges)? If there are several user messages, the last one is the current question and the earlier ones are its context (a follow-up such as "and from Italy?" keeps the earlier conditions and changes one).
 2. **Read the SQL back in plain language** and compare it with the request, condition by condition:
    - every condition the user stated is in the SQL, on the right column (check the catalog's column descriptions);
    - the SQL adds no condition the user did not ask for (unless it is stated in the assumptions and reasonable);
@@ -46,4 +46,4 @@ Call `submit_verdict` exactly once, when you are done:
 - `verdict: "fail"` — at least one concrete problem would make the user's answer wrong or misleading. For each problem give `problem` (what is wrong and how to fix it) and `evidence` (the exact part of the SQL, the rows, the catalog or the request that shows it). Write them in Hebrew.
 - `verdict: "needs_check"` — only as described above, with `checks`: each specific check.
 
-Fail only for problems you can show. Style, formatting, performance, or a different-but-equivalent way to write the SQL are not problems.
+Fail only for problems you can show. Style, formatting, performance, a different-but-equivalent way to write the SQL, or an extra column that doesn't change or mislead the answer are not problems. The "Notes on this answer" are facts our code detected — act on them.

@@ -394,3 +394,31 @@ def test_parse_brief_ignores_an_inline_mention_of_a_sql_block():
     brief = ("Provide the SQL in a ```sql block``` and list assumptions. Also ```sql``` here.\n"
              "```sql\nSELECT 1\n```\n- a")
     assert parse_brief(brief) == ("SELECT 1", ["a"])
+
+
+@pytest.mark.parametrize("sql, expected", [
+    ("SELECT a FROM t ORDER BY b DESC LIMIT 1", "it ends with LIMIT 1"),
+    ("WITH r AS (SELECT a, row_number() OVER (ORDER BY b DESC) rn FROM t) SELECT a FROM r WHERE rn = 1", "row_number()"),
+    ("SELECT max_by(a, b) FROM t", "max_by"),
+])
+def test_notes_flag_sql_that_keeps_a_single_row(sql, expected):
+    from deep_agent.validator.reviewer import answer_notes
+
+    notes = answer_notes(sql, None)
+    assert len(notes) == 1 and expected in notes[0] and "ties" in notes[0]
+
+
+def test_notes_flag_cut_off_and_empty_results_and_stay_quiet_otherwise():
+    from deep_agent.validator.reviewer import answer_notes
+
+    rec = {"columns": ["a"], "rows": [[1]] * 100, "row_count": 100, "truncated": True}
+    assert "cut off at 100 rows" in answer_notes("SELECT a FROM t", rec)[0]
+    assert "empty (0 rows)" in answer_notes("SELECT a FROM t", {**rec, "rows": [], "row_count": 0, "truncated": False})[0]
+    assert answer_notes("SELECT a FROM t LIMIT 10", {**rec, "row_count": 3, "truncated": False}) == []
+
+
+def test_notes_reach_the_reviewer():
+    executed = [{"submitted_sql": "SELECT a FROM t ORDER BY b DESC LIMIT 1", "executed_sql": "x", "columns": ["a"],
+                 "rows": [[1]], "row_count": 1, "truncated": False}]
+    text = review_request([QUESTION], "SELECT a FROM t ORDER BY b DESC LIMIT 1", [], executed)
+    assert "## Notes on this answer" in text and "LIMIT 1" in text
