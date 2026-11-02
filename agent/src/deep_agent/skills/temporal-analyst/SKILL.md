@@ -119,9 +119,9 @@ ORDER BY 1
 
 ## Time zones
 
-Times are Israel time, and so is the session time zone: plain literals (`TIMESTAMP '2024-07-01 00:00:00'`),
-`current_date` and `current_timestamp` are already Israel time. Don't add zones to literals and don't convert to UTC
-by hand. (Only if a column is a naive `timestamp` documented as UTC: `with_timezone(col, 'UTC')` before comparing.)
+Write plain literals (`TIMESTAMP '2024-07-01 00:00:00'`) and use `current_date` / `current_timestamp` as they are.
+Don't add zones to literals and don't convert time zones by hand. (Only if a column is a naive `timestamp` documented as
+UTC: `with_timezone(col, 'UTC')` before comparing.)
 
 ---
 

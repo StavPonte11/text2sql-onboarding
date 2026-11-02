@@ -84,7 +84,7 @@ The user's word is almost never the stored string — the value may be spelled d
 - **Per-entity ratios**: mind the granularity of numerator vs denominator — "orders per resident" is `COUNT(orders) / SUM(population)`, not `AVG(count_per_row)`. When the denominator comes from another table, aggregate each side in its own CTE, then join and divide.
 - **Set operations**: prefer `UNION ALL`; `UNION` adds an expensive distributed de-duplication — use it only when de-duplication is required.
 - **Arrays**: membership `contains(arr, 'v')`; expand with `CROSS JOIN UNNEST(arr) AS t(element)`.
-- **Time filters**: a half-open range on the raw column (`col >= start AND col < end`), never a function around the filtered column. Times are Israel time and so is the session: write plain literals (`TIMESTAMP '2024-07-01 00:00:00'`, `DATE '2024-07-01'`) — don't add a time zone and don't convert to UTC yourself.
+- **Time filters**: a half-open range on the raw column (`col >= start AND col < end`), never a function around the filtered column. Write plain literals (`TIMESTAMP '2024-07-01 00:00:00'`, `DATE '2024-07-01'`) — don't add a time zone and don't convert time zones yourself.
 - **Coordinates**: `ST_Point(lon, lat)` and WKT are longitude first; `great_circle_distance(lat1, lon1, lat2, lon2)` is latitude first and returns km. Distances and areas on plain geometry are in degrees — wrap in `to_spherical_geography(...)` for metres. Details in the `spatial-analyst` skill.
 - **When several logic paths seem plausible** (INNER vs LEFT JOIN, different grouping), run 2–3 variants with `LIMIT 10` and compare before choosing — don't guess.
 
