@@ -44,7 +44,7 @@ from deep_agent.answer.schema import submission_strategy
 from deep_agent.answer.verification import match_execution, normalize_sql
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware, DeepAgentRuntimeState
 from deep_agent.middleware.catalog import CatalogMiddleware
-from deep_agent.prompts.registry import PromptRefreshMiddleware, load_prompt
+from deep_agent.prompts.registry import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,6 @@ def build_validator(model: BaseChatModel):
             ReviewInputMiddleware(),  # first: the date is then added to the built input, not to the brief
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
-            PromptRefreshMiddleware("validator", prompt),
             *submit_fallback(VERDICT_TOOL),
             ReviewRecordMiddleware(),
         ],

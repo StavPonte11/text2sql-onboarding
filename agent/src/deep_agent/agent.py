@@ -19,13 +19,13 @@ from deep_agent.answer.schema import TOOL_NAME, answer_schema, submission_strate
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
 from deep_agent.middleware.catalog import CatalogMiddleware
 from deep_agent.middleware.tool_filter import BuiltinToolFilterMiddleware
-from deep_agent.prompts.registry import PromptRefreshMiddleware, load_prompt, local_prompt
+from deep_agent.prompts.registry import load_prompt, local_prompt
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
 from deep_agent.validator.modes import ON_DEMAND_PROMPT, REVIEW_PROMPT, ReviewTurnMiddleware, validator_subagent
 from deep_agent.validator.reviewer import ValidationMode
 
-# Packaged system prompt (the Langfuse-managed version, when enabled, is loaded per agent build and refreshed per call).
+# Packaged system prompt (the Langfuse-managed version, when enabled, is loaded per agent build; the service rebuilds when it changes).
 SYSTEM_PROMPT = local_prompt("system")
 
 # Appended to the system prompt only when DEEP_AGENT_CLARIFICATIONS_ENABLED is on.
@@ -73,8 +73,7 @@ def create_deep_agent(
     review_required = mode == "always"            # submit needs a validator pass
     has_reviewer = mode in ("always", "on_demand")  # the semantic-validator subagent is available
     review_prompt = {"always": REVIEW_PROMPT, "on_demand": ON_DEMAND_PROMPT}.get(mode, "")
-    suffix = (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
-    system_prompt = load_prompt("system").text + suffix
+    system_prompt = load_prompt("system").text + (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
     subagents = [_general_purpose_subagent()]
     if has_reviewer:
         subagents.append(validator_subagent(validator_model or llm, mode))
@@ -87,7 +86,6 @@ def create_deep_agent(
         middleware=[
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
-            PromptRefreshMiddleware("system", system_prompt, suffix=suffix),
             *submit_fallback(TOOL_NAME),
             AnswerVerificationMiddleware(has_reviewer),
             *([ReviewTurnMiddleware()] if has_reviewer else []),

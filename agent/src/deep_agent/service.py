@@ -34,12 +34,15 @@ from agent.utils.redis_publisher import publish_node_event
 from deep_agent import observability
 from deep_agent.answer.render import render_markdown
 from deep_agent.context import DeepAgentContext, current_turn
+from deep_agent.prompts.registry import PROMPT_KEYS, load_prompt
 from deep_agent.validator.reviewer import VALIDATOR_NAME
 
 logger = logging.getLogger(__name__)
 
 _agent = None
+_agent_prompts: tuple[str, ...] | None = None  # the prompt texts _agent was built with
 _agent_lock: asyncio.Lock | None = None
+_checkpointer = None
 _pg_pool = None
 
 UNANSWERED = {"no_answer", "rejected", "re_execution_failed", "not_executed"}
@@ -65,24 +68,39 @@ async def build_checkpointer():
     return saver
 
 
+def _current_prompts() -> tuple[str, ...]:
+    """The prompt texts an agent is built from (Langfuse when enabled — SDK-cached — else the packaged .md)."""
+    return tuple(load_prompt(key).text for key in PROMPT_KEYS)
+
+
 async def get_deep_agent():
-    """The process-wide Deep Agent (built once, on first use)."""
-    global _agent, _agent_lock
-    if _agent is not None:
+    """The process-wide Deep Agent, rebuilt when one of its prompts changed (e.g. a Langfuse label moved).
+
+    Checked per request, so a run keeps the prompt it started with and the next request gets the new one.
+    """
+    global _agent, _agent_prompts, _agent_lock, _checkpointer
+    prompts = await asyncio.to_thread(_current_prompts)
+    if _agent is not None and prompts == _agent_prompts:
         return _agent
     if _agent_lock is None:
         _agent_lock = asyncio.Lock()
     async with _agent_lock:
-        if _agent is None:
+        if _agent is None or prompts != _agent_prompts:
             from deep_agent.agent import create_deep_agent
 
-            _agent = create_deep_agent(checkpointer=await build_checkpointer())
+            if _checkpointer is None:
+                _checkpointer = await build_checkpointer()
+            if _agent is not None:
+                logger.info("Deep agent prompts changed — rebuilding the agent")
+            _agent = create_deep_agent(checkpointer=_checkpointer)
+            _agent_prompts = prompts
     return _agent
 
 
 def reset_for_tests(agent=None) -> None:
-    global _agent, _agent_lock
-    _agent, _agent_lock = agent, None
+    global _agent, _agent_prompts, _agent_lock, _checkpointer
+    _agent, _agent_lock, _checkpointer = agent, None, None
+    _agent_prompts = _current_prompts() if agent is not None else None
 
 
 class StreamPublisher(AsyncCallbackHandler):

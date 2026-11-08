@@ -6,20 +6,17 @@ Prompts are Langfuse text prompts named `deep-agent/<key>` (`system`, `validator
 fallback when Langfuse is unreachable or the prompt doesn't exist, and the only source when
 DEEP_AGENT_LANGFUSE_PROMPTS is off (tests, offline dev).
 
-PromptRefreshMiddleware swaps in the current Langfuse version on every model call, so moving
-a label in Langfuse changes behaviour without a redeploy. Push the packaged prompts with
+The service rebuilds the agent when a prompt text changes (deep_agent.service.get_deep_agent),
+so moving a label in Langfuse changes behaviour from the next request, without a redeploy; a run
+keeps the prompt it started with. Push the packaged prompts with
 `uv run python scripts/sync_deep_agent_prompts.py --label staging`.
 """
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
 
 from agent.config import settings
 
@@ -47,7 +44,7 @@ class LoadedPrompt:
 
 
 # key -> monotonic deadline until which Langfuse is not asked again (prompt missing / unreachable).
-# The SDK caches successful fetches but not misses, and load_prompt runs on every model call.
+# The SDK caches successful fetches but not misses, and load_prompt runs on every request.
 _misses: dict[str, float] = {}
 
 
@@ -81,54 +78,3 @@ def load_prompt(key: str) -> LoadedPrompt:
         return _miss(key, local)
     _misses.pop(key, None)
     return LoadedPrompt(key, client.prompt, "langfuse", getattr(client, "version", None), client)
-
-
-def _system_text(message: SystemMessage | None) -> str:
-    if message is None:
-        return ""
-    content = message.content
-    if isinstance(content, str):
-        return content
-    first = content[0] if content else None
-    return first.get("text", "") if isinstance(first, dict) else str(first or "")
-
-
-class PromptRefreshMiddleware(AgentMiddleware):
-    """Replace the prompt the agent was built with by the current version of `key`, per model call.
-
-    deepagents composes the system message as <our prompt> + harness/skills sections, so only that
-    leading part is swapped; if it isn't found verbatim the request is left untouched. `suffix` is
-    text appended to the prompt at build time (e.g. the clarification sentence when that flag is
-    on) and is re-appended to every refreshed version.
-    """
-
-    def __init__(self, key: str, built_with: str, suffix: str = "") -> None:
-        super().__init__()
-        self.key = key
-        self.built_with = built_with
-        self.suffix = suffix
-
-    def _refresh(self, request: ModelRequest) -> ModelRequest:
-        current = load_prompt(self.key).text + self.suffix
-        if current == self.built_with or request.system_message is None:
-            return request
-        message = request.system_message
-        if isinstance(message.content, str):
-            if not message.content.startswith(self.built_with):
-                return request
-            new_content: Any = current + message.content[len(self.built_with):]
-        else:
-            text = _system_text(message)
-            if not text.startswith(self.built_with):
-                return request
-            first = {**message.content[0], "text": current + text[len(self.built_with):]}
-            new_content = [first, *message.content[1:]]
-        return request.override(system_message=SystemMessage(content=new_content))
-
-    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
-        return handler(self._refresh(request))
-
-    async def awrap_model_call(
-        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
-    ) -> ModelResponse:
-        return await handler(self._refresh(request))

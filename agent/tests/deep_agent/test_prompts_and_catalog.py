@@ -118,21 +118,46 @@ def test_langfuse_unavailable_falls_back(langfuse_enabled, behaviour):
 
 
 @pytest.mark.asyncio
-async def test_prompt_label_change_takes_effect_without_rebuild(scripted_model, langfuse_enabled):
-    served = {"text": local_prompt("system")}
+async def test_prompt_change_rebuilds_the_agent_on_the_next_request(langfuse_enabled):
+    from deep_agent import service
+
+    served = {"system": "system v1", "validator": "validator v1"}
+    fake = MagicMock(get_prompt=MagicMock(side_effect=lambda name, **k: _served(served[name.split("/")[1]])))
+    builds = []
+
+    def fake_build(**kwargs):
+        builds.append(dict(served))
+        return object()
+
+    service.reset_for_tests()
+    with patch("agent.langfuse_client.langfuse_client", fake), \
+         patch("deep_agent.agent.create_deep_agent", fake_build), \
+         patch.object(service, "build_checkpointer", MagicMock(side_effect=lambda: _async(object()))):
+        first = await service.get_deep_agent()
+        assert await service.get_deep_agent() is first  # unchanged prompts: same agent
+        served["validator"] = "validator v2"
+        second = await service.get_deep_agent()
+    service.reset_for_tests()
+    assert second is not first and builds == [{"system": "system v1", "validator": "validator v1"},
+                                              {"system": "system v1", "validator": "validator v2"}]
+
+
+async def _async(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_a_run_keeps_the_prompt_it_started_with(scripted_model, langfuse_enabled):
+    served = {"text": "You are the deep analyst prompt v4."}
     fake = MagicMock(get_prompt=MagicMock(side_effect=lambda *a, **k: _served(served["text"])))
-    model = scripted_model(AIMessage("one"), AIMessage("one"), AIMessage("two"), AIMessage("two"))  # each + reminder reply
+    model = scripted_model(AIMessage("one"), AIMessage("one"))  # answer + reminder reply
     with patch("agent.langfuse_client.langfuse_client", fake):
         agent = create_deep_agent(model=model)
+        served["text"] = "You are the NEW deep analyst prompt v5."  # label moved while the agent exists
         await agent.ainvoke({"messages": [("user", "a")]}, {"configurable": {"thread_id": "p1"}})
-        served["text"] = "You are the NEW deep analyst prompt v4."
-        await agent.ainvoke({"messages": [("user", "b")]}, {"configurable": {"thread_id": "p2"}})
-
-    first, second = system_text(model.seen[0]), system_text(model.seen[2])
-    assert first.startswith(local_prompt("system")[:80])
-    assert second.startswith("You are the NEW deep analyst prompt v4.")
-    assert "Skills System" in second  # harness / skills sections after our prompt are preserved
-    assert local_prompt("system")[:80] not in second
+    prompts = [system_text(seen) for seen in model.seen]
+    assert all(p.startswith("You are the deep analyst prompt v4.") for p in prompts)
+    assert "Skills System" in prompts[0]
 
 
 def test_run_config_links_generations_to_the_prompt_version(langfuse_enabled):
@@ -183,12 +208,11 @@ def test_miss_expires_after_ttl(langfuse_enabled, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prompt_refresh_keeps_the_clarification_suffix(scripted_model, langfuse_enabled):
+async def test_langfuse_prompt_keeps_the_clarification_suffix(scripted_model, langfuse_enabled):
     fake = MagicMock(get_prompt=MagicMock(side_effect=lambda *a, **k: _served("NEW system prompt v5.")))
     model = scripted_model(AIMessage("done"), AIMessage("done"))
     with patch("agent.langfuse_client.langfuse_client", fake):
         agent = create_deep_agent(model=model, clarifications_enabled=True)
-        fake.get_prompt.side_effect = lambda *a, **k: _served("NEWER system prompt v6.")
         await agent.ainvoke({"messages": [("user", "a")]}, {"configurable": {"thread_id": "s"}})
     prompt = system_text(model.seen[0])
-    assert prompt.startswith("NEWER system prompt v6." + CLARIFICATION_PROMPT)
+    assert prompt.startswith("NEW system prompt v5." + CLARIFICATION_PROMPT)
