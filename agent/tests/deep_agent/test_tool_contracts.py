@@ -161,6 +161,12 @@ async def test_search_values_says_when_the_limit_was_hit():
 
 
 @pytest.mark.asyncio
+async def test_search_values_no_match_points_at_unindexed_column_types():
+    notice = (await _search([]))["data"]["notice"]
+    assert all(t in notice for t in ("`id`", "`continuous`", "`time`", "`free_text`", "doesn't exist"))
+
+
+@pytest.mark.asyncio
 async def test_search_values_passes_limit_through_unclamped():
     client = MagicMock(search_column_values=AsyncMock(return_value={"values": []}))
     with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):

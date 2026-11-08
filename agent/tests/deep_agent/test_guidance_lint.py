@@ -78,7 +78,7 @@ def test_no_catalog_specific_examples(doc):
 
 
 def test_value_resolution_policy_has_one_owner():
-    owners = [name for name, text in DOCS.items() if "the only column types it indexes" in text]
+    owners = [name for name, text in DOCS.items() if "**Tool scope**: `search_column_values` indexes" in text]
     assert owners == ["system prompt"]
 
 

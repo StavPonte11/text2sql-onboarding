@@ -80,13 +80,11 @@ async def search_column_values(
     """
     Searches for exact real values contained within indexed columns across the database.
 
-    SUPPORTED COLUMN TYPES:
-    Works exclusively on high-cardinality columns profiled as:
-    - `large_categorical`
-    - `large_unit_id`
-    ⚠️  Do NOT use on standard `categorical` or `boolean` columns (e.g. a `status` column) — they are
-    not indexed in vector search and will return 0 matches! Use `get_column_distinct_values` or the catalog instead.
-    Do NOT use on numeric, date/timestamp, or geometry columns.
+    SUPPORTED COLUMN TYPES (semantic_type in the catalog):
+    - Indexed: `large_categorical`, `large_unit_id` (its main use), and `categorical` / `boolean` (whose
+      values the catalog usually lists already).
+    - NOT indexed: `id`, `continuous`, `time`, `free_text` and geometry columns. A search on them — or on a
+      table/column that doesn't exist — returns 0 matches whatever the value; check such values with SQL.
 
     WHEN TO USE:
     - Use whenever you need to find how a high-cardinality entity is represented or spelled in the database
@@ -96,6 +94,8 @@ async def search_column_values(
     Returns data.matches — up to `limit` matching values (use each 'value' verbatim in SQL) with:
     - 'keyword_similarity' close to 1.0 = strong lexical match
     - 'semantic_distance' close to 0.0 = strong semantic match
+    On an indexed column the nearest stored values come back even when the term isn't in the data, so a
+    weak-scoring match is not evidence that the value exists.
     data.limit_reached is true when exactly `limit` matches came back: there may be more — call again
     with a higher `limit` before filtering on the list.
 
@@ -117,7 +117,9 @@ async def search_column_values(
     matches = [_value_match(v) for v in values]
     limit_reached = len(matches) >= limit
     if not matches:
-        notice = "No matches — the value may not exist in this column, or the column is not indexed (only large_categorical / large_unit_id are)."
+        notice = ("No matches. Check the column's semantic_type in the catalog: `id`, `continuous`, `time` and "
+                  "`free_text` columns are not indexed and always return 0, as does a table/column that doesn't "
+                  "exist — check those values with SQL instead. On an indexed column, nothing matched the term.")
     elif limit_reached:
         notice = f"Returned the first {limit} matches (the limit); there may be more — call again with a higher limit."
     else:

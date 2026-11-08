@@ -40,7 +40,7 @@ For complex or aggregation-heavy questions, write 1–2 lines stating the intent
 
 The user's word is almost never the stored string — the value may be spelled differently, abbreviated, or stored in another language (a Hebrew question often filters values stored in English). Resolve every text filter value according to the column's `semantic_type`:
 
-> **Tool scope**: `search_column_values` searches ONLY `large_categorical` and `large_unit_id` columns — the only column types it indexes. Standard `categorical` and `boolean` columns are not indexed and return 0 matches; numeric, date/timestamp and geometry columns are not indexed either.
+> **Tool scope**: `search_column_values` indexes `large_categorical`, `large_unit_id`, `categorical` and `boolean` columns. `id`, numeric, date/timestamp, free-text and geometry columns are not indexed — a search on them (or on a table/column that doesn't exist) returns 0 results whatever the value. On an indexed column it returns the nearest stored values even when the term isn't in the data, so judge matches by their scores: a returned value is not proof the user's value exists.
 
 1. **High-cardinality (`large_categorical` / `large_unit_id`)** — e.g. customer, company or person names, product SKUs, city names:
    - Too many values to list; use `search_column_values` with the user's term to find how the database actually spells the entity (e.g. "Acme Corp" → "Acme Corporation LLC"). Use the returned `value`s verbatim. A `keyword_similarity` close to 1.0 is a strong lexical match; a `semantic_distance` close to 0.0 is a strong semantic match.
@@ -49,7 +49,7 @@ The user's word is almost never the stored string — the value may be spelled d
    - Don't call `get_column_distinct_values` on these columns — dumping 50–100 arbitrary values is slow (10–20s), wastes tokens, and rarely contains the entity you need.
 
 2. **Standard `categorical` & `boolean`** — e.g. status, priority, type, gender, active flags:
-   - **Never call `search_column_values` on them** (not indexed → 0 results).
+   - `search_column_values` isn't needed for them — their value sets are small; use the catalog's values.
    - Use the values listed in the catalog. When the catalog lists all values (the domain is complete), that list is definitive: any other string does not exist in the data.
    - If the values aren't listed, `get_column_distinct_values` shows the full set (usually 5–20 rows).
 
