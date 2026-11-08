@@ -139,7 +139,7 @@ The user's word is almost never the stored string — the value may be spelled d
 | `EXCEEDED_*` (memory / time limits) | Narrow the time or partition range, select fewer columns, pre-aggregate in a CTE |
 | Missing partition filter | Filter the partition column in its native type |
 | `error.type` other than `USER_ERROR` | A cluster / source-database problem, not necessarily your SQL — read the message before rewriting |
-| 0 rows | Investigate, in order: string filter values (re-resolve them, Phase 3) → join key formats (`get_sample_rows` on both sides) → date range logic and column type → NULLs (`get_column_profile`). Remove conditions one at a time to find the culprit |
+| 0 rows | Investigate, in order: string filter values (re-resolve them, Phase 3) → join key formats (`get_sample_rows` on both sides) → date range logic and column type → NULLs (`COUNT(*) FILTER (WHERE col IS NULL)`). Remove conditions one at a time to find the culprit |
 | Count ≫ expected | Fan-out JOIN — `COUNT(DISTINCT id)` or aggregate before joining |
 | Suspiciously round number / equals the table size | A Cartesian product (missing or wrong ON key), or a WHERE clause that filters nothing |
 
@@ -176,9 +176,8 @@ Before writing SQL in these areas, read the skill with `read_file`: `temporal-an
 ## Tool Reference
 
 **Values & places**
-- `search_column_values` — targeted value search for `large_categorical` / `large_unit_id` columns only.
+- `search_column_values` — targeted value search, mainly for high-cardinality columns (see Tool scope, Phase 3).
 - `get_column_distinct_values` — live distinct values of a low-cardinality `categorical` column (e.g. a `status` column) when the catalog doesn't list them.
-- `get_column_profile` — a column's full statistics beyond the catalog: null count / ratio, top values with frequencies, string lengths, quartiles.
 - `resolve_location_to_wkt` — place name → area polygon (WKT) for `ST_GeometryFromText('...')`.
 
 **Execution**

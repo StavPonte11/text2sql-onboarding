@@ -14,7 +14,6 @@ import json
 from typing import Any
 
 METADATA_ERROR = "METADATA_ERROR"          # the Jeen metadata service failed or returned an unexpected payload
-NOT_FOUND = "NOT_FOUND"                    # the metadata service has nothing stored for the requested object
 ENRICHMENT_ERROR = "ENRICHMENT_ERROR"      # filter enrichment failed; the SQL is unchanged
 LOCATION_NOT_FOUND = "LOCATION_NOT_FOUND"  # the location could not be resolved to an area
 

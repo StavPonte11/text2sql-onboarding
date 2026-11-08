@@ -19,7 +19,6 @@ ALL_TOOLS = DEEP_AGENT_TOOLS
 
 # Minimal valid arguments for every tool (each must honour the envelope).
 TOOL_ARGS = {
-    "get_column_profile": {"table_name": "t", "column_name": "c"},
     "search_column_values": {"search_term": "תל אביב"},
     "resolve_location_to_wkt": {"location_name": "חיפה"},
     "execute_trino_query": {"sql": "SELECT 1"},
@@ -33,7 +32,7 @@ TOOL_ARGS = {
 def _client(fail: bool) -> MagicMock:
     client = MagicMock()
     names = ["get_catalog_prompt", "get_tables", "get_columns", "get_relationships", "get_table_profile",
-             "get_column_profile", "search", "search_business_terms", "search_knowledge_pairs", "search_column_values"]
+             "search", "search_business_terms", "search_knowledge_pairs", "search_column_values"]
     for name in names:
         if fail:
             setattr(client, name, AsyncMock(side_effect=JeenMetadataError(f"{name} exploded")))
@@ -69,7 +68,7 @@ def test_registered_tool_set():
     """The catalog is loaded for every run (CatalogMiddleware), so there is no catalog tool, and the
     tools whose information the catalog already contains are not offered to the model."""
     assert {t.name for t in DEEP_AGENT_TOOLS} == {
-        "search_column_values", "get_column_distinct_values", "get_column_profile", "resolve_location_to_wkt",
+        "search_column_values", "get_column_distinct_values", "resolve_location_to_wkt",
         "execute_trino_query", "get_sample_rows", "validate_sql", "enrich_sql_filters",
     }
 
@@ -93,9 +92,9 @@ async def test_tool_returns_envelope(tool, patched):
 
 @pytest.mark.asyncio
 async def test_metadata_failure_says_data_is_not_empty():
-    client = MagicMock(get_column_profile=AsyncMock(side_effect=JeenMetadataError("auth expired")))
+    client = MagicMock(search_column_values=AsyncMock(side_effect=JeenMetadataError("auth expired")))
     with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client):
-        out = json.loads(await tools.get_column_profile.ainvoke({"table_name": "t", "column_name": "c"}))
+        out = json.loads(await tools.search_column_values.ainvoke({"search_term": "x"}))
     assert out["error"]["name"] == "METADATA_ERROR"
     assert "auth expired" in out["error"]["message"]
     assert "does not mean the data is empty" in out["error"]["message"]

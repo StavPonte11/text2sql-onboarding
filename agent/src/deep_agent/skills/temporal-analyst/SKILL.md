@@ -6,7 +6,7 @@ description: Trino date and time handling — use when queries involve timestamp
 
 ## Step 1 — Know the column type
 
-Check `get_column_profile` (or the catalog) before writing any date filter:
+Check the column's type in the catalog before writing any date filter:
 
 - **Native `date` / `timestamp`** → compare the column directly against date/timestamp literals with half-open
   ranges. Never wrap it in a function in `WHERE` (that defeats partition pruning and min/max statistics).

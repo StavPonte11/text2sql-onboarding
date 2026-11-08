@@ -1,5 +1,5 @@
 """
-Metadata tools: stored column statistics and value search, from the Jeen metadata service.
+Metadata tools: value search, from the Jeen metadata service.
 
 The connection's catalog itself is not a tool: it is loaded for every run and shown to the
 model by CatalogMiddleware (deep_agent.middleware.catalog).
@@ -12,7 +12,7 @@ from langchain_core.tools import tool
 
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
 from deep_agent.context import Runtime, connection_id
-from deep_agent.tools.envelope import METADATA_ERROR, NOT_FOUND, error, fail, ok
+from deep_agent.tools.envelope import METADATA_ERROR, error, fail, ok
 
 logger = logging.getLogger(__name__)
 
@@ -23,31 +23,6 @@ def metadata_failure(what: str, exc: Exception) -> str:
         METADATA_ERROR,
         f"{what} failed: {exc}. The metadata service failed — this does not mean the data is empty.",
     ))
-
-
-@tool
-async def get_column_profile(table_name: str, column_name: str, runtime: Runtime = None) -> str:
-    """
-    Retrieves the full stored statistics of one column — detail the catalog does not show:
-    null count / ratio, top values with their frequencies, string lengths, quartiles and a histogram.
-
-    The catalog already lists each column's type, semantic_type, distinct count, range and example
-    values (all values when the domain is complete), so call this only when you need that extra
-    detail — e.g. checking NULLs when a query returns 0 rows, or a value distribution.
-
-    Args:
-        table_name (str): The fully qualified exact name of the table, e.g., '"catalog"."schema"."table"'.
-        column_name (str): The exact name of the column to profile.
-    """
-    try:
-        profile = await get_jeen_metadata_client().get_column_profile(
-            table_name, column_name, connection_id=connection_id(runtime)
-        )
-    except Exception as e:
-        return metadata_failure(f"get_column_profile({table_name}.{column_name})", e)
-    if not profile:
-        return fail(error(NOT_FOUND, f"No stored profile for column {table_name}.{column_name}"))
-    return ok(profile)
 
 
 def _round_or_none(value: Any) -> float | None:
