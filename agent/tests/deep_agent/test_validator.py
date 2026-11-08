@@ -333,6 +333,16 @@ async def test_on_demand_review_is_reported_when_the_agent_asks_for_it(scripted_
 
 
 @pytest.mark.asyncio
+async def test_on_demand_failed_review_still_reaches_the_user(scripted_model):
+    main = scripted_model(_execute(), _review(), _submit())
+    state = await _run(main, scripted_model(_verdict("fail", [ISSUE])), mode="on_demand")
+    assert _submit_results(state) == [ANSWER_RECEIVED]  # on_demand: a failed review doesn't block submit
+    review = state["final_result"]["semantic_validation"]
+    assert review["verdict"] == "failed" and review["issues"][0]["problem"] == ISSUE["problem"]
+    assert ISSUE["problem"] in render_markdown(state["final_result"])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode, offered", [("always", True), ("on_demand", True), ("off", False)])
 async def test_modes_offer_the_reviewer(scripted_model, mode, offered):
     main = scripted_model(_execute(), _submit(), _review(), _submit(call_id="s2"))

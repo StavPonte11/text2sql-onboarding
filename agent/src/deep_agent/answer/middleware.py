@@ -234,12 +234,13 @@ class AnswerVerificationMiddleware(AgentMiddleware):
     after_agent keeps the answer only as plain data in final_result and drops the pydantic object:
     checkpoints can't restore the dynamically built `submit_answer` class.
 
-    review_required: whether final_result gets a review summary (with review off it is None).
+    has_reviewer: whether final_result gets a review summary — the reviewer is available ("always" or
+    "on_demand"); with review off it is None.
     """
 
-    def __init__(self, review_required: bool = False) -> None:
+    def __init__(self, has_reviewer: bool = False) -> None:
         super().__init__()
-        self.review_required = review_required
+        self.has_reviewer = has_reviewer
 
     @hook_config(can_jump_to=["model"])
     def after_model(self, state, runtime) -> dict[str, Any] | None:
@@ -264,7 +265,7 @@ class AnswerVerificationMiddleware(AgentMiddleware):
         final["recovered_from_text"] = any(
             (getattr(m, "additional_kwargs", None) or {}).get(RECOVERED_FLAG) for m in current_turn(state.get("messages") or [])
         )
-        records = state.get("semantic_validations") or [] if self.review_required else None
+        records = state.get("semantic_validations") or [] if self.has_reviewer else None
         final["semantic_validation"] = validation_summary(records, final.get("sql"))
         return {"final_result": final, "structured_response": None}
 
