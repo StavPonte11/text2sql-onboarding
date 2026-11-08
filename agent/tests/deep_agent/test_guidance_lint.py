@@ -42,7 +42,6 @@ BANNED = [
     (r"@location_name_wkt@|@[a-z_]+_wkt@", "WKT placeholders are a legacy-graph mechanism"),
     (r"Call (it|this) before every `execute_trino_query`|Always call before `execute_trino_query`", "validation is optional (#42)"),
     (r"NEVER use Hebrew as SQL identifiers", "Hebrew catalog columns are valid (double-quoted)"),
-    (r"jeen_catalog \(str\)", "enrich_sql_filters takes only sql (#36)"),
     (r"prefix_pattern", "search_column_values returns all matches; no prefix guessing (#45)"),
     (r"sql_literal", "resolve_location_to_wkt returns data.wkt (#45)"),
     (r"error\.category|error\.hint|error_category", "SQL errors carry Trino's own error.name / error.type (#39)"),

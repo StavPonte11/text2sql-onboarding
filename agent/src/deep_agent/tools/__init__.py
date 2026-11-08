@@ -6,14 +6,12 @@ Every tool returns the same JSON envelope (deep_agent.tools.envelope):
 
 - sql.py         execute_trino_query, get_sample_rows, get_column_distinct_values, validate_sql
 - metadata.py    search_column_values
-- enrichment.py  enrich_sql_filters
 - location.py    resolve_location_to_wkt
 
 The connection's catalog is not a tool: CatalogMiddleware (deep_agent.middleware.catalog) loads it
 for every run and puts it in the prompt.
 """
 
-from deep_agent.tools.enrichment import enrich_sql_filters
 from deep_agent.tools.location import resolve_location_to_wkt
 from deep_agent.tools.metadata import search_column_values
 from deep_agent.tools.sql import execute_trino_query, get_column_distinct_values, get_sample_rows, validate_sql
@@ -28,6 +26,4 @@ DEEP_AGENT_TOOLS = [
     execute_trino_query,
     get_sample_rows,
     validate_sql,
-    # Post-processing
-    enrich_sql_filters,
 ]

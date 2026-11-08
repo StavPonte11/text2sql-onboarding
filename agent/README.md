@@ -47,7 +47,7 @@ cli.py            developer CLI
 context.py        per-request context, state fields, user-message helpers, date prefix
 observability.py  Langfuse run config and scores
 resources.py      skills wiring (read-only /skills/)
-tools/            what the model can call: sql, metadata, enrichment, location (+ envelope, trino_errors)
+tools/            what the model can call: sql, metadata, location (+ envelope, trino_errors)
 answer/           the final answer: schema, verification (did the SQL run), middleware, render
 validator/        independent semantic review before submit: reviewer (the agent), modes (wiring)
 middleware/       cross-cutting: catalog in every model call, built-in tool filter
@@ -110,7 +110,7 @@ The guard is an application-level control. The Trino principal used by the agent
 
 Every deep-agent run is **one Langfuse trace** built by `deep_agent.observability.build_run_config()`:
 - session = thread id, user = `user_id`, tag `deep-agent`, metadata `agent_version` (`DEEP_AGENT_VERSION` env, e.g. the git SHA, else the package version) and `connection_id`
-- all model calls, tool calls, subagent calls and enrichment LLM calls are nested observations
+- all model calls, tool calls, and subagent calls are nested observations
 - `execute_trino_query` / `get_sample_rows` / `get_column_distinct_values` observations carry `trino_query_id`, `execution_time_ms`, `row_count`, `truncated` (or Trino's `error_name` / `error_type`) as metadata
 - run-level scores: `deep-agent.model_calls`, `.tool_calls`, `.sql_executions`, `.latency_s`
 

@@ -107,22 +107,6 @@ def connection_id(runtime: ToolRuntime | None) -> int | None:
     return getattr(ctx, "connection_id", None)
 
 
-def cached_catalog(runtime: ToolRuntime | None) -> str | None:
-    state = getattr(runtime, "state", None) or {}
-    return state.get("jeen_catalog") or None
-
-
-def user_request(runtime: ToolRuntime | None) -> str:
-    """Every human message in the thread, oldest first, one per line.
-
-    A reply to a clarifying question arrives as a new human message on the same thread, so the
-    request being answered is the original question plus those replies — not just the last one.
-    """
-    state = getattr(runtime, "state", None) or {}
-    texts = [msg.text for msg in state.get("messages") or [] if is_user_message(msg) and msg.text.strip()]
-    return "\n".join(texts)
-
-
 def _now(tz: str) -> datetime:
     return datetime.now(ZoneInfo(tz))
 

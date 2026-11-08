@@ -10,7 +10,6 @@ import agent.utils.jeen_metadata_client as jmc
 from agent.utils.jeen_metadata_client import JeenMetadataClient, JeenMetadataError
 from deep_agent import tools
 from deep_agent.tools import DEEP_AGENT_TOOLS
-from deep_agent.tools import enrichment as enrichment_tools
 from deep_agent.tools import location as location_tools
 from deep_agent.tools import metadata as metadata_tools
 from deep_agent.tools import sql as sql_tools
@@ -25,7 +24,6 @@ TOOL_ARGS = {
     "get_sample_rows": {"table_name": "t"},
     "get_column_distinct_values": {"table_name": "t", "column_name": "c"},
     "validate_sql": {"sql": "SELECT 1"},
-    "enrich_sql_filters": {"sql": "SELECT 1 FROM t WHERE a = 'x'"},
 }
 
 
@@ -48,15 +46,10 @@ def patched(request):
     trino_res = (TrinoExecutionResult(success=False, error_message="boom", error_name="GENERIC_INTERNAL_ERROR",
                                       error_type="INTERNAL_ERROR")
                  if fail else TrinoExecutionResult(success=True, rows=[[1]], columns=["a"], row_count=1))
-    enrich = (AsyncMock(side_effect=RuntimeError("llm down")) if fail
-              else AsyncMock(return_value=("SELECT 1 FROM t WHERE a = 'X'", SimpleNamespace(enrichment_details=[]), True)))
     with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=_client(fail)), \
-         patch.object(enrichment_tools, "get_jeen_metadata_client", return_value=_client(fail)), \
          patch.object(sql_tools, "execute_query_sync", return_value=trino_res), \
          patch.object(location_tools, "get_geojson_polygon", return_value=None if fail else {"type": "Polygon"}), \
-         patch.object(location_tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"), \
-         patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=("s", ["t"])), \
-         patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", enrich):
+         patch.object(location_tools, "geojson_to_simplified_wkt", return_value="'POLYGON((0 0, 1 0, 1 1, 0 0))'"):
         yield fail
 
 
@@ -69,7 +62,7 @@ def test_registered_tool_set():
     tools whose information the catalog already contains are not offered to the model."""
     assert {t.name for t in DEEP_AGENT_TOOLS} == {
         "search_column_values", "get_column_distinct_values", "resolve_location_to_wkt",
-        "execute_trino_query", "get_sample_rows", "validate_sql", "enrich_sql_filters",
+        "execute_trino_query", "get_sample_rows", "validate_sql",
     }
 
 

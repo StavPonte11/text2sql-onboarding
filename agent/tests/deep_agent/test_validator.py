@@ -308,11 +308,10 @@ async def test_parallel_general_purpose_tasks_do_not_collide(policy_model):
 def test_reminder_is_not_the_users_words():
     from langchain_core.messages import HumanMessage
 
-    from deep_agent.context import REMINDER_NAME, current_turn, user_request
+    from deep_agent.context import REMINDER_NAME, current_turn
 
     messages = [HumanMessage("the question"), AIMessage("text"), HumanMessage("submit!", name=REMINDER_NAME)]
     assert current_turn(messages) == messages[1:]
-    assert user_request(SimpleNamespace(state={"messages": messages})) == "the question"
 
 
 @pytest.mark.asyncio

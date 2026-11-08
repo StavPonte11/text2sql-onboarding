@@ -55,8 +55,6 @@ The user's word is almost never the stored string — the value may be spelled d
 
 3. **Numeric, date, timestamp or geometry columns**: use the catalog's ranges, `get_sample_rows`, and casting / date parsing (see the `temporal-analyst` skill). Place names → `resolve_location_to_wkt` (see the `spatial-analyst` skill).
 
-4. **Safety net**: after drafting SQL with text filters, run `enrich_sql_filters` — it re-checks and aligns the WHERE-clause text values against the database at the AST level. Resolving values yourself *and* running it is the safest pattern.
-
 ---
 
 ## Phase 4 — Draft
@@ -186,7 +184,6 @@ Before writing SQL in these areas, read the skill with `read_file`: `temporal-an
 - `validate_sql` — optional dry-run; not needed before executing.
 
 **Post-processing**
-- `enrich_sql_filters` — AST-level correction of text filter values. Pass only the SQL.
 
 **Delegation**
 - `task` — spawn a subagent for heavy, separable exploration without filling your own context.

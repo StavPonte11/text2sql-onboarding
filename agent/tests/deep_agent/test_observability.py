@@ -48,7 +48,7 @@ class RunTreeRecorder(BaseCallbackHandler):
 STEPS = [
     ("get_sample_rows", {"table_name": '"postgres"."public"."flights_table"'}),
     ("execute_trino_query", {"sql": "SELECT COUNT(*) FROM flights_table WHERE launch_country = 'France'"}),
-    ("enrich_sql_filters", {"sql": "SELECT 1 FROM flights_table WHERE launch_country = 'צרפת'"}),
+    ("search_column_values", {"search_term": "צרפת"}),
 ]
 
 
@@ -62,24 +62,16 @@ def _policy(messages):
 
 @pytest.mark.asyncio
 async def test_one_trace_tree_with_no_orphans(policy_model):
-    enrichment_llm = GenericFakeChatModel(messages=iter([AIMessage("pick France")]))
-
-    async def fake_enrich(**kwargs):
-        # Like the real orchestrator: an LLM call made with the forwarded config.
-        await enrichment_llm.ainvoke("choose canonical value", config=kwargs["config"])
-        return kwargs["initial_sql"], None, False
-
     recorder = RunTreeRecorder()
-    client = MagicMock(get_catalog_prompt=AsyncMock(return_value="# catalog"))
+    client = MagicMock(get_catalog_prompt=AsyncMock(return_value="# catalog"),
+                       search_column_values=AsyncMock(return_value={"values": [{"value": "France"}]}))
     trino = TrinoExecutionResult(success=True, rows=[[466]], columns=["c"], row_count=1, query_id="q-1",
                                  execution_time_ms=12)
     agent = create_deep_agent(model=policy_model(_policy))
     config = build_run_config("thread-obs", user_id="u-1", callbacks=[recorder], tracing=False)
 
     with patch.object(metadata_tools, "get_jeen_metadata_client", return_value=client), \
-         patch.object(sql_tools, "execute_query_sync", return_value=trino), \
-         patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=({"t": {}}, ["t"])), \
-         patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", side_effect=fake_enrich):
+         patch.object(sql_tools, "execute_query_sync", return_value=trino):
         await agent.ainvoke({"messages": [("user", "כמה טיסות")]}, config)
 
     roots = recorder.roots()
@@ -89,7 +81,7 @@ async def test_one_trace_tree_with_no_orphans(policy_model):
     tool_runs = {r["name"] for r in recorder.runs.values() if r["kind"] == "tool"}
     assert {name for name, _ in STEPS} <= tool_runs
     llm_runs = [rid for rid, r in recorder.runs.items() if r["kind"] == "llm"]
-    assert len(llm_runs) >= len(STEPS) + 2  # agent turns + the enrichment LLM call
+    assert len(llm_runs) >= len(STEPS) + 1  # one agent turn per tool call + the final one
     for rid, run in recorder.runs.items():
         assert recorder.reaches(rid, root), f"orphan run: {run}"
 
@@ -191,17 +183,13 @@ async def test_real_langfuse_handler_produces_a_single_trace(policy_model):
     langfuse = Langfuse(public_key="pk-lf-unit-test", secret_key="sk-lf-unit-test", host="http://127.0.0.1:9",
                         span_exporter=exporter, flush_at=1, flush_interval=0.01)
 
-    async def fake_enrich(**kwargs):
-        return kwargs["initial_sql"], None, False
-
     trino = TrinoExecutionResult(success=True, rows=[[1]], columns=["c"], row_count=1, query_id="q-77",
                                  execution_time_ms=9)
     agent = create_deep_agent(model=policy_model(_policy))
     with patch.object(observability, "_langfuse_handler", return_value=CallbackHandler(public_key="pk-lf-unit-test")), \
-         patch.object(metadata_tools, "get_jeen_metadata_client", return_value=MagicMock(get_catalog_prompt=AsyncMock(return_value="# c"))), \
-         patch.object(sql_tools, "execute_query_sync", return_value=trino), \
-         patch("agent.nodes.refiner.parse_jeen_catalog_tables", return_value=({"t": {}}, ["t"])), \
-         patch("agent.services.enrichment_orchestrator.EnrichmentOrchestrator.enrich_query", side_effect=fake_enrich):
+         patch.object(metadata_tools, "get_jeen_metadata_client", return_value=MagicMock(
+             get_catalog_prompt=AsyncMock(return_value="# c"), search_column_values=AsyncMock(return_value={"values": []}))), \
+         patch.object(sql_tools, "execute_query_sync", return_value=trino):
         config = build_run_config("thread-lf", user_id="user-lf", tracing=True)
         await agent.ainvoke({"messages": [("user", "q")]}, config)
     langfuse.flush()
