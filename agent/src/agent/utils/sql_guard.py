@@ -12,7 +12,6 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-from sqlglot.tokens import Tokenizer
 
 _DIALECT = "trino"
 _SHOW = re.compile(
@@ -43,13 +42,6 @@ def effective_cap(requested: int | None, ceiling: int | None) -> int | None:
         return ceiling
     requested = max(1, int(requested))
     return min(requested, ceiling) if ceiling is not None else requested
-
-
-def _has_comments(sql: str) -> bool:
-    try:
-        return any(token.comments for token in Tokenizer(dialect=_DIALECT).tokenize(sql))
-    except SqlglotError:
-        return "--" in sql or "/*" in sql
 
 
 def _reject_pass_through(tree: exp.Expression) -> None:
@@ -94,8 +86,6 @@ def parse_read_statement(sql: str) -> exp.Expression | None:
     """
     if not sql or not sql.strip():
         raise GuardError("empty SQL")
-    if _has_comments(sql):
-        raise GuardError("SQL comments are not allowed")
     try:
         statements = [s for s in sqlglot.parse(sql, read=_DIALECT) if s is not None]
     except SqlglotError as e:

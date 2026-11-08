@@ -26,8 +26,8 @@ def _outer_limit(sql: str) -> int | None:
     "SELECT 1; DROP TABLE t",
     "SELECT 1; SELECT 2",
     "SELECT * FROM TABLE(postgres.system.query(query => 'DELETE FROM t'))",
-    "SELECT 1 -- sneaky comment",
-    "SELECT /* hidden */ 1",
+    "SELECT 1 -- note\n; DROP TABLE t",
+    "SHOW TABLES -- note\n; DROP TABLE t",
     "",
     "   ",
 ])
@@ -99,6 +99,21 @@ def test_no_cap_runs_sql_exactly_as_written():
 def test_no_cap_still_rejects_writes():
     with pytest.raises(GuardError):
         prepare("DELETE FROM t", None)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT a -- pick a\nFROM t",
+    "SELECT /* note */ a FROM t",
+    "SHOW TABLES FROM postgres.public -- note",
+])
+def test_comments_are_allowed(sql):
+    prepare(sql, 10)
+
+
+def test_comments_survive_the_limit_rewrite():
+    guarded = prepare("SELECT a /* pick a */ FROM t LIMIT 5000", 10)
+    assert _outer_limit(guarded.sql) == 11
+    assert "pick a" in guarded.sql
 
 
 def test_string_literal_with_dashes_is_not_a_comment():

@@ -35,12 +35,12 @@ VerificationStatus = Literal["matched", "re_executed", "rejected", "re_execution
 
 
 def normalize_sql(sql: str | None) -> str | None:
-    """Canonical form for comparing two SQL strings (whitespace, keyword case, trailing ';', fences)."""
+    """Canonical form for comparing two SQL strings (whitespace, keyword case, comments, trailing ';', fences)."""
     if not sql:
         return None
     cleaned = clean_sql(sql)
     try:
-        return sqlglot.parse_one(cleaned, read="trino").sql(dialect="trino")
+        return sqlglot.parse_one(cleaned, read="trino").sql(dialect="trino", comments=False)
     except SqlglotError:
         return " ".join(cleaned.split())
 

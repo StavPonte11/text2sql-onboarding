@@ -109,6 +109,7 @@ def test_normalize_sql_equivalence():
     assert normalize_sql(EXECUTED) == normalize_sql(RESTATED)
     assert normalize_sql("```sql\nSELECT 1;\n```") == normalize_sql("select 1")
     assert normalize_sql("SELECT 1") != normalize_sql("SELECT 2")
+    assert normalize_sql("SELECT a -- pick a\nFROM t") == normalize_sql("SELECT /* other */ a FROM t")
 
 
 def test_verify_without_structured_answer():

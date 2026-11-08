@@ -103,7 +103,7 @@ def execute_trino_query(sql: str, limit: int | None = None, runtime: Runtime = N
       INSUFFICIENT_RESOURCES, INTERNAL_ERROR and EXTERNAL come from the cluster or the source database
     - error.message: Trino's message; error.location: {line, column} of the offending token
     Two errors don't come from Trino: FORBIDDEN_STATEMENT (rejected before reaching Trino — rewrite
-    as a single read-only query without comments) and CONNECTION_ERROR (Trino could not be reached).
+    as a single read-only query) and CONNECTION_ERROR (Trino could not be reached).
 
     Args:
         sql (str): The exact Trino SQL query string to execute. Markdown fences and trailing

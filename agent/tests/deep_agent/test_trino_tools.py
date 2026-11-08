@@ -20,7 +20,7 @@ def trino():
         yield mock
 
 
-@pytest.mark.parametrize("sql", ["DROP TABLE t", "DELETE FROM t", "SELECT 1; DROP TABLE t", "SELECT 1 -- x"])
+@pytest.mark.parametrize("sql", ["DROP TABLE t", "DELETE FROM t", "SELECT 1; DROP TABLE t", "SELECT 1 -- x\n; DROP TABLE t"])
 def test_forbidden_sql_never_reaches_trino(trino, sql):
     out = json.loads(tools.execute_trino_query.invoke({"sql": sql}))
     assert out["ok"] is False
