@@ -168,15 +168,14 @@ def get_column_distinct_values(table_name: str, column_name: str, limit: int = 5
     Args:
         table_name (str): The fully qualified exact name of the table.
         column_name (str): The exact name of the column (plain or double-quoted; spaces and Hebrew are fine).
-        limit (int): Maximum distinct values to return. Defaults to 50 (bounded by the configured row ceiling).
+        limit (int): Maximum distinct values to return. Defaults to 50; data.truncated is true when more exist.
     """
-    requested = limit if limit is not None else 50
-    row_cap = effective_cap(requested, settings.DEEP_AGENT_MAX_ROWS)
+    row_cap = max(1, int(limit)) if limit is not None else 50
     try:
         sql = sql_guard.distinct_values_sql(table_name, column_name, row_cap)
     except sql_guard.GuardError as e:
         return fail(trino_errors.forbidden(str(e)))
-    return _run_sql(sql, row_cap, requested)
+    return _run_sql(sql, row_cap)
 
 
 _VALIDATE_PREFIX = "EXPLAIN (TYPE VALIDATE) "

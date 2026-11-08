@@ -117,6 +117,15 @@ def test_distinct_values_quotes_hebrew_column(trino):
     assert trino.call_args.args[0] == 'SELECT DISTINCT "שם עיר" FROM postgres.public.t LIMIT 21'
 
 
+def test_distinct_values_ignore_the_row_ceiling(trino, monkeypatch):
+    monkeypatch.setattr(sql_tools.settings, "DEEP_AGENT_MAX_ROWS", 100)
+    trino.return_value = _ok(301)
+    out = json.loads(tools.get_column_distinct_values.invoke({"table_name": "t", "column_name": "c", "limit": 300}))
+    assert trino.call_args.args[0].endswith("LIMIT 301")
+    assert out["data"]["row_count"] == 300 and out["data"]["truncated"] is True
+    assert "notice" not in out["data"]
+
+
 def test_validate_rejects_writes_without_calling_trino(trino):
     out = json.loads(tools.validate_sql.invoke({"sql": "DELETE FROM t"}))
     assert out["ok"] is False
