@@ -118,13 +118,13 @@ In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disabl
 
 ### Serving the deep agent
 
-The UI → backend → agent path is the `chat_with_agent` MCP tool. It runs the legacy graph or the deep agent:
+The agent service exposes one MCP tool per agent: `chat_with_agent` (the legacy graph) and `deep_agent`. Each takes only
+its own arguments; the backend's `POST /api/agent/chat` picks the tool:
 
 | Setting / argument | Effect |
 |---|---|
-| `AGENT_ENGINE=legacy` (default) / `deep` | default engine for new threads |
-| `engine` argument (backend `POST /api/agent/chat` body: `"engine": "deep"`) | per-request choice |
-| thread id `deep-…` | resumes always go back to the deep agent (and legacy threads to the legacy graph) |
+| backend body `"engine": "deep"` | calls `deep_agent`; omitted / `"legacy"` calls `chat_with_agent` |
+| thread id `deep-…` | Deep Agent threads; the backend resumes them on `deep_agent`, and each tool refuses the other's threads |
 | `DEEP_AGENT_CHECKPOINT_DB_URL=postgresql://…` | durable deep-agent threads (shared by replicas, survive restarts); unset = in-memory |
 | `timeout_s` argument | how long the caller waits; the run is cancelled then (a query already running finishes first). Omitted = no limit. The backend sends 290 (it waits 300). |
 

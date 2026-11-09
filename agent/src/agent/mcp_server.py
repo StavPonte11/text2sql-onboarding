@@ -11,6 +11,8 @@ from langfuse import observe
 
 mcp = FastMCP("Text2SQL Agent")
 
+DEEP_THREAD_PREFIX = "deep-"  # Deep Agent thread ids, so a thread is never resumed on the wrong agent
+
 
 @mcp.tool()
 @observe()
@@ -25,11 +27,10 @@ async def chat_with_agent(
     active_skills: list[str] | None = None,
     execution_mode: str | None = None,
     hitl_enabled: bool = True,
-    engine: str | None = None,
-    user_id: str | None = None,
-    timeout_s: float | None = None,
 ) -> str:
-    """Run the Text2SQL agent to answer database queries.
+    """Run the legacy Text2SQL agent (LangGraph workflow) to answer database queries.
+
+    The Deep Agent is a separate tool: `deep_agent`.
 
     Args:
         query:          The natural language question to answer.
@@ -43,16 +44,9 @@ async def chat_with_agent(
                         'high_quality', 'benchmark'). Overrides flag defaults
                         for this invocation only.
         hitl_enabled:   If False, skip all human-in-the-loop interrupts.
-        engine:         'legacy' (LangGraph workflow) or 'deep' (Deep Agent). Defaults to AGENT_ENGINE.
-                        Threads started on the deep agent are routed back to it on resume.
-        user_id:        End-user id for tracing (Deep Agent).
-        timeout_s:      How long the caller waits (Deep Agent): the run is cancelled when it expires.
-                        Omit for no limit.
     """
-    if _use_deep_agent(engine, thread_id):
-        return json.dumps(await _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id,
-                                     timeout_s),
-                          default=str)
+    if thread_id and thread_id.startswith(DEEP_THREAD_PREFIX):
+        return json.dumps({"error": f"Thread '{thread_id}' belongs to the Deep Agent — continue it with the deep_agent tool."})
 
     thread_id = thread_id or str(uuid.uuid4())
     
@@ -224,15 +218,35 @@ async def chat_with_agent(
         }
     )
 
-DEEP_THREAD_PREFIX = "deep-"
+@mcp.tool()
+@observe()
+async def deep_agent(
+    connection_id: int,
+    query: str | None = None,
+    thread_id: str | None = None,
+    resume_value: str | dict | None = None,
+    hitl_enabled: bool = True,
+    user_id: str | None = None,
+    timeout_s: float | None = None,
+) -> str:
+    """Run the Deep Agent to answer a question about the connection's data.
 
+    Returns the same response shape as chat_with_agent, plus engine / verification / executed /
+    semantic_validation / confidence.
 
-def _use_deep_agent(engine: str | None, thread_id: str | None) -> bool:
-    if thread_id:  # a resumed thread stays on the engine that started it
-        return thread_id.startswith(DEEP_THREAD_PREFIX)
-    from agent.config import settings
-
-    return (engine or settings.AGENT_ENGINE) == "deep"
+    Args:
+        connection_id:  The connection whose catalog the agent answers against.
+        query:          The natural language question (a new thread).
+        thread_id:      Continue a Deep Agent thread (ids start with 'deep-'); omit to start a new one.
+        resume_value:   The user's answer to a clarifying question (a string or {"feedback": ...}).
+        hitl_enabled:   If False, a clarifying question comes back as the completed answer instead of a pause.
+        user_id:        End-user id for tracing.
+        timeout_s:      How long the caller waits: the run is cancelled when it expires. Omit for no limit.
+    """
+    if thread_id and not thread_id.startswith(DEEP_THREAD_PREFIX):
+        return json.dumps({"error": f"Thread '{thread_id}' belongs to the legacy agent — continue it with chat_with_agent."})
+    return json.dumps(await _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id, timeout_s),
+                      default=str)
 
 
 async def _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id, timeout_s=None) -> dict:

@@ -57,7 +57,7 @@ class ChatRequest(BaseModel):
     execution_mode: str | None = None
     hitl_enabled: bool = True
     connection_id: int
-    engine: Literal["legacy", "deep"] | None = None  # None -> the agent service's AGENT_ENGINE
+    engine: Literal["legacy", "deep"] | None = None  # which agent answers; None = legacy (a deep-… thread stays deep)
 
 
 class SuggestFixesRequest(BaseModel):
@@ -117,10 +117,10 @@ async def _get_jeen_mcp_client():
             yield session
 
 
-async def _call_agent_mcp(tool_arguments: dict) -> dict:
+async def _call_agent_mcp(tool_name: str, tool_arguments: dict) -> dict:
     """
     Connects to the agent MCP server over Streamable HTTP, initializes the session,
-    calls the 'chat_with_agent' tool, and returns the parsed result.
+    calls `tool_name` (chat_with_agent or deep_agent), and returns the parsed result.
     """
     url = f"{settings.AGENT_URL}/mcp"
     logger.debug("Connecting to agent MCP: %s  args=%s", url, tool_arguments)
@@ -132,7 +132,7 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
 
                 # Call the tool using the MCP client session
                 result = await session.call_tool(
-                    "chat_with_agent",
+                    tool_name,
                     arguments=tool_arguments,
                     read_timeout_seconds=timedelta(
                         seconds=settings.AGENT_READ_TIMEOUT_SECONDS
@@ -197,6 +197,16 @@ async def _call_agent_mcp(tool_arguments: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+DEEP_THREAD_PREFIX = "deep-"  # the agent service names Deep Agent threads deep-…
+
+
+def _is_deep(request: ChatRequest) -> bool:
+    """The Deep Agent answers when chosen, and always continues its own threads (resumes don't resend engine)."""
+    if request.thread_id:
+        return request.thread_id.startswith(DEEP_THREAD_PREFIX)
+    return request.engine == "deep"
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     """
@@ -217,22 +227,25 @@ async def chat(request: ChatRequest) -> ChatResponse:
         else:
             resume_val = request.resume_value
 
-    tool_arguments: dict = {
+    common: dict = {
         "query": request.query,
         "thread_id": request.thread_id,
         "resume_value": resume_val,
-        "allowed_tables": request.allowed_tables,
-        "allowed_statuses": request.allowed_statuses,
-        "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
-        # the deep agent stops its run then, so its "stopped" reply arrives before we give up
-        "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
     }
-    if request.engine is not None:  # only sent when chosen, so older agent services keep working
-        tool_arguments["engine"] = request.engine
-
-    result = await _call_agent_mcp(tool_arguments)
+    if _is_deep(request):
+        # the deep agent stops its run then, so its "stopped" reply arrives before we give up
+        result = await _call_agent_mcp("deep_agent", {
+            **common, "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
+        })
+    else:
+        result = await _call_agent_mcp("chat_with_agent", {
+            **common,
+            "allowed_tables": request.allowed_tables,
+            "allowed_statuses": request.allowed_statuses,
+            "extractors": request.extractors,
+        })
     return ChatResponse(**result)
 
 

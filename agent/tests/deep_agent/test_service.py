@@ -172,37 +172,35 @@ async def test_missing_query_is_an_error():
                                           agent=object())
 
 
-# ── MCP tool routing ─────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("engine, thread_id, default, deep", [
-    ("deep", None, "legacy", True),
-    (None, None, "deep", True),
-    (None, None, "legacy", False),
-    ("legacy", "deep-abc", "legacy", True),     # a resumed deep thread stays on the deep agent
-    ("deep", "legacy-thread", "deep", False),   # ...and a legacy thread stays legacy
-])
-def test_engine_routing(engine, thread_id, default, deep, monkeypatch):
-    from agent import mcp_server
-    from agent.config import settings
-
-    monkeypatch.setattr(settings, "AGENT_ENGINE", default)
-    assert mcp_server._use_deep_agent(engine, thread_id) is deep
-
+# ── MCP tools ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hitl, expected_status", [(True, "interrupted"), (False, "completed")])
-async def test_chat_with_agent_deep_path(hitl, expected_status):
+async def test_deep_agent_tool(hitl, expected_status):
     from agent import mcp_server
 
     clarification = to_response("deep-z", {"status": "clarification", "answer": {"needs_clarification": "?"}}, None, [])
     with patch("deep_agent.service.run_deep_chat", AsyncMock(return_value=clarification)) as run, \
          patch.object(mcp_server.agent_graph, "ainvoke") as legacy:
-        raw = await mcp_server.chat_with_agent(connection_id=89, query="q", engine="deep", hitl_enabled=hitl)
+        raw = await mcp_server.deep_agent(connection_id=89, query="q", hitl_enabled=hitl)
     out = json.loads(raw)
     legacy.assert_not_called()
     assert run.await_args.kwargs["thread_id"].startswith("deep-")
     assert run.await_args.kwargs["timeout_s"] is None  # no limit unless the caller passes one
     assert out["status"] == expected_status
+
+
+@pytest.mark.asyncio
+async def test_each_tool_refuses_the_other_agents_threads():
+    from agent import mcp_server
+
+    with patch("deep_agent.service.run_deep_chat", AsyncMock()) as run, \
+         patch.object(mcp_server.agent_graph, "ainvoke") as legacy:
+        to_legacy = json.loads(await mcp_server.chat_with_agent(connection_id=89, thread_id="deep-abc", resume_value="x"))
+        to_deep = json.loads(await mcp_server.deep_agent(connection_id=89, thread_id="legacy-thread", resume_value="x"))
+    assert "deep_agent tool" in to_legacy["error"] and "chat_with_agent" in to_deep["error"]
+    run.assert_not_awaited()
+    legacy.assert_not_called()
 
 
 # ── durable threads (real Postgres) ──────────────────────────────────────────
