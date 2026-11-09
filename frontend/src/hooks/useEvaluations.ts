@@ -45,13 +45,21 @@ export function useTriggerConnectionRun() {
       connectionName,
       datasetName,
       triggeredBy,
+      tags,
     }: {
       connectionId: number;
       connectionName?: string;
       datasetName?: string;
       triggeredBy?: string;
+      tags?: string[];
     }) =>
-      orchestrationApi.triggerConnectionRun(connectionId, connectionName, datasetName, triggeredBy),
+      orchestrationApi.triggerConnectionRun(
+        connectionId,
+        connectionName,
+        datasetName,
+        triggeredBy,
+        tags,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } 
 import { orchestrationApi } from '../../api/orchestration';
 import { useStopEvalRun } from '../../hooks/useEvaluations';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
+import { QuestionResultModal } from './QuestionResultModal';
 
 import './RunHistoryTable.css';
 
@@ -18,6 +19,12 @@ const RENAMED_DIMENSIONS: Record<string, string> = {
 };
 
 const dimensionLabel = (dim: string) => (RENAMED_DIMENSIONS[dim] ?? dim).replace(/_/g, ' ');
+
+/** A run's duration in minutes, e.g. "143.2 min" (two decimals below a minute) */
+function formatDuration(seconds: number): string {
+  const minutes = seconds / 60;
+  return `${minutes.toFixed(minutes < 1 ? 2 : 1)} min`;
+}
 
 /** Pass rate over the questions finished so far, e.g. "40% so far" */
 function livePassRate(perQuestion: { status: string }[] | undefined): string {
@@ -70,6 +77,7 @@ function RunProgress({ completed, total }: { completed: number; total: number })
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
   const stopMut = useStopEvalRun();
+  const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
   const { data: report, isLoading } = useQuery({
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
@@ -187,7 +195,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                 },
                 {
                   label: 'Duration',
-                  value: report.duration_seconds ? `${report.duration_seconds}s` : '—',
+                  value: report.duration_seconds ? formatDuration(report.duration_seconds) : '—',
                   color: 'var(--text-secondary)',
                 },
               ].map(({ label, value, color }) => (
@@ -292,7 +300,21 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       status: string;
                       failure_type: string | null;
                     }) => (
-                      <div key={q.question_id} className="question-item">
+                      <div
+                        key={q.question_id}
+                        className={`question-item${q.status !== 'pending' ? ' question-item--clickable' : ''}`}
+                        {...(q.status !== 'pending' && {
+                          role: 'button',
+                          tabIndex: 0,
+                          onClick: () => setOpenQuestionId(q.question_id),
+                          onKeyDown: (e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setOpenQuestionId(q.question_id);
+                            }
+                          },
+                        })}
+                      >
                         <div
                           className="question-item__dot"
                           style={{
@@ -465,6 +487,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
           </div>
         )}
       </div>
+
+      {openQuestionId && (
+        <QuestionResultModal
+          runId={runId}
+          questionId={openQuestionId}
+          onClose={() => setOpenQuestionId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -588,6 +618,15 @@ export function RunHistoryTable({
                           Connection
                         </span>
                         {run.connection_name || run.table_name || `ID: ${run.connection_id}`}
+                        {run.question_tags?.map((tag) => (
+                          <span
+                            key={tag}
+                            className="badge badge--neutral"
+                            style={{ fontSize: 10.5 }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
                       </span>
                     ) : run.table_id ? (
                       <Link

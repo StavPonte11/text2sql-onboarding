@@ -437,6 +437,7 @@ function ConnectionRunPanel({
   const [newQuestion, setNewQuestion] = useState('');
   const [newExpectedSql, setNewExpectedSql] = useState('');
   const [newDifficulty, setNewDifficulty] = useState<string>('simple');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const { message } = App.useApp();
 
   const triggerConnectionMut = useTriggerConnectionRun();
@@ -453,6 +454,29 @@ function ConnectionRunPanel({
 
   const activeConn = connections.find((c: any) => c.connection_id === selectedConnection);
 
+  const tagOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    questions.forEach((q: any) =>
+      (q.tags ?? []).forEach((tag: string) => counts.set(tag, (counts.get(tag) ?? 0) + 1)),
+    );
+    return Array.from(counts, ([tag, count]) => ({ value: tag, label: `${tag} (${count})` })).sort(
+      (a, b) => a.value.localeCompare(b.value),
+    );
+  }, [questions]);
+
+  const selectedQuestions = useMemo(
+    () =>
+      selectedTags.length
+        ? questions.filter((q: any) => q.tags?.some((t: string) => selectedTags.includes(t)))
+        : questions,
+    [questions, selectedTags],
+  );
+
+  const handleConnectionChange = (connectionId: number) => {
+    setSelectedConnection(connectionId);
+    setSelectedTags([]);
+  };
+
   const handleLaunch = () => {
     if (!selectedConnection) {
       message.error('Please select a catalog connection before launching evaluation.');
@@ -462,6 +486,7 @@ function ConnectionRunPanel({
       {
         connectionId: selectedConnection,
         connectionName: activeConn?.name,
+        tags: selectedTags,
       },
       {
         onSuccess: (run) => {
@@ -532,7 +557,7 @@ function ConnectionRunPanel({
             </span>
             <Select
               value={selectedConnection}
-              onChange={setSelectedConnection}
+              onChange={handleConnectionChange}
               style={{ minWidth: 240 }}
               placeholder="Select catalog connection"
               loading={loadingConnections}
@@ -610,6 +635,23 @@ function ConnectionRunPanel({
         </div>
       )}
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          Run questions tagged
+        </span>
+        <Select
+          mode="multiple"
+          allowClear
+          aria-label="Question tags to evaluate"
+          style={{ flex: 1 }}
+          placeholder={tagOptions.length ? 'All questions' : 'No tags on these questions'}
+          disabled={!tagOptions.length}
+          value={selectedTags}
+          onChange={setSelectedTags}
+          options={tagOptions}
+        />
+      </div>
+
       {/* Main CTA */}
       <button
         className="btn btn--primary"
@@ -633,8 +675,8 @@ function ConnectionRunPanel({
         ) : (
           <>
             <PlayCircle size={17} /> Launch Evaluation for{' '}
-            {activeConn?.name || 'Selected Connection'} ({questions.length} Question
-            {questions.length !== 1 ? 's' : ''})
+            {activeConn?.name || 'Selected Connection'} ({selectedQuestions.length} Question
+            {selectedQuestions.length !== 1 ? 's' : ''})
           </>
         )}
       </button>
@@ -652,7 +694,9 @@ function ConnectionRunPanel({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Code2 size={16} style={{ color: 'var(--accent)' }} />
             <span style={{ fontWeight: 600, fontSize: 14 }}>Connection Golden Questions</span>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>({questions.length})</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              ({selectedQuestions.length})
+            </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -806,7 +850,7 @@ function ConnectionRunPanel({
           <div style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
             <Spinner size={20} />
           </div>
-        ) : !questions.length ? (
+        ) : !selectedQuestions.length ? (
           <EmptySlate
             icon={<Code2 size={24} />}
             title="No golden questions for this connection yet"
@@ -822,7 +866,7 @@ function ConnectionRunPanel({
               overflowY: 'auto',
             }}
           >
-            {questions.map((q: any) => (
+            {selectedQuestions.map((q: any) => (
               <div
                 key={q.id}
                 style={{
@@ -847,6 +891,11 @@ function ConnectionRunPanel({
                     {q.question}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {(q.tags ?? []).map((tag: string) => (
+                      <span key={tag} className="badge badge--neutral" style={{ fontSize: 10.5 }}>
+                        {tag}
+                      </span>
+                    ))}
                     <span
                       style={{
                         fontSize: 10.5,
@@ -1080,8 +1129,11 @@ export function EvaluationsPage() {
     { key: 'run', label: 'Run Controls', icon: <PlayCircle size={14} /> },
   ];
 
-  const datasetLabel =
-    runningDataset === 'text2sql_production' ? 'Production Dataset' : 'Public Benchmark (BIRD)';
+  const runningTags = runningRunData?.question_tags?.join(', ');
+  const runningLabel =
+    runningDataset === 'bird'
+      ? 'Public Benchmark (BIRD)'
+      : `${runningRunData?.connection_name || 'Connection'}${runningTags ? ` (${runningTags})` : ''}`;
 
   return (
     <div className="page">
@@ -1121,7 +1173,7 @@ export function EvaluationsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
             <div>
-              <strong>{datasetLabel} evaluation is currently running</strong>
+              <strong>{runningLabel} evaluation is currently running</strong>
               <span>
                 {' '}
                 — Results will appear in the History table below as the run completes (this may take

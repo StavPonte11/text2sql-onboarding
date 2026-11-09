@@ -92,3 +92,106 @@ describe('live evaluation progress', () => {
     expect(screen.getByText('Question Results (3)')).toBeInTheDocument();
   });
 });
+
+describe('finished run details', () => {
+  const finishedRun = { ...runningRun, status: 'completed', duration_seconds: 8593.59, score: 1 };
+  const finishedReport = {
+    ...runningReport,
+    status: 'completed',
+    duration_seconds: 8593.59,
+    per_question: [
+      {
+        question_id: 'q1',
+        question: 'How many orders?',
+        score: 0,
+        status: 'fail',
+        failure_type: null,
+      },
+    ],
+  };
+
+  test('shows the duration in minutes and opens a question with its metrics', async () => {
+    server.use(
+      http.get(`${API}/evaluations/runs`, () => HttpResponse.json([finishedRun])),
+      http.get(`${API}/evaluations/runs/run-live/report`, () => HttpResponse.json(finishedReport)),
+      http.get(`${API}/evaluations/runs/run-live/questions/q1`, () =>
+        HttpResponse.json({
+          run_id: 'run-live',
+          question_id: 'q1',
+          question: 'How many orders?',
+          expected_sql: 'SELECT 1',
+          score: 0,
+          status: 'fail',
+          failure_type: null,
+          trace_unavailable_reason: null,
+          trace: {
+            trace_id: 't1',
+            langfuse_url: 'https://langfuse.test/project/p/traces/t1',
+            succeeded: false,
+            error: 'sql_execution_failure',
+            generated_sql: 'SELECT bad',
+            executed_generated_sql: null,
+            expected_sql: 'SELECT 1',
+            agent_status: 'error',
+            expected_run: {
+              sql: 'SELECT 1',
+              execution_time_ms: 2500,
+              success: true,
+              columns: ['order_total'],
+              rows: [[42]],
+              row_count: 1,
+            },
+            generated_run: {
+              sql: 'SELECT bad',
+              execution_time_ms: 10,
+              success: false,
+              columns: [],
+              rows: [],
+              row_count: 0,
+              error: 'Schema does not exist',
+            },
+            scores: [
+              {
+                name: 'contains_accuracy',
+                value: 0,
+                passed: false,
+                applicable: true,
+                error: null,
+                details: { reason: 'generated_sql_execution_failed' },
+              },
+              {
+                name: 'time_shift',
+                value: null,
+                passed: false,
+                applicable: false,
+                error: null,
+                details: {},
+              },
+            ],
+            metadata: { total_latency_ms: 90000, evaluation_config: { agent_dialect: 'trino' } },
+          },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<RunHistoryTable />);
+
+    await user.click(await screen.findByText('AdventureWorksDW'));
+    expect(await screen.findByText('143.2 min')).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: /How many orders/ }));
+
+    expect(await screen.findByText('Question Result')).toBeInTheDocument();
+    expect(screen.getByText('contains accuracy')).toBeInTheDocument();
+    expect(screen.getByText('generated sql execution failed')).toBeInTheDocument();
+    expect(screen.getByText('N/A')).toBeInTheDocument();
+    expect(screen.getByText('order_total')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('Schema does not exist')).toBeInTheDocument();
+    expect(screen.getByText('1.5 min')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open in Langfuse/ })).toHaveAttribute(
+      'href',
+      'https://langfuse.test/project/p/traces/t1',
+    );
+  });
+});
