@@ -22,6 +22,7 @@ import {
 import { agentApi } from '../api/agent';
 import { orchestrationApi } from '../api/orchestration';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
+import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import { ScheduleManager } from '../components/monitoring/ScheduleManager';
 import {
@@ -29,6 +30,7 @@ import {
   useCreateConnectionQuestion,
   useDeleteConnectionQuestion,
   useEvalReadiness,
+  useQuestionTagSelection,
   useStopEvalRun,
   useTriggerConnectionRun,
   useTriggerDatasetRun,
@@ -437,7 +439,6 @@ function ConnectionRunPanel({
   const [newQuestion, setNewQuestion] = useState('');
   const [newExpectedSql, setNewExpectedSql] = useState('');
   const [newDifficulty, setNewDifficulty] = useState<string>('simple');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const { message } = App.useApp();
 
   const triggerConnectionMut = useTriggerConnectionRun();
@@ -454,23 +455,8 @@ function ConnectionRunPanel({
 
   const activeConn = connections.find((c: any) => c.connection_id === selectedConnection);
 
-  const tagOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    questions.forEach((q: any) =>
-      (q.tags ?? []).forEach((tag: string) => counts.set(tag, (counts.get(tag) ?? 0) + 1)),
-    );
-    return Array.from(counts, ([tag, count]) => ({ value: tag, label: `${tag} (${count})` })).sort(
-      (a, b) => a.value.localeCompare(b.value),
-    );
-  }, [questions]);
-
-  const selectedQuestions = useMemo(
-    () =>
-      selectedTags.length
-        ? questions.filter((q: any) => q.tags?.some((t: string) => selectedTags.includes(t)))
-        : questions,
-    [questions, selectedTags],
-  );
+  const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
+    useQuestionTagSelection<any>(questions);
 
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
@@ -635,22 +621,7 @@ function ConnectionRunPanel({
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-          Run questions tagged
-        </span>
-        <Select
-          mode="multiple"
-          allowClear
-          aria-label="Question tags to evaluate"
-          style={{ flex: 1 }}
-          placeholder={tagOptions.length ? 'All questions' : 'No tags on these questions'}
-          disabled={!tagOptions.length}
-          value={selectedTags}
-          onChange={setSelectedTags}
-          options={tagOptions}
-        />
-      </div>
+      <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
 
       {/* Main CTA */}
       <button
