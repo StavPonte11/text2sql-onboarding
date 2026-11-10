@@ -3,8 +3,9 @@ eval_question_trace.py — What Langfuse recorded for one question of an evaluat
 
 The evaluation service writes one span per question, named eval-sample:<question id>,
 with the SQL runs as child spans and the scores on the trace. Reads go through the
-/v2/observations and /v3/scores endpoints: the older /traces and /datasets/.../runs
-ones are retired from Langfuse Cloud on 2026-11-16.
+/v2/observations and /v3/scores endpoints, which Langfuse Cloud requires from
+2026-11-16 on. Self-hosted Langfuse versions without them answer 501, and are read
+through the older /observations and /traces/{id} endpoints instead.
 """
 
 import json
@@ -18,12 +19,14 @@ from app.config import settings
 
 _TIMEOUT_SECONDS = 30
 _RATE_LIMIT_ATTEMPTS = 3
+# How a Langfuse without the v2/v3 read endpoints answers them
+_NOT_AVAILABLE = {404, 405, 501}
 _OBSERVATION_FIELDS = "core,basic,io,metadata"
 # Added by the Langfuse SDK to every span; says nothing about the question
 _SDK_METADATA = ("scope", "resourceAttributes")
 
 
-def _get(path: str, **params: Any) -> list[dict]:
+def _request(path: str, **params: Any) -> dict:
     for attempt in range(_RATE_LIMIT_ATTEMPTS):
         res = requests.get(
             f"{settings.LANGFUSE_HOST}/api/public/{path}",
@@ -36,7 +39,11 @@ def _get(path: str, **params: Any) -> list[dict]:
         if attempt < _RATE_LIMIT_ATTEMPTS - 1:
             time.sleep(2**attempt)
     res.raise_for_status()
-    return res.json().get("data", [])
+    return res.json()
+
+
+def _get(path: str, **params: Any) -> list[dict]:
+    return _request(path, **params).get("data", [])
 
 
 def _parsed(value: Any) -> Any:
@@ -93,6 +100,43 @@ def _merged_scores(evaluations: dict, langfuse_scores: list[dict]) -> list[dict]
     return rows
 
 
+def _latest(samples: list[dict]) -> dict | None:
+    return max(samples, key=lambda s: s.get("startTime") or "") if samples else None
+
+
+def _read_current(question_id: str, window: dict) -> tuple | None:
+    sample = _latest(
+        _get(
+            "v2/observations",
+            name=f"eval-sample:{question_id}",
+            fields=_OBSERVATION_FIELDS,
+            **window,
+        )
+    )
+    if sample is None:
+        return None
+    trace_id = sample["traceId"]
+    observations = _get(
+        "v2/observations", traceId=trace_id, fields=_OBSERVATION_FIELDS, **window
+    )
+    scores = _get(
+        "v3/scores",
+        traceId=trace_id,
+        fromTimestamp=window["fromStartTime"],
+        toTimestamp=window["toStartTime"],
+        limit=100,
+    )
+    return sample, observations, scores
+
+
+def _read_legacy(question_id: str, window: dict) -> tuple | None:
+    sample = _latest(_get("observations", name=f"eval-sample:{question_id}", **window))
+    if sample is None:
+        return None
+    trace = _request(f"traces/{sample['traceId']}")
+    return sample, trace.get("observations") or [], trace.get("scores") or []
+
+
 def fetch_question_trace(
     question_id: str, started_at: datetime, ended_at: datetime
 ) -> dict | None:
@@ -105,32 +149,21 @@ def fetch_question_trace(
         "fromStartTime": f"{started_at.isoformat()}Z",
         "toStartTime": f"{ended_at.isoformat()}Z",
     }
-    samples = _get(
-        "v2/observations",
-        name=f"eval-sample:{question_id}",
-        fields=_OBSERVATION_FIELDS,
-        **window,
-    )
-    if not samples:
+    try:
+        found = _read_current(question_id, window)
+    except requests.HTTPError as exc:
+        if exc.response is None or exc.response.status_code not in _NOT_AVAILABLE:
+            raise
+        found = _read_legacy(question_id, window)
+    if found is None:
         return None
-    sample = max(samples, key=lambda s: s.get("startTime") or "")
+    sample, observations, scores = found
     trace_id = sample["traceId"]
-
-    observations = _get(
-        "v2/observations", traceId=trace_id, fields=_OBSERVATION_FIELDS, **window
-    )
     spans = {
         o["name"]: o
         for o in observations
         if o.get("parentObservationId") == sample["id"]
     }
-    scores = _get(
-        "v3/scores",
-        traceId=trace_id,
-        fromTimestamp=window["fromStartTime"],
-        toTimestamp=window["toStartTime"],
-        limit=100,
-    )
 
     output = _as_dict(sample.get("output"))
     agent = spans.get("agent_execution") or {}

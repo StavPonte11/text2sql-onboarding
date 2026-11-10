@@ -185,6 +185,33 @@ def test_fetch_question_trace_collects_runs_scores_and_metadata():
     }
 
 
+def test_fetch_question_trace_falls_back_when_v2_is_not_implemented():
+    import requests
+
+    not_implemented = MagicMock(status_code=501)
+    not_implemented.raise_for_status.side_effect = requests.HTTPError(
+        response=not_implemented
+    )
+    legacy_sample = MagicMock(status_code=200, **{"json.return_value": {"data": [SAMPLE]}})
+    legacy_trace = MagicMock(
+        status_code=200,
+        **{"json.return_value": {"observations": CHILDREN, "scores": SCORES}},
+    )
+    start = datetime(2026, 10, 26, 12, 0)
+    with patch(
+        "app.services.eval_question_trace.requests.get",
+        side_effect=[not_implemented, legacy_sample, legacy_trace],
+    ) as get:
+        trace = fetch_question_trace("q1", start, start + timedelta(hours=2))
+
+    urls = [c.args[0] for c in get.call_args_list]
+    assert urls[1].endswith("/api/public/observations")
+    assert urls[2].endswith("/api/public/traces/trace1")
+    assert trace["expected_run"]["row_count"] == 1
+    assert trace["agent_status"] == "error"
+    assert {s["name"] for s in trace["scores"]} >= {"contains_accuracy", "time_shift"}
+
+
 def test_fetch_question_trace_without_a_record():
     now = datetime(2026, 10, 26, 12, 0)
     with _langfuse([]):
