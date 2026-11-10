@@ -28,6 +28,20 @@ def build_refiner_schema_context(state: AgentState) -> str:
     return "No schema context available."
 
 
+_VALUES_ALL = "— values (all):"
+
+
+def _complete_values(description: str) -> list[str] | None:
+    """The column's full value list when the catalog marks it complete (`— values (all): 'a', 'b'`), else None."""
+    idx = description.find(_VALUES_ALL)
+    if idx == -1:
+        return None
+    values = [v.replace("''", "'") for v in re.findall(r"'((?:[^']|'')*)'", description[idx + len(_VALUES_ALL):])]
+    if not values or any(v.endswith("…") for v in values):  # truncated values can't be compared
+        return None
+    return values
+
+
 def parse_jeen_catalog_tables(jeen_catalog: str) -> tuple[dict, list[AgentSQLTable]]:
     """Parse schema dictionary and AgentSQLTable list from jeen_catalog markdown."""
     schema: dict = {}
@@ -111,6 +125,7 @@ def parse_jeen_catalog_tables(jeen_catalog: str) -> tuple[dict, list[AgentSQLTab
                     "distinct_count": distinct_count,
                     "description": desc_str,
                     "profile": profile_str,
+                    "values_all": _complete_values(desc_str),
                 }
                 
                 tables[-1].columns[c_name] = col_dict
