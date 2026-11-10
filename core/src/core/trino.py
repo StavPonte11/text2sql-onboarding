@@ -47,8 +47,9 @@ class TrinoExecutionResult(BaseModel):
     columns: list[str] = []
     row_count: int = 0
     execution_time_ms: int = 0
-    error_message: str | None = None
+    error_message: str | None = None     # str(exception) — the full text callers have always received
     # Structured Trino error details (populated from trino.exceptions.TrinoQueryError)
+    trino_message: str | None = None     # Trino's own message, e.g. "line 1:15: Table 't' does not exist"
     error_name: str | None = None        # e.g. SYNTAX_ERROR, COLUMN_NOT_FOUND, FUNCTION_NOT_FOUND
     error_type: str | None = None        # USER_ERROR | INSUFFICIENT_RESOURCES | INTERNAL_ERROR | EXTERNAL
     error_code: int | None = None
@@ -159,7 +160,7 @@ def execute_query_sync(
         details: dict[str, Any] = {}
         if isinstance(exc, trino.exceptions.TrinoQueryError):
             details = {
-                "error_message": exc.message,
+                "trino_message": exc.message,
                 "error_name": exc.error_name,
                 "error_type": exc.error_type,
                 "error_code": exc.error_code,
@@ -172,5 +173,6 @@ def execute_query_sync(
             columns=[],
             row_count=0,
             execution_time_ms=execution_time_ms,
-            **{"error_message": str(exc), **details},
+            error_message=str(exc),
+            **details,
         )

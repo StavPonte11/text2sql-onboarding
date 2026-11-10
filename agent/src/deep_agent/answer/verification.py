@@ -90,7 +90,7 @@ def _re_execute(answer_sql: str) -> tuple[VerificationStatus, dict[str, Any] | N
         return "rejected", None, str(e)
     res = execute_query_sync(guarded.sql, reuse_connection=True)
     if not res.success:
-        return "re_execution_failed", None, res.error_message
+        return "re_execution_failed", None, res.trino_message or res.error_message
     rows = res.rows or []
     truncated = row_cap is not None and len(rows) > row_cap
     if truncated:

@@ -23,7 +23,7 @@ def from_result(res: TrinoExecutionResult) -> dict:
     location = {"line": res.error_location[0], "column": res.error_location[1]} if res.error_location else None
     return error(
         res.error_name,
-        res.error_message or "",
+        res.trino_message or res.error_message or "",
         type=res.error_type,
         location=location,
         query_id=res.query_id,
