@@ -1,7 +1,8 @@
 """
 Prompt management for the Deep Agent.
 
-Prompts are Langfuse text prompts named `deep-agent/<key>` (`system`, `validator`), fetched by label (DEEP_AGENT_PROMPT_LABEL, default
+Prompts are Langfuse text prompts in the `text2sql/deep_agent/` folder (`system`, `validator`), next to the
+structured agent's `text2sql/` prompts,, fetched by label (DEEP_AGENT_PROMPT_LABEL, default
 "production") with the SDK's TTL cache. The packaged `prompts/<key>.md` files are the
 fallback when Langfuse is unreachable or the prompt doesn't exist, and the only source when
 DEEP_AGENT_LANGFUSE_PROMPTS is off (tests, offline dev).
@@ -24,10 +25,11 @@ logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent  # the .md files sit next to this module
 PROMPT_KEYS = ("system", "validator")
+LANGFUSE_FOLDER = "text2sql/deep_agent"  # Langfuse shows "/" as folders
 
 
 def langfuse_name(key: str) -> str:
-    return f"deep-agent/{key}"
+    return f"{LANGFUSE_FOLDER}/{key}"
 
 
 def local_prompt(key: str) -> str:

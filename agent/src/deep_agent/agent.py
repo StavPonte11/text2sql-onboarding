@@ -1,7 +1,7 @@
 """
 Agent logic and LangGraph harness for the Deep Agent.
 
-The system prompt is served by deep_agent.prompts.registry (Langfuse `deep-agent/system` when
+The system prompt is served by deep_agent.prompts.registry (Langfuse `text2sql/deep_agent/system` when
 DEEP_AGENT_LANGFUSE_PROMPTS is on, else the packaged prompts/system.md). The connection's catalog
 is added to every model call by CatalogMiddleware (deep_agent.middleware.catalog).
 """
