@@ -26,12 +26,22 @@ function formatDuration(seconds: number): string {
   return `${minutes.toFixed(minutes < 1 ? 2 : 1)} min`;
 }
 
-/** Pass rate over the questions finished so far, e.g. "40% so far" */
-function livePassRate(perQuestion: { status: string }[] | undefined): string {
+/** A 0–1 score as a plain number, e.g. "0.25" */
+const formatScore = (score: number) => score.toFixed(2);
+
+const scoreColor = (score: number | null | undefined) =>
+  score == null ? 'var(--text-muted)' : score >= 0.5 ? '#10b981' : '#ef4444';
+
+/** A run's average time shift score, when it has one */
+const timeShiftScore = (dims: Record<string, number> | null | undefined): number | null =>
+  dims?.time_shift_score ?? null;
+
+/** Contains accuracy over the questions finished so far, e.g. "0.40 so far" */
+function liveContainsAccuracy(perQuestion: { status: string }[] | undefined): string {
   const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
   if (!finished.length) return 'Calculating…';
   const passed = finished.filter((q) => q.status === 'pass').length;
-  return `${Math.round((passed / finished.length) * 100)}% so far`;
+  return `${formatScore(passed / finished.length)} so far`;
 }
 
 /** "Evaluating 36 of 58 questions" with a bar, shown while a run is in progress */
@@ -160,30 +170,26 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
             <div className="card summary-grid">
               {[
                 {
-                  label: 'Score',
+                  label: 'Contains Accuracy',
                   value:
                     report.status === 'running'
-                      ? 'Evaluating…'
-                      : `${Math.round(report.overall_score * 100)}%`,
-                  color:
-                    report.status === 'running'
-                      ? '#f59e0b'
-                      : report.overall_score >= 0.5
-                        ? '#10b981'
-                        : '#ef4444',
+                      ? liveContainsAccuracy(report.per_question)
+                      : formatScore(report.overall_score),
+                  color: report.status === 'running' ? '#f59e0b' : scoreColor(report.overall_score),
                 },
                 {
-                  label: 'Pass Rate',
+                  label: 'Time Shift',
                   value:
                     report.status === 'running'
-                      ? livePassRate(report.per_question)
-                      : `${Math.round(report.pass_rate * 100)}%`,
+                      ? 'Calculating…'
+                      : (() => {
+                          const timeShift = timeShiftScore(report.dimension_averages);
+                          return timeShift == null ? '—' : formatScore(timeShift);
+                        })(),
                   color:
                     report.status === 'running'
                       ? '#f59e0b'
-                      : report.pass_rate >= 0.5
-                        ? '#10b981'
-                        : '#ef4444',
+                      : scoreColor(timeShiftScore(report.dimension_averages)),
                 },
                 {
                   label: 'Questions',
@@ -577,8 +583,8 @@ export function RunHistoryTable({
             <tr>
               {!compact && <th>Run ID</th>}
               {!tableId && <th>Target / Connection</th>}
-              <th>Score</th>
-              <th>Pass Rate</th>
+              <th>Contains Accuracy</th>
+              <th>Time Shift</th>
               {!compact && <th>Questions</th>}
               <th>Status</th>
               <th>Triggered By</th>
@@ -666,11 +672,8 @@ export function RunHistoryTable({
                         )}
                       </span>
                     ) : (
-                      <span
-                        className="score-text"
-                        style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
-                      >
-                        {Math.round(run.score * 100)}%
+                      <span className="score-text" style={{ color: scoreColor(run.score) }}>
+                        {formatScore(run.score)}
                       </span>
                     )}
                     {run.regression_detected && (
@@ -680,12 +683,17 @@ export function RunHistoryTable({
                     )}
                   </div>
                 </td>
-                <td className="pass-rate-cell">
-                  {run.status === 'running' ? (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
-                  ) : (
-                    <ScoreBar score={run.pass_rate} height={5} showLabel />
-                  )}
+                <td>
+                  {(() => {
+                    const timeShift = timeShiftScore(run.dimension_averages);
+                    return run.status === 'running' ? (
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
+                    ) : (
+                      <span className="score-text" style={{ color: scoreColor(timeShift) }}>
+                        {timeShift == null ? '—' : formatScore(timeShift)}
+                      </span>
+                    );
+                  })()}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>

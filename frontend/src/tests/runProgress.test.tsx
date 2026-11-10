@@ -88,13 +88,19 @@ describe('live evaluation progress', () => {
       expect(screen.getByText('Evaluating 2 of 3 questions')).toBeInTheDocument(),
     );
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
-    expect(screen.getByText('50% so far')).toBeInTheDocument(); // 1 of 2 finished passed
+    expect(screen.getByText('0.50 so far')).toBeInTheDocument(); // 1 of 2 finished passed
     expect(screen.getByText('Question Results (3)')).toBeInTheDocument();
   });
 });
 
 describe('finished run details', () => {
-  const finishedRun = { ...runningRun, status: 'completed', duration_seconds: 8593.59, score: 1 };
+  const finishedRun = {
+    ...runningRun,
+    status: 'completed',
+    duration_seconds: 8593.59,
+    score: 1,
+    dimension_averages: { time_shift_score: 0.25 },
+  };
   const finishedReport = {
     ...runningReport,
     status: 'completed',
@@ -175,6 +181,11 @@ describe('finished run details', () => {
     );
     const user = userEvent.setup();
     renderWithProviders(<RunHistoryTable />);
+
+    expect(await screen.findByText('Contains Accuracy')).toBeInTheDocument();
+    expect(screen.getByText('Time Shift')).toBeInTheDocument();
+    expect(screen.getByText('1.00')).toBeInTheDocument();
+    expect(screen.getByText('0.25')).toBeInTheDocument();
 
     await user.click(await screen.findByText('AdventureWorksDW'));
     expect(await screen.findByText('143.2 min')).toBeInTheDocument();
