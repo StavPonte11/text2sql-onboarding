@@ -10,7 +10,7 @@ Serving the Deep Agent behind the existing `chat_with_agent` MCP tool.
   named `deep:<tool>` (e.g. deep:execute_trino_query), `deep:review:<tool>` for the independent
   reviewer's tools (deep_agent.validator), plus `deep:answer`.
 - Response: the legacy JSON contract (status / summary / sql_query / sql_explanation /
-  interrupt_details / trace_id / execution_path / is_unanswerable) plus `engine`,
+  interrupt_details / trace_id / execution_path / is_unanswerable) plus
   `verification`, `executed`, `recovered_from_text`, `semantic_validation` and `confidence`.
 - Run limit: none by default. A caller that stops waiting after N seconds passes `timeout_s`;
   the run is then cancelled at that point (no tokens spent on an answer nobody receives).
@@ -134,7 +134,6 @@ def to_response(thread_id: str, final_result: dict[str, Any], trace_id: str | No
     status = final_result.get("status", "no_answer")
     base = {
         "thread_id": thread_id,
-        "engine": "deep",
         "verification": status,
         "executed": bool(final_result.get("executed")),
         "recovered_from_text": bool(final_result.get("recovered_from_text")),
@@ -193,6 +192,10 @@ async def run_deep_chat(
                 else "resume_value must be the user's answer (a string or {'feedback': ...})."}
 
     agent = agent or await get_deep_agent()
+    if resume_value is not None:
+        existing = await agent.aget_state({"configurable": {"thread_id": thread_id}})
+        if not existing.values:  # an answer to a question this agent never asked
+            return {"error": f"Thread ID '{thread_id}' not found or has no active session."}
     context = DeepAgentContext(connection_id=connection_id, user_id=user_id)
     publisher = StreamPublisher(thread_id)
     config = observability.build_run_config(thread_id, user_id=user_id, connection_id=connection_id,

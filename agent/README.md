@@ -118,18 +118,21 @@ In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disabl
 
 ### Serving the deep agent
 
-The agent service exposes one MCP tool per agent: `chat_with_agent` (the legacy graph) and `deep_agent`. Each takes only
-its own arguments; the backend's `POST /api/agent/chat` picks the tool:
+The agent service exposes one MCP tool per agent, each with only its own arguments, and the backend one endpoint per tool:
+
+| Backend endpoint | MCP tool |
+|---|---|
+| `POST /api/agent/chat` | `chat_with_agent` (the legacy graph) |
+| `POST /api/agent/deep/chat` | `deep_agent` |
 
 | Setting / argument | Effect |
 |---|---|
-| backend body `"engine": "deep"` | calls `deep_agent`; omitted / `"legacy"` calls `chat_with_agent` |
-| thread id `deep-…` | Deep Agent threads; the backend resumes them on `deep_agent`, and each tool refuses the other's threads |
+| `thread_id` | continue a thread on the same agent; resuming a thread the deep agent never saw returns an error |
 | `DEEP_AGENT_CHECKPOINT_DB_URL=postgresql://…` | durable deep-agent threads (shared by replicas, survive restarts); unset = in-memory |
 | `timeout_s` argument | how long the caller waits; the run is cancelled then (a query already running finishes first). Omitted = no limit. The backend sends 290 (it waits 300). |
 
 The deep agent is built once per process and streams the same Redis `agent_stream:{thread_id}` events as the legacy graph
-(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `engine`, `verification`
+(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `verification`
 (matched / re_executed / rejected / re_execution_failed / no_answer), `executed` (the final SQL ran and the rows are
 Trino's), `recovered_from_text`, `semantic_validation` and `confidence`. Each turn's answer is checked only against SQL executed in that turn.
 

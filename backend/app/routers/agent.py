@@ -13,7 +13,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Literal
 
 import httpx
 import redis.asyncio as redis
@@ -57,7 +56,16 @@ class ChatRequest(BaseModel):
     execution_mode: str | None = None
     hitl_enabled: bool = True
     connection_id: int
-    engine: Literal["legacy", "deep"] | None = None  # which agent answers; None = legacy (a deep-… thread stays deep)
+
+
+class DeepChatRequest(BaseModel):
+    """A Deep Agent turn: only the arguments the deep_agent tool takes."""
+
+    query: str | None = None
+    thread_id: str | None = None
+    resume_value: QueryApproval | str | dict | None = None
+    hitl_enabled: bool = True
+    connection_id: int
 
 
 class SuggestFixesRequest(BaseModel):
@@ -77,7 +85,6 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     execution_path: list[str] | None = None
     is_unanswerable: bool = False
-    engine: str | None = None          # "deep" when answered by the Deep Agent
     verification: str | None = None    # Deep Agent answer verification status (matched, re_executed, ...)
     confidence: str | None = None      # Deep Agent self-reported confidence (high / medium / low)
     executed: bool | None = None       # Deep Agent: the submitted final SQL ran and the rows are Trino's
@@ -197,55 +204,51 @@ async def _call_agent_mcp(tool_name: str, tool_arguments: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-DEEP_THREAD_PREFIX = "deep-"  # the agent service names Deep Agent threads deep-…
-
-
-def _is_deep(request: ChatRequest) -> bool:
-    """The Deep Agent answers when chosen, and always continues its own threads (resumes don't resend engine)."""
-    if request.thread_id:
-        return request.thread_id.startswith(DEEP_THREAD_PREFIX)
-    return request.engine == "deep"
+def _resume_payload(resume_value: QueryApproval | str | dict | None) -> str | dict | None:
+    return resume_value.model_dump() if isinstance(resume_value, QueryApproval) else resume_value
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     """
-    Start a new agent session or resume an interrupted one.
+    Start a new legacy-agent session or resume an interrupted one (the chat_with_agent MCP tool).
 
     - First call: provide `query` (and optionally `allowed_tables`, `allowed_statuses`, `extractors`).
     - Resume call: provide `thread_id` + `resume_value` (`{"approved": true}` or
       `{"approved": false, "feedback": "..."}`).
 
-    The backend forwards the request to the agent MCP service and returns the
-    structured result. The frontend only deals with this endpoint.
+    The Deep Agent has its own endpoint: POST /deep/chat.
     """
-    # Build the arguments dictionary for the MCP tool
-    resume_val = None
-    if request.resume_value is not None:
-        if isinstance(request.resume_value, QueryApproval):
-            resume_val = request.resume_value.model_dump()
-        else:
-            resume_val = request.resume_value
-
-    common: dict = {
+    result = await _call_agent_mcp("chat_with_agent", {
         "query": request.query,
         "thread_id": request.thread_id,
-        "resume_value": resume_val,
+        "resume_value": _resume_payload(request.resume_value),
+        "allowed_tables": request.allowed_tables,
+        "allowed_statuses": request.allowed_statuses,
+        "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
-    }
-    if _is_deep(request):
+    })
+    return ChatResponse(**result)
+
+
+@router.post("/deep/chat", response_model=ChatResponse)
+async def deep_chat(request: DeepChatRequest) -> ChatResponse:
+    """
+    Start a new Deep Agent session or continue one (the deep_agent MCP tool).
+
+    - First call: provide `query`.
+    - Continue: provide the same `thread_id` + `resume_value` (the user's answer to a clarifying question).
+    """
+    result = await _call_agent_mcp("deep_agent", {
+        "query": request.query,
+        "thread_id": request.thread_id,
+        "resume_value": _resume_payload(request.resume_value),
+        "hitl_enabled": request.hitl_enabled,
+        "connection_id": request.connection_id,
         # the deep agent stops its run then, so its "stopped" reply arrives before we give up
-        result = await _call_agent_mcp("deep_agent", {
-            **common, "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
-        })
-    else:
-        result = await _call_agent_mcp("chat_with_agent", {
-            **common,
-            "allowed_tables": request.allowed_tables,
-            "allowed_statuses": request.allowed_statuses,
-            "extractors": request.extractors,
-        })
+        "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
+    })
     return ChatResponse(**result)
 
 

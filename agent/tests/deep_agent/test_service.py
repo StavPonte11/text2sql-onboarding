@@ -57,7 +57,7 @@ def test_completed_response_matches_legacy_contract():
     r = to_response("deep-1", final, "trace-1", ["deep:execute_trino_query"])
     assert r["status"] == "completed" and r["sql_query"] == SQL and r["sql_explanation"] == "הסבר"
     assert "| 466 |" in r["summary"] and "```sql" not in r["summary"]  # SQL is returned separately
-    assert r["is_unanswerable"] is False and r["engine"] == "deep" and r["verification"] == "matched"
+    assert r["is_unanswerable"] is False and r["verification"] == "matched"
     assert r["executed"] is False and r["recovered_from_text"] is False  # absent in final -> False
     assert to_response("t", {**final, "executed": True, "recovered_from_text": True}, None, [])["executed"] is True
     assert {"thread_id", "status", "summary", "raw_data_ref", "sql_query", "sql_explanation", "trace_id",
@@ -185,22 +185,17 @@ async def test_deep_agent_tool(hitl, expected_status):
         raw = await mcp_server.deep_agent(connection_id=89, query="q", hitl_enabled=hitl)
     out = json.loads(raw)
     legacy.assert_not_called()
-    assert run.await_args.kwargs["thread_id"].startswith("deep-")
+    assert len(run.await_args.kwargs["thread_id"]) == 36  # a new thread gets a fresh uuid
     assert run.await_args.kwargs["timeout_s"] is None  # no limit unless the caller passes one
     assert out["status"] == expected_status
 
 
 @pytest.mark.asyncio
-async def test_each_tool_refuses_the_other_agents_threads():
-    from agent import mcp_server
-
-    with patch("deep_agent.service.run_deep_chat", AsyncMock()) as run, \
-         patch.object(mcp_server.agent_graph, "ainvoke") as legacy:
-        to_legacy = json.loads(await mcp_server.chat_with_agent(connection_id=89, thread_id="deep-abc", resume_value="x"))
-        to_deep = json.loads(await mcp_server.deep_agent(connection_id=89, thread_id="legacy-thread", resume_value="x"))
-    assert "deep_agent tool" in to_legacy["error"] and "chat_with_agent" in to_deep["error"]
-    run.assert_not_awaited()
-    legacy.assert_not_called()
+async def test_resuming_a_thread_the_deep_agent_never_saw_is_an_error(policy_model, published):
+    agent = create_deep_agent(model=policy_model(_policy))
+    out = await run_deep_chat(connection_id=89, thread_id="never-started", resume_value="חיפה", agent=agent)
+    assert "not found" in out["error"]
+    assert (await agent.aget_state({"configurable": {"thread_id": "never-started"}})).values == {}
 
 
 # ── durable threads (real Postgres) ──────────────────────────────────────────

@@ -35,6 +35,15 @@ export interface ChatRequest {
   connection_id?: number;
 }
 
+/** A Deep Agent turn: only the arguments the deep_agent tool takes. */
+export interface DeepChatRequest {
+  query?: string;
+  thread_id?: string;
+  resume_value?: QueryApproval | string;
+  hitl_enabled?: boolean;
+  connection_id?: number;
+}
+
 export interface ChatResponse {
   thread_id: string;
   status: 'completed' | 'interrupted';
@@ -46,11 +55,20 @@ export interface ChatResponse {
   trace_id?: string;
   execution_path?: string[];
   is_unanswerable?: boolean;
+  // Deep Agent only
+  verification?: string;
+  confidence?: string;
+  executed?: boolean;
+  semantic_validation?: Record<string, unknown> | null;
 }
 
 export const agentApi = {
+  /** The structured agent (chat_with_agent). */
   chat: (payload: ChatRequest): Promise<ChatResponse> =>
     api.post<ChatResponse>('/chat', payload).then((r) => r.data),
+  /** The Deep Agent (deep_agent). */
+  deepChat: (payload: DeepChatRequest): Promise<ChatResponse> =>
+    api.post<ChatResponse>('/deep/chat', payload).then((r) => r.data),
   suggestFixes: async (threadId: string, category: string): Promise<string[]> => {
     const response = await api.post<string[]>('/suggest_fixes', { thread_id: threadId, category });
     return response.data;

@@ -8,9 +8,9 @@
 
 .header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 32px;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 24px;
 }
 
 .title {
@@ -31,15 +31,15 @@
 
 .controls {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 36px;
 }
 
 .controlItem {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   font-size: 14px;
   color: var(--text);
 }

@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Divider, Input, Modal, Select, Space, Spin, Switch, Tag } from 'antd';
+import { Alert, Button, Divider, Input, Modal, Segmented, Select, Space, Spin, Switch, Tag } from 'antd';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -33,6 +33,9 @@ import { AgentGraph } from '../components/AgentGraph';
 import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
 
 import type { ChatRequest, ChatResponse } from '../api/agent';
+
+/** Which agent answers — each has its own backend endpoint (and MCP tool). */
+type AgentKind = 'structured' | 'deep';
 
 import styles from './AgentTestingPage.module.css';
 
@@ -352,6 +355,9 @@ const CollapsibleTraceBlock = ({
 // ----------------------------------------------------------------------
 const AgentTestingHeader = memo(
   ({
+    agentKind,
+    setAgentKind,
+    agentKindLocked,
     hitlEnabled,
     setHitlEnabled,
     connections,
@@ -359,6 +365,9 @@ const AgentTestingHeader = memo(
     setSelectedConnection,
     loadingConnections,
   }: {
+    agentKind: AgentKind;
+    setAgentKind: (v: AgentKind) => void;
+    agentKindLocked: boolean;
     hitlEnabled: boolean;
     setHitlEnabled: (v: boolean) => void;
     connections: any[];
@@ -378,8 +387,16 @@ const AgentTestingHeader = memo(
       </div>
       <div className={styles.controls}>
         <div className={styles.controlItem}>
-          <span>Human in the Loop</span>
-          <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
+          <span>Agent</span>
+          <Segmented<AgentKind>
+            value={agentKind}
+            onChange={setAgentKind}
+            disabled={agentKindLocked}
+            options={[
+              { label: 'Structured', value: 'structured' },
+              { label: 'Deep', value: 'deep' },
+            ]}
+          />
         </div>
         <div className={styles.controlItem}>
           <span>Catalog</span>
@@ -394,6 +411,10 @@ const AgentTestingHeader = memo(
               label: c.name,
             }))}
           />
+        </div>
+        <div className={styles.controlItem}>
+          <span>Human in the Loop</span>
+          <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
         </div>
       </div>
     </div>
@@ -897,6 +918,9 @@ const AgentResultDisplay = ({
 export function AgentTestingPage() {
   const [query, setQuery] = useState('');
   const [hitlEnabled, setHitlEnabled] = useState(true);
+  const [agentKind, setAgentKind] = useState<AgentKind>('structured');
+  // The agent the current conversation started on: approvals and answers go back to it.
+  const [threadAgent, setThreadAgent] = useState<AgentKind>('structured');
   const [connections, setConnections] = useState<any[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
   const [loadingConnections, setLoadingConnections] = useState(false);
@@ -978,7 +1002,16 @@ export function AgentTestingPage() {
   }, [traceId]);
 
   const chatMutation = useMutation({
-    mutationFn: (req: ChatRequest) => agentApi.chat(req),
+    mutationFn: ({ agent, req }: { agent: AgentKind; req: ChatRequest }) =>
+      agent === 'deep'
+        ? agentApi.deepChat({
+            query: req.query,
+            thread_id: req.thread_id,
+            resume_value: req.resume_value,
+            hitl_enabled: req.hitl_enabled,
+            connection_id: req.connection_id,
+          })
+        : agentApi.chat(req),
     onSuccess: (data) => {
       if (data.trace_id) {
         setTraceId(data.trace_id);
@@ -1029,6 +1062,7 @@ export function AgentTestingPage() {
     setChatResponse(null);
     const newThreadId = uuidv4();
     setThreadId(newThreadId);
+    setThreadAgent(agentKind);
     setExecutionPath([]);
     setTraceId(null);
     setSelectedStep(null);
@@ -1037,10 +1071,13 @@ export function AgentTestingPage() {
     // Delay mutation slightly to allow SSE EventSource to connect
     setTimeout(() => {
       chatMutation.mutate({
-        query,
-        thread_id: newThreadId,
-        hitl_enabled: hitlEnabled,
-        connection_id: selectedConnection,
+        agent: agentKind,
+        req: {
+          query,
+          thread_id: newThreadId,
+          hitl_enabled: hitlEnabled,
+          connection_id: selectedConnection,
+        },
       });
     }, 300);
   };
@@ -1049,9 +1086,12 @@ export function AgentTestingPage() {
     if (!threadId) return;
     setTimeout(() => {
       chatMutation.mutate({
-        thread_id: threadId,
-        resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
-        connection_id: selectedConnection,
+        agent: threadAgent,
+        req: {
+          thread_id: threadId,
+          resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
+          connection_id: selectedConnection,
+        },
       });
     }, 300);
   };
@@ -1060,10 +1100,13 @@ export function AgentTestingPage() {
     if (!threadId) return;
     setTimeout(() => {
       chatMutation.mutate({
-        thread_id: threadId,
-        resume_value: { approved: false, feedback, rejection_category: category },
-        hitl_enabled: hitlEnabled,
-        connection_id: selectedConnection,
+        agent: threadAgent,
+        req: {
+          thread_id: threadId,
+          resume_value: { approved: false, feedback, rejection_category: category },
+          hitl_enabled: hitlEnabled,
+          connection_id: selectedConnection,
+        },
       });
     }, 300);
   };
@@ -1117,6 +1160,9 @@ export function AgentTestingPage() {
   return (
     <div className={styles.agentTestingPage}>
       <AgentTestingHeader
+        agentKind={agentKind}
+        setAgentKind={setAgentKind}
+        agentKindLocked={chatMutation.isPending}
         hitlEnabled={hitlEnabled}
         setHitlEnabled={setHitlEnabled}
         connections={connections}

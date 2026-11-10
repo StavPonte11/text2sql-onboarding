@@ -11,8 +11,6 @@ from langfuse import observe
 
 mcp = FastMCP("Text2SQL Agent")
 
-DEEP_THREAD_PREFIX = "deep-"  # Deep Agent thread ids, so a thread is never resumed on the wrong agent
-
 
 @mcp.tool()
 @observe()
@@ -45,9 +43,6 @@ async def chat_with_agent(
                         for this invocation only.
         hitl_enabled:   If False, skip all human-in-the-loop interrupts.
     """
-    if thread_id and thread_id.startswith(DEEP_THREAD_PREFIX):
-        return json.dumps({"error": f"Thread '{thread_id}' belongs to the Deep Agent — continue it with the deep_agent tool."})
-
     thread_id = thread_id or str(uuid.uuid4())
     
     langfuse_handler = None
@@ -231,20 +226,18 @@ async def deep_agent(
 ) -> str:
     """Run the Deep Agent to answer a question about the connection's data.
 
-    Returns the same response shape as chat_with_agent, plus engine / verification / executed /
+    Returns the same response shape as chat_with_agent, plus verification / executed /
     semantic_validation / confidence.
 
     Args:
         connection_id:  The connection whose catalog the agent answers against.
         query:          The natural language question (a new thread).
-        thread_id:      Continue a Deep Agent thread (ids start with 'deep-'); omit to start a new one.
+        thread_id:      Continue a Deep Agent thread; omit to start a new one.
         resume_value:   The user's answer to a clarifying question (a string or {"feedback": ...}).
         hitl_enabled:   If False, a clarifying question comes back as the completed answer instead of a pause.
         user_id:        End-user id for tracing.
         timeout_s:      How long the caller waits: the run is cancelled when it expires. Omit for no limit.
     """
-    if thread_id and not thread_id.startswith(DEEP_THREAD_PREFIX):
-        return json.dumps({"error": f"Thread '{thread_id}' belongs to the legacy agent — continue it with chat_with_agent."})
     return json.dumps(await _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id, timeout_s),
                       default=str)
 
@@ -255,7 +248,7 @@ async def _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled
     response = await run_deep_chat(
         connection_id=connection_id,
         query=query,
-        thread_id=thread_id or f"{DEEP_THREAD_PREFIX}{uuid.uuid4()}",
+        thread_id=thread_id or str(uuid.uuid4()),
         resume_value=resume_value,
         user_id=user_id,
         timeout_s=timeout_s,
