@@ -429,37 +429,3 @@ async def trino_exec_node(state: AgentState, config: RunnableConfig | None = Non
             if inline_result_rows
             else "[]",
         }
-
-def build_refiner_schema_context(state: AgentState) -> str:
-    """Build a token-capped schema context for the refiner.
-
-    Trims the table_profiles blob so repeated LLM calls in the retry loop
-    don't blow up the context window or token budget:
-      • Limits tables to REFINER_SCHEMA_CONTEXT_TABLES (default 4).
-      • Strips sample_values from every column — they're useful for query
-        planning but add noise when fixing a syntax/schema error.
-      • Uses compact JSON (no indent) to reduce token count further.
-
-    Falls back to the raw schema_plan string when table_profiles is absent.
-    """
-    table_profiles = state.get("table_profiles")
-    if table_profiles:
-        max_tables = settings.REFINER_SCHEMA_CONTEXT_TABLES
-        capped = table_profiles[:max_tables]
-
-        trimmed = []
-        for profile in capped:
-            slim_cols = [
-                {k: v for k, v in col.items() if k != "sample_values"}
-                for col in profile.get("columns", [])
-            ]
-            trimmed.append({**profile, "columns": slim_cols})
-
-        return json.dumps(trimmed, ensure_ascii=False)
-
-    schema_plan = state.get("schema_plan")
-    if schema_plan:
-        # Fallback: flat schema/plan string used by the composer
-        return schema_plan
-
-    return "No schema context available."
