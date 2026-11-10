@@ -305,6 +305,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       score: number;
                       status: string;
                       failure_type: string | null;
+                      scores?: Record<string, number> | null;
                     }) => (
                       <div
                         key={q.question_id}
@@ -340,16 +341,21 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         </div>
                         <div
                           className="question-item__score"
+                          title="Time shift score"
                           style={{
                             color:
                               q.status === 'pending'
                                 ? '#f59e0b'
-                                : q.score >= 0.5
-                                  ? '#10b981'
-                                  : '#ef4444',
+                                : scoreColor(q.scores?.time_shift ?? null),
                           }}
                         >
-                          {q.status === 'pending' ? '—' : q.score >= 0.5 ? '100%' : '0%'}
+                          {q.status === 'pending'
+                            ? '—'
+                            : !q.scores
+                              ? '—'
+                              : q.scores.time_shift == null
+                                ? 'N/A'
+                                : `${Math.round(q.scores.time_shift * 100)}%`}
                         </div>
                         {q.status === 'pending' && (
                           <span

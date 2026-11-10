@@ -351,6 +351,8 @@ class EvalResult(SQLModel, table=True):
     score: float = Field(default=0.0)
     status: str  # "pass" | "fail"
     error_type: str | None = None
+    # evaluator name → score for the evaluators that could judge this question
+    scores: dict[str, float] | None = Field(default=None, sa_column=Column(JSON))
 
 
 class EvalResultRead(SQLModel):
@@ -360,6 +362,7 @@ class EvalResultRead(SQLModel):
     score: float
     status: str
     error_type: str | None
+    scores: dict[str, float] | None = None
 
 
 class UserScope(SQLModel, table=True):

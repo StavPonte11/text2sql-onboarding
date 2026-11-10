@@ -112,6 +112,15 @@ describe('finished run details', () => {
         score: 0,
         status: 'fail',
         failure_type: null,
+        scores: { contains_accuracy: 0, time_shift: 0.75 },
+      },
+      {
+        question_id: 'q2',
+        question: 'Top customers?',
+        score: 1,
+        status: 'pass',
+        failure_type: null,
+        scores: { contains_accuracy: 1 },
       },
     ],
   };
@@ -189,13 +198,15 @@ describe('finished run details', () => {
 
     await user.click(await screen.findByText('AdventureWorksDW'));
     expect(await screen.findByText('143.2 min')).toBeInTheDocument();
+    expect(screen.getByText('75%')).toBeInTheDocument(); // q1's time shift, not its 0 contains
+    expect(screen.getAllByText('N/A')).toHaveLength(1); // q2 has no time shift score
 
     await user.click(await screen.findByRole('button', { name: /How many orders/ }));
 
     expect(await screen.findByText('Question Result')).toBeInTheDocument();
     expect(screen.getByText('contains accuracy')).toBeInTheDocument();
     expect(screen.getByText('generated sql execution failed')).toBeInTheDocument();
-    expect(screen.getByText('N/A')).toBeInTheDocument();
+    expect(screen.getAllByText('N/A')).toHaveLength(2); // q2's row and the popup's time shift
     expect(screen.getByText('order_total')).toBeInTheDocument();
     expect(screen.getByText('42')).toBeInTheDocument();
     expect(screen.getByText('Schema does not exist')).toBeInTheDocument();

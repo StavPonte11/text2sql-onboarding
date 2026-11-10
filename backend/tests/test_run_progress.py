@@ -59,3 +59,21 @@ def test_report_and_run_list_show_progress_while_running(client, db_session):
 
     runs = client.get("/api/evaluations/runs", params={"connection_id": run.connection_id}).json()
     assert runs[0]["completed_questions"] == 1
+
+
+def test_each_result_keeps_its_scores_for_the_report(client, db_session):
+    run, (q0, q1, _) = _connection_run(db_session)
+    save_case_results(
+        run.id,
+        [
+            {"question_id": q0.id, "scores": {"contains_accuracy": 1.0, "time_shift": 0.5}},
+            {"question_id": q1.id, "scores": {"contains_accuracy": 0.0}},  # time shift N/A
+        ],
+        db_session,
+    )
+    db_session.commit()
+
+    report = client.get(f"/api/evaluations/runs/{run.id}/report").json()
+    scores = {q["question_id"]: q["scores"] for q in report["per_question"]}
+    assert scores[q0.id] == {"contains_accuracy": 1.0, "time_shift": 0.5}
+    assert scores[q1.id] == {"contains_accuracy": 0.0}

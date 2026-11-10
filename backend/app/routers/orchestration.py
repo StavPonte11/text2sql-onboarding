@@ -1001,6 +1001,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "score": None if is_running else 0.0,
                 "status": "pending" if is_running else "fail",
                 "failure_type": None if is_running else err_msg,
+                "scores": None,
             }
             for q in fallback_questions
         ]
@@ -1012,6 +1013,8 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "score": r.score,
                 "status": r.status,
                 "failure_type": r.error_type,
+                # None for results saved before scores were kept
+                "scores": r.scores,
             }
             for r in results
         ]
@@ -1029,6 +1032,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                     "score": None,
                     "status": "pending",
                     "failure_type": None,
+                    "scores": None,
                 }
                 for q in _connection_run_questions(run, session)
                 if q.id not in done
