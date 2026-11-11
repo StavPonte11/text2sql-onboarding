@@ -917,7 +917,7 @@ const AgentResultDisplay = ({
 // ----------------------------------------------------------------------
 export function AgentTestingPage() {
   const [query, setQuery] = useState('');
-  const [hitlEnabled, setHitlEnabled] = useState(true);
+  const [hitlEnabled, setHitlEnabled] = useState(false);
   const [agentKind, setAgentKind] = useState<AgentKind>('structured');
   // The agent the current conversation started on: approvals and answers go back to it.
   const [threadAgent, setThreadAgent] = useState<AgentKind>('structured');
