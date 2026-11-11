@@ -15,7 +15,10 @@ from core.models.models import (
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from app.services.jeen_metadata import fetch_jeen_sql_pairs, save_jeen_sql_pair
+from app.services.jeen_metadata import (
+    fetch_jeen_sql_pairs_with_tags,
+    save_jeen_sql_pair,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +147,7 @@ async def list_connection_questions(
 ):
     """List all golden questions for a catalog connection from Jeen metadata."""
     try:
-        jeen_pairs = await fetch_jeen_sql_pairs(connection_id)
+        jeen_pairs = await fetch_jeen_sql_pairs_with_tags(connection_id)
         if jeen_pairs:
             # Sync Jeen pairs into DB for FK integrity and caching
             existing_db_questions = session.exec(
@@ -184,9 +187,15 @@ async def list_connection_questions(
                     results.append(q)
 
             session.commit()
+            tags = {(p.get("question") or "").strip(): p["tags"] for p in jeen_pairs}
             for r in results:
                 session.refresh(r)
-            return results
+            return [
+                GoldenQuestionRead.model_validate(
+                    r, update={"tags": tags.get(r.question.strip(), [])}
+                )
+                for r in results
+            ]
     except Exception as e:
         logger.warning(
             f"[Questions] Jeen metadata fetch failed for connection {connection_id}: {e}"

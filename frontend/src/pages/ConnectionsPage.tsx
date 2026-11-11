@@ -19,11 +19,13 @@ import {
 
 import { agentApi } from '../api/agent';
 import { Spinner } from '../components/common/EvalUI';
+import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import {
   useConnectionQuestions,
   useCreateConnectionQuestion,
   useDeleteConnectionQuestion,
+  useQuestionTagSelection,
   useTriggerConnectionRun,
 } from '../hooks/useEvaluations';
 
@@ -150,6 +152,18 @@ function TablesTab({ connectionId }: { connectionId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+function QuestionTags({ tags }: { tags?: string[] }) {
+  return (
+    <>
+      {(tags ?? []).map((tag) => (
+        <Tag key={tag} color="geekblue">
+          {tag}
+        </Tag>
+      ))}
+    </>
   );
 }
 
@@ -424,6 +438,7 @@ function QuestionsTab({
               <div className="question-card-top">
                 <span className="question-prompt">{q.question}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <QuestionTags tags={q.tags} />
                   <Tag color={DIFF_COLOR[q.difficulty as keyof typeof DIFF_COLOR] ?? 'blue'}>
                     {q.difficulty?.toUpperCase() || 'SIMPLE'}
                   </Tag>
@@ -468,15 +483,18 @@ function QuestionsTab({
 function EvaluationTab({
   connectionId,
   connectionName,
-  questionCount,
+  questions,
 }: {
   connectionId: number;
   connectionName: string;
-  questionCount: number;
+  questions: any[];
 }) {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const triggerMut = useTriggerConnectionRun();
+  const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
+    useQuestionTagSelection<any>(questions);
+  const questionCount = selectedQuestions.length;
 
   const handleLaunch = () => {
     if (questionCount === 0) {
@@ -484,7 +502,7 @@ function EvaluationTab({
       return;
     }
     triggerMut.mutate(
-      { connectionId, connectionName },
+      { connectionId, connectionName, tags: selectedTags },
       {
         onSuccess: (run: any) => {
           message.success(`Evaluation triggered! (Run ID: ${run.id?.slice(0, 8)}…)`);
@@ -508,8 +526,11 @@ function EvaluationTab({
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>Run Evaluation</div>
             <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
-              Evaluates all {questionCount} golden question{questionCount !== 1 ? 's' : ''} for{' '}
-              <strong>{connectionName}</strong>
+              Evaluates{' '}
+              {selectedTags.length
+                ? `${questionCount} of ${questions.length}`
+                : `all ${questionCount}`}{' '}
+              golden question{questionCount !== 1 ? 's' : ''} for <strong>{connectionName}</strong>
             </div>
           </div>
         </div>
@@ -534,7 +555,22 @@ function EvaluationTab({
         </button>
       </div>
 
-      {questionCount === 0 && (
+      <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
+
+      {questionCount > 0 && (
+        <div className="eval-question-list">
+          {selectedQuestions.map((q: any) => (
+            <div key={q.id} className="eval-question-row">
+              <span className="question-prompt">{q.question}</span>
+              <div style={{ display: 'flex', flexShrink: 0 }}>
+                <QuestionTags tags={q.tags} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {questions.length === 0 && (
         <div
           style={{
             padding: '12px 16px',
@@ -841,9 +877,10 @@ export default function ConnectionsPage() {
               )}
               {activeTab === 'evaluation' && (
                 <EvaluationTab
+                  key={activeConnection.connection_id}
                   connectionId={activeConnection.connection_id}
                   connectionName={activeConnection.name}
-                  questionCount={questions.length}
+                  questions={questions}
                 />
               )}
             </>

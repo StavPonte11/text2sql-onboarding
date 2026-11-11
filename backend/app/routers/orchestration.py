@@ -46,7 +46,11 @@ from app.routers.evaluation import (
     execute_single_table_eval,
     save_case_results,
 )
-from app.services.jeen_metadata import fetch_jeen_sql_pairs
+from app.services.eval_question_trace import fetch_question_trace
+from app.services.jeen_metadata import (
+    fetch_jeen_sql_pairs,
+    fetch_jeen_sql_pairs_with_tags,
+)
 from app.services.langfuse_client import langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -323,7 +327,10 @@ def _is_run_cancelled(run_id: str) -> bool:
 
 
 def _run_dataset_pipeline(
-    dataset_name: str, run_id: str, connection_id: int | None = None
+    dataset_name: str,
+    run_id: str,
+    connection_id: int | None = None,
+    question_ids: list[str] | None = None,
 ):
     with Session(engine) as session:
         run = session.get(EvalRun, run_id)
@@ -354,6 +361,8 @@ def _run_dataset_pipeline(
                 "dataset_name": dataset_name,
                 "connection_id": connection_id,
             }
+            if question_ids:
+                req["question_ids"] = question_ids
             saved_question_ids: set[str] = set()
 
             def save_progress(job: dict) -> None:
@@ -598,8 +607,10 @@ async def trigger_connection_run(
     connection_name: str | None = Query(default=None),
     dataset_name: str | None = Query(default=None),
     triggered_by: str = Query(default="user"),
+    tags: list[str] | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
+    """Evaluate a connection's golden questions: those with any of `tags`, or all."""
     if connection_id is None:
         raise HTTPException(
             status_code=400,
@@ -625,9 +636,13 @@ async def trigger_connection_run(
 
     # 1. Fetch all golden questions for this connection from Jeen metadata
     questions: list[GoldenQuestion] = []
+    tags_by_question: dict[str, list[str]] = {}
     try:
-        jeen_pairs = await fetch_jeen_sql_pairs(conn_id)
+        jeen_pairs = await fetch_jeen_sql_pairs_with_tags(conn_id)
         if jeen_pairs:
+            tags_by_question = {
+                (p.get("question") or "").strip(): p["tags"] for p in jeen_pairs
+            }
             existing_db_questions = session.exec(
                 select(GoldenQuestion).where(GoldenQuestion.connection_id == conn_id)
             ).all()
@@ -675,7 +690,23 @@ async def trigger_connection_run(
             detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
         )
 
-    # 2. Sync to Langfuse dataset if available
+    selected_tags = list(dict.fromkeys(t for t in tags or [] if t)) or None
+    selected = questions
+    if selected_tags:
+        selected = [
+            q
+            for q in questions
+            if set(tags_by_question.get(q.question.strip(), [])) & set(selected_tags)
+        ]
+        if not selected:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No golden questions of Connection {conn_id} have the tags: {', '.join(selected_tags)}.",
+            )
+    question_ids = [q.id for q in selected] if selected_tags else None
+
+    # 2. Sync to Langfuse dataset if available. The dataset always holds all of
+    # the connection's questions; a tag-filtered run picks some by id.
     if questions and langfuse_client.enabled:
         payload = [
             {
@@ -703,11 +734,13 @@ async def trigger_connection_run(
     # 3. Create run record
     run = EvalRun(
         table_id=None,
-        total_questions=len(questions),
+        total_questions=len(selected),
         triggered_by=trig_by,
         connection_id=conn_id,
         connection_name=conn_name,
         dataset_id=ds_name,
+        question_tags=selected_tags,
+        question_ids=question_ids,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -715,7 +748,9 @@ async def trigger_connection_run(
     session.refresh(run)
 
     # 4. Queue background evaluation pipeline
-    background_tasks.add_task(_run_dataset_pipeline, ds_name, run.id, conn_id)
+    background_tasks.add_task(
+        _run_dataset_pipeline, ds_name, run.id, conn_id, question_ids
+    )
 
     display_title = (
         f"Connection: {conn_name} (ID {conn_id})"
@@ -866,6 +901,65 @@ def stop_eval_run(run_id: str, session: Session = Depends(get_session)):
     )
 
 
+def _connection_run_questions(run: EvalRun, session: Session) -> list[GoldenQuestion]:
+    """The golden questions a connection run covers (its tag selection, or all)."""
+    query = select(GoldenQuestion).where(
+        GoldenQuestion.connection_id == run.connection_id
+    )
+    if run.question_ids:
+        query = query.where(GoldenQuestion.id.in_(run.question_ids))
+    return list(session.exec(query).all())
+
+
+@router.get("/runs/{run_id}/questions/{question_id}")
+def get_run_question(
+    run_id: str, question_id: str, session: Session = Depends(get_session)
+):
+    """One question's result in a run, with everything Langfuse recorded for it."""
+    run = session.get(EvalRun, run_id)
+    question = session.get(GoldenQuestion, question_id)
+    if not run or not question:
+        raise HTTPException(status_code=404, detail="Question result not found")
+    result = session.exec(
+        select(EvalResult).where(
+            EvalResult.run_id == run_id, EvalResult.question_id == question_id
+        )
+    ).first()
+
+    trace = None
+    trace_unavailable_reason = None
+    if not langfuse_client.enabled:
+        trace_unavailable_reason = "Langfuse is not configured."
+    else:
+        try:
+            trace = fetch_question_trace(
+                question_id, run.started_at, run.completed_at or datetime.now()
+            )
+            if trace is None:
+                trace_unavailable_reason = (
+                    "Langfuse has no record of this question in this run yet."
+                )
+        except requests.RequestException as e:
+            logger.warning(
+                f"[Eval] Langfuse read failed for question {question_id}: {e}"
+            )
+            trace_unavailable_reason = (
+                "Could not read this question's details from Langfuse."
+            )
+
+    return {
+        "run_id": run_id,
+        "question_id": question_id,
+        "question": question.question,
+        "expected_sql": question.expected_sql,
+        "score": result.score if result else None,
+        "status": result.status if result else None,
+        "failure_type": result.error_type if result else None,
+        "trace": trace,
+        "trace_unavailable_reason": trace_unavailable_reason,
+    }
+
+
 @router.get("/runs/{run_id}/report")
 def get_run_report(run_id: str, session: Session = Depends(get_session)):
     """Full structured report — matches the evaluation_pipeline.md format."""
@@ -893,11 +987,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 select(GoldenQuestion).where(GoldenQuestion.table_id == run.table_id)
             ).all()
         else:
-            fallback_questions = session.exec(
-                select(GoldenQuestion).where(
-                    GoldenQuestion.connection_id == run.connection_id
-                )
-            ).all()
+            fallback_questions = _connection_run_questions(run, session)
         is_running = run.status == EvalStatus.running
         err_msg = (
             (run.failure_breakdown or {}).get("error_message")
@@ -911,6 +1001,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "score": None if is_running else 0.0,
                 "status": "pending" if is_running else "fail",
                 "failure_type": None if is_running else err_msg,
+                "scores": None,
             }
             for q in fallback_questions
         ]
@@ -922,6 +1013,8 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "score": r.score,
                 "status": r.status,
                 "failure_type": r.error_type,
+                # None for results saved before scores were kept
+                "scores": r.scores,
             }
             for r in results
         ]
@@ -939,12 +1032,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                     "score": None,
                     "status": "pending",
                     "failure_type": None,
+                    "scores": None,
                 }
-                for q in session.exec(
-                    select(GoldenQuestion).where(
-                        GoldenQuestion.connection_id == run.connection_id
-                    )
-                ).all()
+                for q in _connection_run_questions(run, session)
                 if q.id not in done
             ]
 

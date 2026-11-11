@@ -140,6 +140,8 @@ class GoldenQuestionRead(SQLModel):
     connection_id: int | None = None
     table_id: str | None = None
     coverage_tags: list[str] | None = None
+    # Jeen metadata tags (filled for connection questions)
+    tags: list[str] = []
     created_at: datetime
 
 
@@ -171,6 +173,9 @@ class EvalRun(SQLModel, table=True):
     total_questions: int = Field(default=0)
     duration_seconds: float | None = None
     triggered_by: str = Field(default="user")  # "user" | "scheduler" | "system"
+    # Set when the run covers only the questions with these Jeen tags
+    question_tags: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    question_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -208,6 +213,7 @@ class EvalRunRead(SQLModel):
     created_at: datetime
     # Questions with a result so far (filled for running runs)
     completed_questions: int | None = None
+    question_tags: list[str] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,6 +351,8 @@ class EvalResult(SQLModel, table=True):
     score: float = Field(default=0.0)
     status: str  # "pass" | "fail"
     error_type: str | None = None
+    # evaluator name → score for the evaluators that could judge this question
+    scores: dict[str, float] | None = Field(default=None, sa_column=Column(JSON))
 
 
 class EvalResultRead(SQLModel):
@@ -354,6 +362,7 @@ class EvalResultRead(SQLModel):
     score: float
     status: str
     error_type: str | None
+    scores: dict[str, float] | None = None
 
 
 class UserScope(SQLModel, table=True):
