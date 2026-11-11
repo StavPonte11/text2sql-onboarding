@@ -431,3 +431,36 @@ def test_notes_reach_the_reviewer():
                  "rows": [[1]], "row_count": 1, "truncated": False}]
     text = review_request([QUESTION], "SELECT a FROM t ORDER BY b DESC LIMIT 1", [], executed)
     assert "## Notes on this answer" in text and "LIMIT 1" in text
+
+
+@pytest.mark.asyncio
+async def test_each_agents_generations_link_its_own_langfuse_prompt(scripted_model):
+    """Through the real Langfuse CallbackHandler (exported to memory): the reviewer runs inside the main agent's run,
+    yet its generation must link the validator prompt and the main agent's generations the system prompt."""
+    from langfuse import Langfuse
+    from langfuse.langchain import CallbackHandler
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from deep_agent import observability
+    from deep_agent.prompts.registry import LoadedPrompt
+
+    exporter = InMemorySpanExporter()
+    langfuse = Langfuse(public_key="pk-lf-unit-test-prompt-links", secret_key="sk-lf-unit-test-prompt-links", host="http://127.0.0.1:9",
+                        span_exporter=exporter, flush_at=1, flush_interval=0.01)
+    served = {key: LoadedPrompt(key, f"{key} prompt", "langfuse", 1,
+                                SimpleNamespace(name=f"text2sql/deep_agent/{key}", version=1, is_fallback=False))
+              for key in ("system", "validator")}
+    main = scripted_model(_execute(), _review(), _submit())
+    with patch("deep_agent.agent.load_prompt", lambda key: served[key]), \
+         patch("deep_agent.validator.reviewer.load_prompt", lambda key: served[key]):
+        agent = create_deep_agent(model=main, semantic_validation="always", validator_model=scripted_model(_verdict("pass")))
+    with patch.object(observability, "_langfuse_handler", return_value=CallbackHandler(public_key="pk-lf-unit-test-prompt-links")), \
+         _fake_trino():
+        await agent.ainvoke({"messages": [("user", QUESTION)]}, observability.build_run_config("links", tracing=True))
+    langfuse.flush()
+
+    generations = [s for s in exporter.get_finished_spans()
+                   if s.attributes.get("langfuse.observation.type") == "generation"]
+    linked = [s.attributes.get("langfuse.observation.prompt.name") for s in generations]
+    assert linked.count("text2sql/deep_agent/validator") == 1       # the reviewer's one call
+    assert linked.count("text2sql/deep_agent/system") == len(linked) - 1  # every other call is the main agent's

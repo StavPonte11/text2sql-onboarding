@@ -116,6 +116,12 @@ Every deep-agent run is **one Langfuse trace** built by `deep_agent.observabilit
 
 In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disable tracing with `DEEP_AGENT_TRACING_ENABLED=false`.
 
+**Prompts** are served from Langfuse — `text2sql/deep_agent/system` and `text2sql/deep_agent/validator`, by label
+`DEEP_AGENT_PROMPT_LABEL` (default `production`) — and each trace links to the prompt version it used. A label move
+takes effect from the next request, no redeploy. The packaged `prompts/*.md` are the fallback when Langfuse is
+unreachable or has no such prompt; `DEEP_AGENT_LANGFUSE_PROMPTS=false` always uses them. After editing the `.md` files,
+push them as a new version: `uv run python scripts/sync_deep_agent_prompts.py --label staging`.
+
 ### Serving the deep agent
 
 The agent service exposes one MCP tool per agent, each with only its own arguments, and the backend one endpoint per tool:

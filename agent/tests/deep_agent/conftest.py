@@ -72,6 +72,14 @@ def no_semantic_validation(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def packaged_prompts(monkeypatch):
+    """Prompts come from the packaged .md files; tests that cover Langfuse prompts turn it on explicitly."""
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_LANGFUSE_PROMPTS", False)
+
+
+@pytest.fixture(autouse=True)
 def fake_catalog(monkeypatch):
     """Every agent run loads the connection's catalog (CatalogMiddleware); never hit the real Jeen service in tests.
 

@@ -19,7 +19,7 @@ from deep_agent.answer.schema import TOOL_NAME, answer_schema, submission_strate
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware
 from deep_agent.middleware.catalog import CatalogMiddleware
 from deep_agent.middleware.tool_filter import BuiltinToolFilterMiddleware
-from deep_agent.prompts.registry import load_prompt, local_prompt
+from deep_agent.prompts.registry import PromptLinkMiddleware, load_prompt, local_prompt
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
 from deep_agent.validator.modes import ON_DEMAND_PROMPT, REVIEW_PROMPT, ReviewTurnMiddleware, validator_subagent
@@ -73,7 +73,8 @@ def create_deep_agent(
     review_required = mode == "always"            # submit needs a validator pass
     has_reviewer = mode in ("always", "on_demand")  # the semantic-validator subagent is available
     review_prompt = {"always": REVIEW_PROMPT, "on_demand": ON_DEMAND_PROMPT}.get(mode, "")
-    system_prompt = load_prompt("system").text + (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
+    served = load_prompt("system")
+    system_prompt = served.text + (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
     subagents = [_general_purpose_subagent()]
     if has_reviewer:
         subagents.append(validator_subagent(validator_model or llm, mode))
@@ -86,6 +87,7 @@ def create_deep_agent(
         middleware=[
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
+            PromptLinkMiddleware(served),
             *submit_fallback(TOOL_NAME),
             AnswerVerificationMiddleware(has_reviewer),
             *([ReviewTurnMiddleware()] if has_reviewer else []),

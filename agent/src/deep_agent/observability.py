@@ -79,14 +79,8 @@ def build_run_config(
     }
     if user_id:
         metadata["langfuse_user_id"] = user_id
-    if handlers:
-        from deep_agent.prompts.registry import load_prompt
-
-        prompt = load_prompt("system")
-        if prompt.client is not None:
-            metadata["langfuse_prompt"] = prompt.client  # links generations to the served prompt version
-        metadata["prompt_source"] = prompt.source
-        metadata["prompt_version"] = prompt.version
+    # Each generation is linked to its own agent's prompt version by PromptLinkMiddleware (main agent: system,
+    # reviewer: validator) — not here, where it would apply to every nested agent's calls.
 
     return RunnableConfig(
         configurable={"thread_id": thread_id},

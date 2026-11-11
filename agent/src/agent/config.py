@@ -62,8 +62,9 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_STRICT_SUBMIT: bool = False
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
-    # Prompts (see deep_agent/prompts/registry.py). Off until the prompts are finalised and synced to Langfuse.
-    DEEP_AGENT_LANGFUSE_PROMPTS: bool = False      # serve text2sql/deep_agent/<name> prompts from Langfuse (packaged .md fallback)
+    # Prompts (see deep_agent/prompts/registry.py): Langfuse is the source of truth; the packaged .md files are the
+    # fallback when Langfuse is unreachable or has no such prompt. Set false to always use the packaged files.
+    DEEP_AGENT_LANGFUSE_PROMPTS: bool = True       # serve text2sql/deep_agent/<name> prompts from Langfuse
     DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
     DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
     # Serving (see deep_agent/service.py)

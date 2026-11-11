@@ -160,17 +160,6 @@ async def test_a_run_keeps_the_prompt_it_started_with(scripted_model, langfuse_e
     assert "Skills System" in prompts[0]
 
 
-def test_run_config_links_generations_to_the_prompt_version(langfuse_enabled):
-    client = _served("x", version=7)
-    with patch.object(observability, "_langfuse_handler", return_value=object()), \
-         patch.object(prompt_registry, "load_prompt",
-                      return_value=prompt_registry.LoadedPrompt("system", "x", "langfuse", 7, client)):
-        config = observability.build_run_config("t", tracing=True)
-    assert config["metadata"]["langfuse_prompt"] is client
-    assert config["metadata"]["prompt_version"] == 7
-    assert config["metadata"]["prompt_source"] == "langfuse"
-
-
 def test_sync_script_pushes_every_prompt_with_label():
     import importlib.util
     from pathlib import Path

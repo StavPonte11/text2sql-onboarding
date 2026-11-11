@@ -15,9 +15,14 @@ keeps the prompt it started with. Push the packaged prompts with
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.runnables.config import ensure_config
 
 from agent.config import settings
 
@@ -80,3 +85,37 @@ def load_prompt(key: str) -> LoadedPrompt:
         return _miss(key, local)
     _misses.pop(key, None)
     return LoadedPrompt(key, client.prompt, "langfuse", getattr(client, "version", None), client)
+
+
+class PromptLinkMiddleware(AgentMiddleware):
+    """Link this agent's model calls to the Langfuse prompt version it was built with.
+
+    Langfuse's LangChain handler takes a prompt from the `langfuse_prompt` metadata of a *chain* run and gives it to
+    the nearest generation below. So each model call runs inside a small chain step carrying this agent's prompt —
+    the reviewer's calls get the validator prompt even though they run inside the main agent's run.
+    """
+
+    def __init__(self, prompt: LoadedPrompt) -> None:
+        super().__init__()
+        self.prompt = prompt
+
+    def _config(self) -> RunnableConfig:
+        metadata = {**(ensure_config().get("metadata") or {}), "langfuse_prompt": self.prompt.client,
+                    "prompt_source": self.prompt.source, "prompt_version": self.prompt.version}
+        return {"metadata": metadata, "run_name": f"prompt:{self.prompt.key}"}
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+        if self.prompt.client is None:  # packaged prompt: nothing in Langfuse to link to
+            return handler(request)
+        return RunnableLambda(lambda _: handler(request)).invoke(None, self._config())
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        if self.prompt.client is None:
+            return await handler(request)
+
+        async def call(_):
+            return await handler(request)
+
+        return await RunnableLambda(call).ainvoke(None, self._config())
