@@ -62,8 +62,12 @@ def build_run_config(
     connection_id: int | None = None,
     callbacks: list[BaseCallbackHandler] | None = None,
     tracing: bool | None = None,
+    mode: str | None = None,
 ) -> RunnableConfig:
-    """RunnableConfig for one deep-agent invocation: one Langfuse trace per run, grouped by thread."""
+    """RunnableConfig for one deep-agent invocation: one Langfuse trace per run, grouped by thread.
+
+    Training-mode runs (mode, else DEEP_AGENT_MODE) are tagged `training`, so they don't mix with real usage.
+    """
     handlers = list(callbacks or [])
     if tracing if tracing is not None else settings.DEEP_AGENT_TRACING_ENABLED:
         handler = _langfuse_handler()
@@ -72,7 +76,7 @@ def build_run_config(
 
     metadata: dict[str, Any] = {
         "langfuse_session_id": thread_id,
-        "langfuse_tags": [AGENT_NAME],
+        "langfuse_tags": [AGENT_NAME, *(["training"] if (mode or settings.DEEP_AGENT_MODE) == "training" else [])],
         "agent": AGENT_NAME,
         "agent_version": agent_version(),
         "connection_id": connection_id if connection_id is not None else settings.JEEN_METADATA_CONNECTION_ID,

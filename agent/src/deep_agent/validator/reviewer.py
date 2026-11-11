@@ -241,7 +241,7 @@ def build_validator(model: BaseChatModel):
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
             PromptLinkMiddleware(served),
-            *submit_fallback(VERDICT_TOOL),
+            *submit_fallback(VERDICT_TOOL),  # the reviewer is environment, not policy: fallback in both modes
             ReviewRecordMiddleware(),
         ],
         response_format=submission_strategy(SubmitVerdict),

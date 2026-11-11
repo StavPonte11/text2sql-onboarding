@@ -23,6 +23,7 @@ from deep_agent.answer.verification import normalize_sql, validation_summary
 from deep_agent.observability import run_metrics
 from deep_agent.tools import sql as sql_tools
 from deep_agent.validator.reviewer import SubmitVerdict, parse_brief, review_request
+from tests.deep_agent.conftest import system_text
 
 SQL = "SELECT COUNT(*) AS n FROM orders WHERE status = 'shipped'"
 FIXED = "SELECT COUNT(DISTINCT order_id) AS n FROM orders WHERE status = 'shipped'"
@@ -66,8 +67,8 @@ def _verdict(verdict, issues=(), call_id="v1"):
     return _call("submit_verdict", {"verdict": verdict, "issues": list(issues)}, call_id)
 
 
-async def _run(main, reviewer=None, mode="always", question=QUESTION, thread="t"):
-    agent = create_deep_agent(model=main, semantic_validation=mode, validator_model=reviewer)
+async def _run(main, reviewer=None, mode="always", question=QUESTION, thread="t", run_mode=None, **kwargs):
+    agent = create_deep_agent(model=main, semantic_validation=mode, validator_model=reviewer, mode=run_mode, **kwargs)
     with _fake_trino():
         return await agent.ainvoke({"messages": [("user", question)]}, {"configurable": {"thread_id": thread}})
 
@@ -214,11 +215,8 @@ ANSWER_AS_TEXT = json.dumps({"sql": SQL, "explanation_he": "x", "confidence": "h
 
 
 @pytest.mark.asyncio
-async def test_strict_submit_has_no_recovery_or_reminder(scripted_model, monkeypatch):
-    from agent.config import settings
-
-    monkeypatch.setattr(settings, "DEEP_AGENT_STRICT_SUBMIT", True)
-    state = await _run(scripted_model(_execute(), AIMessage(ANSWER_AS_TEXT)), mode="off")
+async def test_training_mode_has_no_recovery_or_reminder(scripted_model):
+    state = await _run(scripted_model(_execute(), AIMessage(ANSWER_AS_TEXT)), mode="off", run_mode="training")
     assert state["final_result"]["status"] == "no_answer"
     assert not [m for m in state["messages"] if getattr(m, "name", None) == "submit_reminder"]
 
@@ -273,8 +271,9 @@ def test_validation_response_only_exists_when_review_is_required():
 def test_defaults():
     from agent.config import AgentSettings
 
-    assert AgentSettings.model_fields["DEEP_AGENT_SEMANTIC_VALIDATION"].default == "always"
-    assert AgentSettings.model_fields["DEEP_AGENT_STRICT_SUBMIT"].default is False
+    assert AgentSettings.model_fields["DEEP_AGENT_MODE"].default == "serving"
+    assert AgentSettings.model_fields["DEEP_AGENT_SEMANTIC_VALIDATION"].default is None  # by mode
+    assert "DEEP_AGENT_STRICT_SUBMIT" not in AgentSettings.model_fields                  # replaced by the mode
 
 
 def test_summary_looks_at_the_review_of_the_final_sql():
@@ -321,7 +320,7 @@ async def test_on_demand_offers_the_reviewer_but_submit_only_needs_a_run(scripte
     assert _submit_results(state) == [ANSWER_RECEIVED]
     review = state["final_result"]["semantic_validation"]
     assert review["verdict"] == "not_validated" and review["reason"] == "no review of the final SQL"
-    assert "worth it before submit_answer" in _texts(main.seen[0]) or "semantic-validator" in _texts(main.seen[0])
+    assert "## Before you submit (required)" in _texts(main.seen[0])  # the same instructions as `always`
 
 
 @pytest.mark.asyncio
@@ -464,3 +463,64 @@ async def test_each_agents_generations_link_its_own_langfuse_prompt(scripted_mod
     linked = [s.attributes.get("langfuse.observation.prompt.name") for s in generations]
     assert linked.count("text2sql/deep_agent/validator") == 1       # the reviewer's one call
     assert linked.count("text2sql/deep_agent/system") == len(linked) - 1  # every other call is the main agent's
+
+
+# ── run modes (deep_agent.run_mode) ──────────────────────────────────────────
+
+@pytest.mark.parametrize("mode, explicit, expected", [
+    ("serving", None, "always"), ("training", None, "on_demand"),
+    ("serving", "off", "off"), ("training", "off", "off"), ("training", "always", "always"),
+])
+def test_reviewer_setting_follows_the_mode_unless_set(mode, explicit, expected):
+    from deep_agent.run_mode import validation_for
+
+    assert validation_for(mode, explicit) == expected
+
+
+@pytest.mark.asyncio
+async def test_training_offers_the_reviewer_on_demand_by_default(scripted_model, monkeypatch):
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_SEMANTIC_VALIDATION", None)  # by mode
+    serving = await _run(scripted_model(_execute(), _submit(), AIMessage("done"), AIMessage("done")), mode=None,
+                         thread="s")
+    training = await _run(scripted_model(_execute(), _submit()), scripted_model(), mode=None, run_mode="training",
+                          thread="t")
+    assert _submit_results(serving)[0] == NOT_REVIEWED          # serving: the reviewer is required
+    assert _submit_results(training) == [ANSWER_RECEIVED]       # training: the model may skip it
+
+
+@pytest.mark.asyncio
+async def test_submit_requires_a_run_in_training_too(scripted_model):
+    state = await _run(scripted_model(_submit(), _execute(), _submit(call_id="s2")), mode="off", run_mode="training")
+    assert _submit_results(state) == [NOT_RUN, ANSWER_RECEIVED]  # feedback, then accepted
+    assert state["final_result"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_serving_and_training_show_the_model_the_same_prompt_and_tools(scripted_model, monkeypatch):
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_SEMANTIC_VALIDATION", None)  # each mode's default reviewer setting
+    worlds = {}
+    for run_mode in ("serving", "training"):
+        main = scripted_model(_execute(), _review(), _submit())
+        await _run(main, scripted_model(_verdict("pass")), mode=None, run_mode=run_mode, thread=run_mode)
+        worlds[run_mode] = (system_text(main.seen[0]), main.bound_tools[0])
+    assert worlds["serving"] == worlds["training"]
+
+
+@pytest.mark.asyncio
+async def test_training_ends_with_no_answer_after_the_model_call_bound(scripted_model):
+    main = scripted_model(*[_execute(call_id=f"e{i}") for i in range(10)])
+    state = await _run(main, mode="off", run_mode="training", max_model_calls=3)
+    assert len(main.seen) == 3
+    assert state["final_result"]["status"] == "no_answer"
+
+
+def test_training_runs_are_tagged():
+    from deep_agent.observability import build_run_config
+
+    assert build_run_config("t", mode="training", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent", "training"]
+    assert build_run_config("t", mode="serving", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent"]
+

@@ -9,6 +9,7 @@ is added to every model call by CatalogMiddleware (deep_agent.middleware.catalog
 
 from deepagents import create_deep_agent as create_harness_agent
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, DEFAULT_SUBAGENT_PROMPT
+from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -22,7 +23,8 @@ from deep_agent.middleware.tool_filter import BuiltinToolFilterMiddleware
 from deep_agent.prompts.registry import PromptLinkMiddleware, load_prompt, local_prompt
 from deep_agent.resources import build_resources
 from deep_agent.tools import DEEP_AGENT_TOOLS
-from deep_agent.validator.modes import ON_DEMAND_PROMPT, REVIEW_PROMPT, ReviewTurnMiddleware, validator_subagent
+from deep_agent.run_mode import AgentMode, validation_for
+from deep_agent.validator.modes import REVIEW_PROMPT, ReviewTurnMiddleware, validator_subagent
 from deep_agent.validator.reviewer import ValidationMode
 
 # Packaged system prompt (the Langfuse-managed version, when enabled, is loaded per agent build; the service rebuilds when it changes).
@@ -50,6 +52,8 @@ def create_deep_agent(
     checkpointer=None,
     semantic_validation: ValidationMode | None = None,
     validator_model: BaseChatModel | None = None,
+    mode: AgentMode | None = None,
+    max_model_calls: int | None = None,
 ):
     """
     Creates and returns a compiled LangGraph deep agent.
@@ -61,23 +65,29 @@ def create_deep_agent(
         model: Chat model override (tests); defaults to the configured LLM.
         clarifications_enabled: Override DEEP_AGENT_CLARIFICATIONS_ENABLED (tests).
         checkpointer: Thread persistence (e.g. AsyncPostgresSaver); defaults to an in-memory saver.
-        semantic_validation: Override DEEP_AGENT_SEMANTIC_VALIDATION: always | on_demand | off (tests).
-        validator_model: Model for the independent reviewer; defaults to the agent's model.
+        semantic_validation: Override DEEP_AGENT_SEMANTIC_VALIDATION: always | on_demand | off; default by mode.
+        validator_model: Model for the independent reviewer; defaults to the agent's model. In training mode use a
+            fixed model, not the policy being trained (it would learn to fool its own reviewer).
+        mode: serving | training (deep_agent.run_mode); defaults to DEEP_AGENT_MODE.
+        max_model_calls: Training only — model calls per run before it ends with no answer; defaults to
+            DEEP_AGENT_TRAINING_MAX_MODEL_CALLS.
     """
     if clarifications_enabled is None:
         clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED
-    mode = semantic_validation or settings.DEEP_AGENT_SEMANTIC_VALIDATION
+    run_mode = mode or settings.DEEP_AGENT_MODE
+    training = run_mode == "training"
+    validation = validation_for(run_mode, semantic_validation or settings.DEEP_AGENT_SEMANTIC_VALIDATION)
     llm = model or get_llm()
     memory = checkpointer or MemorySaver()
     resources = build_resources()
-    review_required = mode == "always"            # submit needs a validator pass
-    has_reviewer = mode in ("always", "on_demand")  # the semantic-validator subagent is available
-    review_prompt = {"always": REVIEW_PROMPT, "on_demand": ON_DEMAND_PROMPT}.get(mode, "")
+    review_required = validation == "always"            # submit needs a validator pass
+    has_reviewer = validation in ("always", "on_demand")  # the semantic-validator subagent is available
+    review_prompt = REVIEW_PROMPT if has_reviewer else ""  # the same instructions in serving and training
     served = load_prompt("system")
     system_prompt = served.text + (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
     subagents = [_general_purpose_subagent()]
     if has_reviewer:
-        subagents.append(validator_subagent(validator_model or llm, mode))
+        subagents.append(validator_subagent(validator_model or llm))
 
     agent = create_harness_agent(
         model=llm,
@@ -88,13 +98,15 @@ def create_deep_agent(
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
             PromptLinkMiddleware(served),
-            *submit_fallback(TOOL_NAME),
+            *submit_fallback(TOOL_NAME, strict=training),
+            *([ModelCallLimitMiddleware(run_limit=max_model_calls or settings.DEEP_AGENT_TRAINING_MAX_MODEL_CALLS,
+                                        exit_behavior="end")] if training else []),
             AnswerVerificationMiddleware(has_reviewer),
             *([ReviewTurnMiddleware()] if has_reviewer else []),
             SubmitApprovalMiddleware(review_required, settings.DEEP_AGENT_VALIDATOR_MAX_ROUNDS),
             BuiltinToolFilterMiddleware(),
         ],
-        response_format=submission_strategy(answer_schema(clarifications_enabled, review_required)),
+        response_format=submission_strategy(answer_schema(clarifications_enabled, has_reviewer)),
         context_schema=DeepAgentContext,
         checkpointer=memory,
         backend=resources.backend,

@@ -88,9 +88,17 @@ with `validation_response` (recorded as disputed and shown to the user).
 
 | Setting | Default | |
 |---|---|---|
-| `DEEP_AGENT_SEMANTIC_VALIDATION` | `always` | `on_demand` = the reviewer is offered and the agent decides whether to call it; `off` = no reviewer. In both, only approval 1 is required |
+| `DEEP_AGENT_MODE` | `serving` | `training` = an RL environment (below). Also `create_deep_agent(mode=...)`; not exposed on the MCP tool |
+| `DEEP_AGENT_SEMANTIC_VALIDATION` | by mode | `always` (serving default); `on_demand` (training default) = the reviewer is offered and the agent decides whether to call it; `off` = no reviewer. In the last two only approval 1 is required. An explicit value wins in either mode |
 | `DEEP_AGENT_VALIDATOR_MAX_ROUNDS` | none | optional: after this many reviews in a turn, an unreviewed SQL is accepted as `not_validated` |
-| `DEEP_AGENT_STRICT_SUBMIT` | `false` | `true` = no recovery of answers written as text and no reminder: a model that doesn't call `submit_answer` ends without an answer |
+| `DEEP_AGENT_TRAINING_MAX_MODEL_CALLS` | `30` | training only: model calls per run, then it ends with no answer (`create_deep_agent(max_model_calls=...)`) |
+
+**Run modes** (`deep_agent/run_mode.py`). *Serving* adds guardrails so today's model answers reliably: the reviewer is
+required, an answer written as text is recovered, and a model that stops without submitting is reminded. *Training*
+only observes: the reviewer is on demand, no recovery or reminder (no `submit_answer` = no answer), a model-call bound,
+and traces tagged `training`. The prompt, tools, `submit_answer` schema and the "this SQL must have run" check are the
+same in both, so a policy trained in one carries over to the other. In training, give the reviewer a fixed
+`validator_model`, not the policy being trained.
 
 The response's `semantic_validation` reports the review of the **final** SQL: `verdict` (`passed` / `disputed` /
 `not_validated`), `rounds`, `issues`, `reviewed_final_sql`. Langfuse gets `validation_rounds` and, when the final SQL

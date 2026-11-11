@@ -3,7 +3,7 @@ Middleware around the final answer:
 
 - AnswerRecoveryMiddleware      answer written as JSON text instead of a submit_answer call -> the real call
 - SubmitReminderMiddleware      the model stopped without its submit call -> one reminder per turn
-                                (these two are the submit fallback; off with DEEP_AGENT_STRICT_SUBMIT)
+                                (these two are the submit fallback; off in training mode)
 - SubmitApprovalMiddleware      submit_answer is accepted only for SQL that ran this turn and that the
                                 semantic-validator passed (or that the agent disputes); it checks records, it
                                 doesn't judge
@@ -23,7 +23,6 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
-from agent.config import settings
 from deep_agent.answer.schema import ANSWER_RECEIVED, last_submission
 from deep_agent.answer.verification import match_execution, normalize_sql, validation_summary, verify_answer
 from deep_agent.context import REMINDER_NAME, current_turn
@@ -127,9 +126,9 @@ class SubmitReminderMiddleware(AgentMiddleware):
         return self.after_model(state, runtime)
 
 
-def submit_fallback(tool_name: str) -> list[AgentMiddleware]:
-    """Recovery + reminder for a model that doesn't call its submit tool — none with DEEP_AGENT_STRICT_SUBMIT."""
-    if settings.DEEP_AGENT_STRICT_SUBMIT:
+def submit_fallback(tool_name: str, strict: bool = False) -> list[AgentMiddleware]:
+    """Recovery + reminder for a model that doesn't call its submit tool — none when strict (training mode)."""
+    if strict:
         return []
     return [AnswerRecoveryMiddleware(), SubmitReminderMiddleware(tool_name)]
 
