@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { evalApi, healthApi } from '../api/client';
@@ -45,13 +46,21 @@ export function useTriggerConnectionRun() {
       connectionName,
       datasetName,
       triggeredBy,
+      tags,
     }: {
       connectionId: number;
       connectionName?: string;
       datasetName?: string;
       triggeredBy?: string;
+      tags?: string[];
     }) =>
-      orchestrationApi.triggerConnectionRun(connectionId, connectionName, datasetName, triggeredBy),
+      orchestrationApi.triggerConnectionRun(
+        connectionId,
+        connectionName,
+        datasetName,
+        triggeredBy,
+        tags,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },
@@ -72,6 +81,31 @@ export function useStopEvalRun() {
 }
 
 // ── Connection golden questions hooks ────────────────────────────────────────
+/** Which questions a tag selection covers: any selected tag, or all when none is selected */
+export function useQuestionTagSelection<Q extends { tags?: string[] }>(questions: Q[]) {
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  const tagOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    questions.forEach((q) =>
+      (q.tags ?? []).forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1)),
+    );
+    return Array.from(counts, ([tag, count]) => ({ value: tag, label: `${tag} (${count})` })).sort(
+      (a, b) => a.value.localeCompare(b.value),
+    );
+  }, [questions]);
+
+  const selectedQuestions = useMemo(
+    () =>
+      selectedTags.length
+        ? questions.filter((q) => q.tags?.some((tag) => selectedTags.includes(tag)))
+        : questions,
+    [questions, selectedTags],
+  );
+
+  return { selectedTags, setSelectedTags, tagOptions, selectedQuestions };
+}
+
 export function useConnectionQuestions(connectionId: number | undefined) {
   return useQuery({
     queryKey: ['connection_questions', connectionId],

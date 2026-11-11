@@ -74,6 +74,8 @@ async def fetch_jeen_knowledge_questions(
             if first.type != "text":
                 return []
             data = json.loads(first.text)
+            if isinstance(data, dict):
+                return data.get("questions") or data.get("knowledge_questions") or []
             return data if isinstance(data, list) else []
     except Exception as e:
         logger.error(
@@ -81,6 +83,54 @@ async def fetch_jeen_knowledge_questions(
             exc_info=True,
         )
         raise
+
+
+def _normalized_tags(raw: Any) -> list[str]:
+    """Tags as a list of names, whether Jeen sent names, objects or a comma list."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, list):
+        return []
+    names = [
+        (tag.get("name") or tag.get("tag") or tag.get("label"))
+        if isinstance(tag, dict)
+        else tag
+        for tag in raw
+    ]
+    return list(dict.fromkeys(str(n).strip() for n in names if n and str(n).strip()))
+
+
+def _question_key(item: dict[str, Any]) -> str:
+    return (item.get("question") or "").strip()
+
+
+async def fetch_jeen_sql_pairs_with_tags(connection_id: int) -> list[dict[str, Any]]:
+    """
+    The connection's SQL pairs, each with a normalized "tags" list. Tags missing
+    from get_sql_pairs are taken from list_knowledge_questions (same question text);
+    if that fails the pairs are still returned, without those tags.
+    """
+    pairs = await fetch_jeen_sql_pairs(connection_id)
+    knowledge_tags: dict[str, list[str]] = {}
+    if pairs and any(pair.get("tags") is None for pair in pairs):
+        try:
+            knowledge_tags = {
+                _question_key(item): _normalized_tags(item.get("tags"))
+                for item in await fetch_jeen_knowledge_questions(connection_id)
+            }
+        except Exception as e:
+            logger.warning(
+                f"[JeenMetadata] No knowledge-question tags for connection {connection_id}: {e}"
+            )
+    return [
+        {
+            **pair,
+            "tags": knowledge_tags.get(_question_key(pair), [])
+            if pair.get("tags") is None
+            else _normalized_tags(pair["tags"]),
+        }
+        for pair in pairs
+    ]
 
 
 async def save_jeen_sql_pair(

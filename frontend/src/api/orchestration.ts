@@ -15,6 +15,8 @@ export interface EvalRunFull {
   total_questions: number;
   /** Questions with a result so far (set while the run is in progress) */
   completed_questions?: number | null;
+  /** Set when the run covers only the questions with these tags */
+  question_tags?: string[] | null;
   duration_seconds: number | null;
   triggered_by: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
@@ -155,6 +157,55 @@ export interface SystemHealth {
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
+export interface QuestionSqlRun {
+  sql: string | null;
+  execution_time_ms: number | null;
+  success?: boolean;
+  columns?: string[];
+  rows?: unknown[][];
+  row_count?: number;
+  error?: string | null;
+  truncated?: boolean;
+  total_rows?: number;
+  truncated_by_executor?: boolean;
+}
+
+export interface QuestionScore {
+  name: string;
+  value: number | null;
+  passed: boolean | null;
+  applicable: boolean;
+  error: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface QuestionTrace {
+  trace_id: string;
+  langfuse_url: string;
+  succeeded: boolean | null;
+  error: string | null;
+  generated_sql: string | null;
+  executed_generated_sql: string | null;
+  expected_sql: string | null;
+  agent_status: string | null;
+  expected_run: QuestionSqlRun | null;
+  generated_run: QuestionSqlRun | null;
+  scores: QuestionScore[];
+  metadata: Record<string, unknown>;
+}
+
+export interface QuestionResultDetail {
+  run_id: string;
+  question_id: string;
+  question: string;
+  expected_sql: string | null;
+  score: number | null;
+  status: string | null;
+  failure_type: string | null;
+  trace: QuestionTrace | null;
+  trace_unavailable_reason: string | null;
+}
+
 export const orchestrationApi = {
   // Runs
   triggerConnectionRun: (
@@ -162,6 +213,7 @@ export const orchestrationApi = {
     connection_name?: string,
     dataset_name?: string,
     triggered_by = 'user',
+    tags?: string[],
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -170,7 +222,10 @@ export const orchestrationApi = {
           ...(connection_name ? { connection_name } : {}),
           ...(dataset_name ? { dataset_name } : {}),
           triggered_by,
+          ...(tags?.length ? { tags } : {}),
         },
+        // FastAPI reads repeated keys: tags=a&tags=b
+        paramsSerializer: { indexes: null },
       })
       .then((r) => r.data),
 
@@ -234,6 +289,11 @@ export const orchestrationApi = {
 
   getRunReport: (run_id: string) =>
     api.get(`/evaluations/runs/${run_id}/report`).then((r) => r.data),
+
+  getRunQuestion: (run_id: string, question_id: string) =>
+    api
+      .get<QuestionResultDetail>(`/evaluations/runs/${run_id}/questions/${question_id}`)
+      .then((r) => r.data),
 
   getRegressionDiff: (run_id: string) =>
     api.get<RegressionDiff>(`/eval/${run_id}/regression-diff`).then((r) => r.data),

@@ -285,6 +285,13 @@ class LangfuseDatasetService:
                 f"[LangfuseDatasetService] Langfuse disabled — skipping sync of '{dataset_name}'"
             )
             return None
+        if not questions:
+            # An empty list almost always means fetching the questions failed;
+            # syncing it would delete every item. clear_dataset() empties on purpose.
+            self.logger.warning(
+                f"[LangfuseDatasetService] No questions given — not syncing '{dataset_name}'"
+            )
+            return None
 
         # Ensure the dataset exists (no-op if it already does).
         try:
@@ -355,6 +362,9 @@ class LangfuseDatasetService:
                     "langfuse_id": item["id"],
                     "question_text": inp_q.strip(),
                     "expected_sql": exp_sql.strip(),
+                    # Items once also stored the SQL under "response"
+                    "legacy_output": isinstance(exp_out, dict)
+                    and set(exp_out) != {"sql"},
                 }
 
         # Build lookup for desired state: question_id → question dict
@@ -381,10 +391,15 @@ class LangfuseDatasetService:
                 or desired_sql != existing["expected_sql"]
             ):
                 to_update.add(qid)
+        # Same question, old expected-output shape: rewritten under the same id
+        to_reshape = {
+            qid for qid in to_check - to_update if existing_by_qid[qid]["legacy_output"]
+        }
 
         self.logger.info(
             f"[LangfuseDatasetService] Syncing '{dataset_name}': "
             f"+{len(to_add)} new, ~{len(to_update)} updated, "
+            f"{len(to_reshape)} reshaped, "
             f"-{len(to_remove)} stale  (total desired={len(desired_qids)})"
         )
 
@@ -414,7 +429,7 @@ class LangfuseDatasetService:
                 )
 
         # ── Create new + re-create updated items ───────────────────────────────
-        items_to_create = to_add | to_update
+        items_to_create = to_add | to_update | to_reshape
         for qid in items_to_create:
             q = desired_by_qid[qid]
             sql_str = _waf_safe_sql(q.get("expected_sql") or "")
@@ -426,7 +441,7 @@ class LangfuseDatasetService:
                     "connection_id": q.get("connection_id"),
                     "databases": [q.get("schema_name", q.get("table_id", ""))],
                 },
-                "expected_output": {"sql": sql_str, "response": sql_str},
+                "expected_output": {"sql": sql_str},
                 "metadata": {
                     "split": q.get("split", ""),
                     "difficulty": str(q.get("difficulty", "")).lower().strip(),
