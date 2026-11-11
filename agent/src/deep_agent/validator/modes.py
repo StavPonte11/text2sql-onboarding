@@ -30,7 +30,7 @@ _HOW_TO_SEND = (
     "the SQL in a ```sql block, and your interpretation choices as a list of lines starting with '- '. Nothing else "
     "is read: the reviewer gets the user's messages and this SQL's result rows itself."
 )
-VALIDATOR_DESCRIPTION = "Independent reviewer — required before submit_answer. " + _HOW_TO_SEND
+VALIDATOR_DESCRIPTION = "Independent reviewer — call it before submit_answer. " + _HOW_TO_SEND
 
 # Appended to the main system prompt whenever the reviewer exists.
 REVIEW_PROMPT = """
