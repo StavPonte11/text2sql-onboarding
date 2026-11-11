@@ -40,7 +40,7 @@ REVIEW_PROMPT = """
 2. Ask the `semantic-validator` to review it: `task` with subagent_type `semantic-validator`, the SQL in a ```sql block and your assumptions as `- ` lines.
 3. Pass → call `submit_answer` with exactly that SQL (any change needs a new review). Fail → fix the SQL and repeat 1–2; if you are sure the reviewer is wrong, you may submit the same SQL with `validation_response` explaining why. Needs check → run exactly the checks it names with `execute_trino_query`, then ask for review again (it sees their results).
 
-`submit_answer` is refused for SQL that hasn't run, or that the reviewer hasn't passed.
+`submit_answer` is refused for SQL that hasn't run successfully in this turn.
 """
 
 class ReviewTurnMiddleware(AgentMiddleware):
