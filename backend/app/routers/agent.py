@@ -56,6 +56,7 @@ class ChatRequest(BaseModel):
     execution_mode: str | None = None
     hitl_enabled: bool = True
     connection_id: int
+    model: str | None = None  # one of GET /models; None = the agent's defaults
 
 
 class DeepChatRequest(BaseModel):
@@ -66,6 +67,13 @@ class DeepChatRequest(BaseModel):
     resume_value: QueryApproval | str | dict | None = None
     hitl_enabled: bool = True
     connection_id: int
+    model: str | None = None  # one of GET /models — the agent and its reviewer; None = the default
+
+
+class ModelsResponse(BaseModel):
+    models: list[str]                # what the agent's LLM endpoint serves (its /models)
+    default: str | None = None       # used when no model is chosen
+    list_error: str | None = None    # the endpoint couldn't be listed; the default still works
 
 
 class SuggestFixesRequest(BaseModel):
@@ -122,6 +130,16 @@ async def _get_jeen_mcp_client():
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             yield session
+
+
+def _http_exception_in(group: BaseExceptionGroup) -> HTTPException | None:
+    """The HTTPException raised inside the MCP client's (possibly nested) task groups, if any."""
+    for exc in group.exceptions:
+        if isinstance(exc, HTTPException):
+            return exc
+        if isinstance(exc, BaseExceptionGroup) and (found := _http_exception_in(exc)):
+            return found
+    return None
 
 
 async def _call_agent_mcp(tool_name: str, tool_arguments: dict) -> dict:
@@ -183,9 +201,7 @@ async def _call_agent_mcp(tool_name: str, tool_arguments: dict) -> dict:
     except HTTPException:
         raise
     except BaseExceptionGroup as eg:
-        http_exc = next(
-            (e for e in eg.exceptions if isinstance(e, HTTPException)), None
-        )
+        http_exc = _http_exception_in(eg)
         if http_exc:
             raise http_exc
         logger.error(f"MCP client error: {eg}", exc_info=True)
@@ -208,6 +224,17 @@ def _resume_payload(resume_value: QueryApproval | str | dict | None) -> str | di
     return resume_value.model_dump() if isinstance(resume_value, QueryApproval) else resume_value
 
 
+def _with_model(arguments: dict, model: str | None) -> dict:
+    """Send `model` only when chosen, so the agent's defaults apply otherwise."""
+    return {**arguments, "model": model} if model else arguments
+
+
+@router.get("/models", response_model=ModelsResponse)
+async def list_models() -> ModelsResponse:
+    """The models the agent can use (read live from its LLM endpoint) and the default — for the model picker."""
+    return ModelsResponse(**await _call_agent_mcp("list_models", {}))
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     """
@@ -219,7 +246,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     The Deep Agent has its own endpoint: POST /deep/chat.
     """
-    result = await _call_agent_mcp("chat_with_agent", {
+    result = await _call_agent_mcp("chat_with_agent", _with_model({
         "query": request.query,
         "thread_id": request.thread_id,
         "resume_value": _resume_payload(request.resume_value),
@@ -228,7 +255,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "extractors": request.extractors,
         "hitl_enabled": request.hitl_enabled,
         "connection_id": request.connection_id,
-    })
+    }, request.model))
     return ChatResponse(**result)
 
 
@@ -240,7 +267,7 @@ async def deep_chat(request: DeepChatRequest) -> ChatResponse:
     - First call: provide `query`.
     - Continue: provide the same `thread_id` + `resume_value` (the user's answer to a clarifying question).
     """
-    result = await _call_agent_mcp("deep_agent", {
+    result = await _call_agent_mcp("deep_agent", _with_model({
         "query": request.query,
         "thread_id": request.thread_id,
         "resume_value": _resume_payload(request.resume_value),
@@ -248,7 +275,7 @@ async def deep_chat(request: DeepChatRequest) -> ChatResponse:
         "connection_id": request.connection_id,
         # the deep agent stops its run then, so its "stopped" reply arrives before we give up
         "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
-    })
+    }, request.model))
     return ChatResponse(**result)
 
 

@@ -48,7 +48,6 @@ from typing import Literal
 from agent.llm import get_llm
 
 # Initialize LLM for rejection routing classification
-llm = get_llm("routing")
 
 
 # ── G2-01: Custom exception ───────────────────────────────────────────────────
@@ -168,7 +167,8 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
     )
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
 
-    structured_llm = llm.with_structured_output(RejectionRoute, method="json_schema")
+    structured_llm = get_llm("routing", runtime_flags=state.get("runtime_flags")).with_structured_output(
+        RejectionRoute, method="json_schema")
     chain = prompt | structured_llm
     try:
         response = chain.invoke({"feedback": feedback})
