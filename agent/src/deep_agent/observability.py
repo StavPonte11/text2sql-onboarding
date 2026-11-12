@@ -1,0 +1,174 @@
+"""
+Langfuse tracing for the Deep Agent.
+
+- build_run_config(): the one RunnableConfig every deep-agent run (CLI and API) uses —
+  Langfuse CallbackHandler + session/user/tags metadata, so a run is exactly one trace.
+- annotate_current_span(): structured metadata on the current tool observation. Only
+  reliable for *sync* tools: LangChain runs the (sync) Langfuse handler for async tools in
+  a copied context, so their span is not current inside the tool. Every tool therefore
+  also carries its telemetry in its envelope output, which Langfuse always records.
+- run_metrics() / score_run(): end-of-run scores on the trace.
+"""
+
+import logging
+import os
+from dataclasses import asdict, dataclass
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any
+
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import BaseMessage
+from langchain_core.runnables import RunnableConfig
+
+from agent.config import settings
+
+logger = logging.getLogger(__name__)
+
+AGENT_NAME = "deep-agent"
+
+
+def agent_version() -> str:
+    """DEEP_AGENT_VERSION (e.g. the git SHA injected at build time), else the package version."""
+    explicit = os.environ.get("DEEP_AGENT_VERSION")
+    if explicit:
+        return explicit
+    try:
+        return version("agent")
+    except PackageNotFoundError:
+        return "dev"
+
+
+def _langfuse_handler() -> BaseCallbackHandler | None:
+    """A Langfuse callback bound to our project's keys.
+
+    The keys live in agent settings (.env), not in the process environment, so a bare
+    CallbackHandler() would start a disabled client unless something else had already created a
+    keyed one (the legacy graph does; the CLI doesn't). Create our client, then bind to its key.
+    """
+    try:
+        import agent.langfuse_client  # noqa: F401 — creates the Langfuse client with settings' keys
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler(public_key=settings.LANGFUSE_PUBLIC_KEY)
+    except Exception as exc:  # tracing must never break a run
+        logger.warning("Langfuse tracing disabled: %s", exc)
+        return None
+
+
+def build_run_config(
+    thread_id: str,
+    *,
+    user_id: str | None = None,
+    connection_id: int | None = None,
+    callbacks: list[BaseCallbackHandler] | None = None,
+    tracing: bool | None = None,
+    mode: str | None = None,
+) -> RunnableConfig:
+    """RunnableConfig for one deep-agent invocation: one Langfuse trace per run, grouped by thread.
+
+    Training-mode runs (mode, else DEEP_AGENT_MODE) are tagged `training`, so they don't mix with real usage.
+    """
+    handlers = list(callbacks or [])
+    if tracing if tracing is not None else settings.DEEP_AGENT_TRACING_ENABLED:
+        handler = _langfuse_handler()
+        if handler is not None:
+            handlers.append(handler)
+
+    metadata: dict[str, Any] = {
+        "langfuse_session_id": thread_id,
+        "langfuse_tags": [AGENT_NAME, *(["training"] if (mode or settings.DEEP_AGENT_MODE) == "training" else [])],
+        "agent": AGENT_NAME,
+        "agent_version": agent_version(),
+        "connection_id": connection_id if connection_id is not None else settings.JEEN_METADATA_CONNECTION_ID,
+    }
+    if user_id:
+        metadata["langfuse_user_id"] = user_id
+    # Each generation is linked to its own agent's prompt version by PromptLinkMiddleware (main agent: system,
+    # reviewer: validator) — not here, where it would apply to every nested agent's calls.
+
+    return RunnableConfig(
+        configurable={"thread_id": thread_id},
+        callbacks=handlers,
+        metadata=metadata,
+        tags=[AGENT_NAME],
+        run_name=AGENT_NAME,
+    )
+
+
+def langfuse_trace_id(config: RunnableConfig) -> str | None:
+    for handler in config.get("callbacks") or []:
+        trace_id = getattr(handler, "last_trace_id", None)
+        if trace_id:
+            return trace_id
+    return None
+
+
+def annotate_current_span(metadata: dict[str, Any], level: str | None = None) -> None:
+    """Best-effort metadata on the current Langfuse observation (no-op without an active span)."""
+    if not settings.DEEP_AGENT_TRACING_ENABLED:
+        return
+    try:
+        from agent.langfuse_client import langfuse_client
+
+        langfuse_client.update_current_span(metadata=metadata, level=level)
+    except Exception as exc:  # telemetry must never break a tool
+        logger.debug("annotate_current_span skipped: %s", exc)
+
+
+_REVIEWED = {"passed", "failed", "disputed"}  # verdicts that judged the final SQL
+
+
+@dataclass(frozen=True)
+class RunMetrics:
+    """Plain counts and timing for one run, plus whether the submitted final SQL actually ran
+    (from the structured-answer verification in deep_agent.answer.verification)."""
+
+    model_calls: int
+    tool_calls: int
+    sql_executions: int
+    latency_s: float
+    final_sql_executed: bool = False  # the submitted final SQL ran and its rows are Trino's (not a correctness check)
+    # Independent review (deep_agent.validator). None -> no score: reviewer off, or the final SQL wasn't reviewed.
+    semantic_validation_passed: bool | None = None
+    validation_rounds: int | None = None  # reviews this turn (0 = the agent didn't ask for one); None = reviewer off
+
+
+def run_metrics(messages: list[BaseMessage], latency_s: float, final_result: dict | None = None) -> RunMetrics:
+    ai = [m for m in messages if m.type == "ai"]
+    review = (final_result or {}).get("semantic_validation") or {}
+    return RunMetrics(
+        model_calls=len(ai),
+        tool_calls=sum(len(getattr(m, "tool_calls", None) or []) for m in ai),
+        sql_executions=sum(1 for m in messages if m.type == "tool" and m.name == "execute_trino_query"),
+        latency_s=round(latency_s, 2),
+        final_sql_executed=bool(final_result and final_result.get("executed")),
+        semantic_validation_passed=(review["verdict"] == "passed") if review.get("verdict") in _REVIEWED else None,
+        validation_rounds=review.get("rounds", 0) if review else None,
+    )
+
+
+def score_run(trace_id: str | None, metrics: RunMetrics) -> None:
+    """Attach run-level scores to the Langfuse trace (no-op without a trace)."""
+    if not trace_id or not settings.DEEP_AGENT_TRACING_ENABLED:
+        return
+    try:
+        from agent.langfuse_client import langfuse_client
+
+        for name, value in asdict(metrics).items():
+            if value is None:
+                continue
+            data_type = "BOOLEAN" if isinstance(value, bool) else "NUMERIC"
+            langfuse_client.create_score(
+                trace_id=trace_id, name=f"{AGENT_NAME}.{name}", value=float(value), data_type=data_type
+            )
+    except Exception as exc:
+        logger.warning("score_run failed for trace %s: %s", trace_id, exc)
+
+
+def flush() -> None:
+    try:
+        from agent.langfuse_client import langfuse_client
+
+        langfuse_client.flush()
+    except Exception as exc:
+        logger.debug("langfuse flush skipped: %s", exc)

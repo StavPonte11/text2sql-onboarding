@@ -1,3 +1,5 @@
+import asyncio
+import functools
 import json
 import uuid
 from mcp.server.fastmcp import FastMCP
@@ -9,11 +11,46 @@ from core.db.engine import engine
 from core.models.models import Table, HttpExtractor, ExtractorStatus
 from langfuse import observe
 
+from agent.config import settings
+from agent.llm import UnknownModelError, available_models, check_model, selected_model
+
 mcp = FastMCP("Text2SQL Agent")
+
+
+def _with_selected_model(tool):
+    """Run the tool with the caller's `model` (checked against LLM_BASE_URL's /models) for every LLM call in it."""
+
+    @functools.wraps(tool)
+    async def wrapper(*args, **kwargs):
+        model = kwargs.get("model")
+        if model:
+            try:
+                await asyncio.to_thread(check_model, model)
+            except UnknownModelError as e:
+                return json.dumps({"error": str(e)})
+        with selected_model(model):
+            return await tool(*args, **kwargs)
+
+    return wrapper
+
+
+@mcp.tool()
+async def list_models() -> str:
+    """The models available at the configured LLM endpoint (for a model picker) and the default model.
+
+    Read live from the endpoint's OpenAI-compatible /models (briefly cached).
+    """
+    try:
+        models = await asyncio.to_thread(available_models)
+    except Exception as e:  # noqa: BLE001 — the picker shows the error; chat still works on the default
+        # not "error": callers treat that as a failed call — here the default model still works
+        return json.dumps({"models": [], "default": settings.LLM_MODEL, "list_error": f"Could not list models: {e}"})
+    return json.dumps({"models": models, "default": settings.LLM_MODEL})
 
 
 @mcp.tool()
 @observe()
+@_with_selected_model
 async def chat_with_agent(
     connection_id: int,
     query: str | None = None,
@@ -25,8 +62,11 @@ async def chat_with_agent(
     active_skills: list[str] | None = None,
     execution_mode: str | None = None,
     hitl_enabled: bool = True,
+    model: str | None = None,
 ) -> str:
-    """Run the Text2SQL agent to answer database queries.
+    """Run the legacy Text2SQL agent (LangGraph workflow) to answer database queries.
+
+    The Deep Agent is a separate tool: `deep_agent`.
 
     Args:
         query:          The natural language question to answer.
@@ -40,6 +80,7 @@ async def chat_with_agent(
                         'high_quality', 'benchmark'). Overrides flag defaults
                         for this invocation only.
         hitl_enabled:   If False, skip all human-in-the-loop interrupts.
+        model:          A model from list_models, used for every LLM call of this request. Omit for the defaults.
     """
     thread_id = thread_id or str(uuid.uuid4())
     
@@ -210,6 +251,59 @@ async def chat_with_agent(
             "is_unanswerable": is_unans,
         }
     )
+
+@mcp.tool()
+@observe()
+@_with_selected_model
+async def deep_agent(
+    connection_id: int,
+    query: str | None = None,
+    thread_id: str | None = None,
+    resume_value: str | dict | None = None,
+    hitl_enabled: bool = True,
+    user_id: str | None = None,
+    timeout_s: float | None = None,
+    model: str | None = None,
+) -> str:
+    """Run the Deep Agent to answer a question about the connection's data.
+
+    Returns the same response shape as chat_with_agent, plus verification / executed /
+    semantic_validation / confidence.
+
+    Args:
+        connection_id:  The connection whose catalog the agent answers against.
+        query:          The natural language question (a new thread).
+        thread_id:      Continue a Deep Agent thread; omit to start a new one.
+        resume_value:   The user's answer to a clarifying question (a string or {"feedback": ...}).
+        hitl_enabled:   If False, a clarifying question comes back as the completed answer instead of a pause.
+        user_id:        End-user id for tracing.
+        timeout_s:      How long the caller waits: the run is cancelled when it expires. Omit for no limit.
+        model:          A model from list_models — the agent and its reviewer. Omit for the default.
+    """
+    return json.dumps(await _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id, timeout_s,
+                                       model), default=str)
+
+
+async def _deep_chat(connection_id, query, thread_id, resume_value, hitl_enabled, user_id, timeout_s=None,
+                     model=None) -> dict:
+    from deep_agent.service import run_deep_chat
+
+    response = await run_deep_chat(
+        connection_id=connection_id,
+        query=query,
+        thread_id=thread_id or str(uuid.uuid4()),
+        resume_value=resume_value,
+        user_id=user_id,
+        timeout_s=timeout_s,
+        model=model,
+    )
+    if not hitl_enabled and response.get("status") == "interrupted":
+        # Non-interactive callers get the clarifying question as the answer instead of a pause.
+        question = (response.get("interrupt_details") or {}).get("reason", "")
+        response = {**response, "status": "completed", "summary": question, "interrupt_details": None,
+                    "is_unanswerable": True}
+    return response
+
 
 @mcp.tool()
 async def suggest_fixes(thread_id: str, category: str) -> str:
