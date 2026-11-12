@@ -29,11 +29,44 @@
   margin: 0;
 }
 
+.headerTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.hitlToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: default;
+}
+
 .controls {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px 36px;
+}
+
+/* equal space on both sides of each divider, so it sits exactly halfway between two settings */
+.controls > .controlItem {
+  padding: 2px 24px;
+}
+
+.controls > .controlItem + .controlItem {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.controls > .controlItem:first-child {
+  padding-left: 0;
+}
+
+.controls > .controlItem:last-child {
+  padding-right: 0;
 }
 
 .controlItem {

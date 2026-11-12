@@ -33,6 +33,7 @@ export interface ChatRequest {
   extractors?: string[];
   hitl_enabled?: boolean;
   connection_id?: number;
+  model?: string;
 }
 
 /** A Deep Agent turn: only the arguments the deep_agent tool takes. */
@@ -42,6 +43,14 @@ export interface DeepChatRequest {
   resume_value?: QueryApproval | string;
   hitl_enabled?: boolean;
   connection_id?: number;
+  model?: string;
+}
+
+/** The models the agent's LLM endpoint serves, and the one used when none is chosen. */
+export interface ModelsResponse {
+  models: string[];
+  default: string | null;
+  list_error?: string | null;
 }
 
 export interface ChatResponse {
@@ -69,6 +78,7 @@ export const agentApi = {
   /** The Deep Agent (deep_agent). */
   deepChat: (payload: DeepChatRequest): Promise<ChatResponse> =>
     api.post<ChatResponse>('/deep/chat', payload).then((r) => r.data),
+  listModels: (): Promise<ModelsResponse> => api.get<ModelsResponse>('/models').then((r) => r.data),
   suggestFixes: async (threadId: string, category: string): Promise<string[]> => {
     const response = await api.post<string[]>('/suggest_fixes', { thread_id: threadId, category });
     return response.data;

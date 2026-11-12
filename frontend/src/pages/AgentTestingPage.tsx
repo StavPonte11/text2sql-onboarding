@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Divider, Input, Modal, Segmented, Select, Space, Spin, Switch, Tag } from 'antd';
+import { Alert, Button, Divider, Input, Modal, Segmented, Select, Space, Spin, Switch, Tag, Tooltip } from 'antd';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -32,7 +32,7 @@ import { agentApi } from '../api/agent';
 import { AgentGraph } from '../components/AgentGraph';
 import { highlightJson, TraceTimeline } from '../components/TraceTimeline';
 
-import type { ChatRequest, ChatResponse } from '../api/agent';
+import type { ChatRequest, ChatResponse, ModelsResponse } from '../api/agent';
 
 /** Which agent answers — each has its own backend endpoint (and MCP tool). */
 type AgentKind = 'structured' | 'deep';
@@ -358,6 +358,9 @@ const AgentTestingHeader = memo(
     agentKind,
     setAgentKind,
     agentKindLocked,
+    modelsInfo,
+    model,
+    setModel,
     hitlEnabled,
     setHitlEnabled,
     connections,
@@ -368,6 +371,9 @@ const AgentTestingHeader = memo(
     agentKind: AgentKind;
     setAgentKind: (v: AgentKind) => void;
     agentKindLocked: boolean;
+    modelsInfo: ModelsResponse | null;
+    model: string | undefined;
+    setModel: (v: string) => void;
     hitlEnabled: boolean;
     setHitlEnabled: (v: boolean) => void;
     connections: any[];
@@ -376,14 +382,23 @@ const AgentTestingHeader = memo(
     loadingConnections: boolean;
   }) => (
     <div className={styles.header}>
-      <div>
-        <h1 className={styles.title}>
-          <Bot size={28} color="var(--accent)" />
-          Text2SQL Agent Sandbox
-        </h1>
-        <p className={styles.subtitle}>
-          Test the agent directly. Toggle human-in-the-loop to approve or reject the agent's work.
-        </p>
+      <div className={styles.headerTop}>
+        <div>
+          <h1 className={styles.title}>
+            <Bot size={28} color="var(--accent)" />
+            Text2SQL Agent Sandbox
+          </h1>
+          <p className={styles.subtitle}>
+            Ask a question about your data in Hebrew or English — the agent finds the right tables, writes and runs
+            the SQL, and explains the answer.
+          </p>
+        </div>
+        <Tooltip title="Pause to approve or reject the agent's work before it continues">
+          <div className={styles.hitlToggle}>
+            <span>Human in the loop</span>
+            <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
+          </div>
+        </Tooltip>
       </div>
       <div className={styles.controls}>
         <div className={styles.controlItem}>
@@ -399,11 +414,27 @@ const AgentTestingHeader = memo(
           />
         </div>
         <div className={styles.controlItem}>
+          <span>Model</span>
+          <Select
+            value={model}
+            onChange={setModel}
+            disabled={agentKindLocked}
+            style={{ width: 190 }}
+            popupMatchSelectWidth={false}
+            loading={modelsInfo === null}
+            status={modelsInfo?.list_error ? 'warning' : undefined}
+            placeholder={modelsInfo?.list_error ? 'Models unavailable — using default' : 'Select model'}
+            title={modelsInfo?.list_error ?? undefined}
+            options={(modelsInfo?.models ?? []).map((m) => ({ value: m, label: m }))}
+          />
+        </div>
+        <div className={styles.controlItem}>
           <span>Catalog</span>
           <Select
             value={selectedConnection}
             onChange={setSelectedConnection}
-            style={{ minWidth: 200 }}
+            style={{ width: 170 }}
+            popupMatchSelectWidth={false}
             placeholder="Select connection"
             loading={loadingConnections}
             options={connections.map((c: any) => ({
@@ -411,10 +442,6 @@ const AgentTestingHeader = memo(
               label: c.name,
             }))}
           />
-        </div>
-        <div className={styles.controlItem}>
-          <span>Human in the Loop</span>
-          <Switch checked={hitlEnabled} onChange={setHitlEnabled} />
         </div>
       </div>
     </div>
@@ -921,9 +948,27 @@ export function AgentTestingPage() {
   const [agentKind, setAgentKind] = useState<AgentKind>('structured');
   // The agent the current conversation started on: approvals and answers go back to it.
   const [threadAgent, setThreadAgent] = useState<AgentKind>('structured');
+  const [modelsInfo, setModelsInfo] = useState<ModelsResponse | null>(null);
+  const [model, setModel] = useState<string | undefined>(undefined);
+  // The model the current conversation started on: approvals and answers use it too.
+  const [threadModel, setThreadModel] = useState<string | undefined>(undefined);
   const [connections, setConnections] = useState<any[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
   const [loadingConnections, setLoadingConnections] = useState(false);
+
+  useEffect(() => {
+    agentApi
+      .listModels()
+      .then((info) => {
+        setModelsInfo(info);
+        if (info.default && info.models.includes(info.default)) setModel(info.default);
+        else if (info.models.length) setModel(info.models[0]);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch models:', err);
+        setModelsInfo({ models: [], default: null, list_error: 'Could not reach the agent' });
+      });
+  }, []);
 
   useEffect(() => {
     setLoadingConnections(true);
@@ -1010,6 +1055,7 @@ export function AgentTestingPage() {
             resume_value: req.resume_value,
             hitl_enabled: req.hitl_enabled,
             connection_id: req.connection_id,
+            model: req.model,
           })
         : agentApi.chat(req),
     onSuccess: (data) => {
@@ -1063,6 +1109,7 @@ export function AgentTestingPage() {
     const newThreadId = uuidv4();
     setThreadId(newThreadId);
     setThreadAgent(agentKind);
+    setThreadModel(model);
     setExecutionPath([]);
     setTraceId(null);
     setSelectedStep(null);
@@ -1077,6 +1124,7 @@ export function AgentTestingPage() {
           thread_id: newThreadId,
           hitl_enabled: hitlEnabled,
           connection_id: selectedConnection,
+          model,
         },
       });
     }, 300);
@@ -1091,6 +1139,7 @@ export function AgentTestingPage() {
           thread_id: threadId,
           resume_value: resumeValue !== undefined ? resumeValue : { approved: true },
           connection_id: selectedConnection,
+          model: threadModel,
         },
       });
     }, 300);
@@ -1106,6 +1155,7 @@ export function AgentTestingPage() {
           resume_value: { approved: false, feedback, rejection_category: category },
           hitl_enabled: hitlEnabled,
           connection_id: selectedConnection,
+          model: threadModel,
         },
       });
     }, 300);
@@ -1163,6 +1213,9 @@ export function AgentTestingPage() {
         agentKind={agentKind}
         setAgentKind={setAgentKind}
         agentKindLocked={chatMutation.isPending}
+        modelsInfo={modelsInfo}
+        model={model}
+        setModel={setModel}
         hitlEnabled={hitlEnabled}
         setHitlEnabled={setHitlEnabled}
         connections={connections}
