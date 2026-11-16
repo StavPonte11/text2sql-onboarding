@@ -21,6 +21,7 @@ import {
 
 import { agentApi } from '../api/agent';
 import { orchestrationApi } from '../api/orchestration';
+import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
@@ -458,6 +459,8 @@ function ConnectionRunPanel({
   const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
     useQuestionTagSelection<any>(questions);
 
+  const [model, setModel] = useState('');
+
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
     setSelectedTags([]);
@@ -473,6 +476,7 @@ function ConnectionRunPanel({
         connectionId: selectedConnection,
         connectionName: activeConn?.name,
         tags: selectedTags,
+        model: model || undefined,
       },
       {
         onSuccess: (run) => {
@@ -622,6 +626,7 @@ function ConnectionRunPanel({
       )}
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
+      <AgentModelSelect value={model} onChange={setModel} />
 
       {/* Main CTA */}
       <button
@@ -933,6 +938,7 @@ function DatasetRunPanel({
   const triggerDatasetMut = useTriggerDatasetRun();
   const { message } = App.useApp();
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
+  const [model, setModel] = useState('');
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -952,6 +958,7 @@ function DatasetRunPanel({
         datasetName,
         connectionId: selectedConnection,
         connectionName: connObj?.name,
+        model: model || undefined,
       },
       {
         onSuccess: (run) => {
@@ -993,6 +1000,10 @@ function DatasetRunPanel({
           </div>
         }
       />
+
+      <div style={{ marginTop: 16 }}>
+        <AgentModelSelect value={model} onChange={setModel} />
+      </div>
 
       <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
         <button

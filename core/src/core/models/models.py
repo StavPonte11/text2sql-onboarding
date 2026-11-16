@@ -176,6 +176,8 @@ class EvalRun(SQLModel, table=True):
     # Set when the run covers only the questions with these Jeen tags
     question_tags: list[str] | None = Field(default=None, sa_column=Column(JSON))
     question_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    # The LLM model the agent used; None = the agent's default
+    agent_model: str | None = None
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -214,6 +216,7 @@ class EvalRunRead(SQLModel):
     # Questions with a result so far (filled for running runs)
     completed_questions: int | None = None
     question_tags: list[str] | None = None
+    agent_model: str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

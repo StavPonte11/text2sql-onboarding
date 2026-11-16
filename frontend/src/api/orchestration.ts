@@ -17,6 +17,8 @@ export interface EvalRunFull {
   completed_questions?: number | null;
   /** Set when the run covers only the questions with these tags */
   question_tags?: string[] | null;
+  /** The LLM model the agent ran with; null = its default */
+  agent_model?: string | null;
   duration_seconds: number | null;
   triggered_by: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
@@ -206,6 +208,13 @@ export interface QuestionResultDetail {
   trace_unavailable_reason: string | null;
 }
 
+/** The models the agent's LLM endpoint serves, and the one used when none is chosen */
+export interface AgentModels {
+  models: string[];
+  default: string | null;
+  list_error?: string | null;
+}
+
 export const orchestrationApi = {
   // Runs
   triggerConnectionRun: (
@@ -214,6 +223,7 @@ export const orchestrationApi = {
     dataset_name?: string,
     triggered_by = 'user',
     tags?: string[],
+    model?: string,
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -223,24 +233,34 @@ export const orchestrationApi = {
           ...(dataset_name ? { dataset_name } : {}),
           triggered_by,
           ...(tags?.length ? { tags } : {}),
+          ...(model ? { model } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },
       })
       .then((r) => r.data),
 
+  /** The LLM models an evaluation can run the agent with */
+  listModels: () => api.get<AgentModels>('/evaluations/models').then((r) => r.data),
+
   triggerRun: (table_ids: string[], triggered_by = 'user') =>
     api
       .post<EvalRunFull[]>('/evaluations/run', table_ids, { params: { triggered_by } })
       .then((r) => r.data),
 
-  triggerDatasetRun: (dataset_name: string, connection_id?: number, connection_name?: string) =>
+  triggerDatasetRun: (
+    dataset_name: string,
+    connection_id?: number,
+    connection_name?: string,
+    model?: string,
+  ) =>
     api
       .post<EvalRunFull>('/evaluations/run-dataset', null, {
         params: {
           dataset_name,
           ...(connection_id !== undefined ? { connection_id } : {}),
           ...(connection_name ? { connection_name } : {}),
+          ...(model ? { model } : {}),
         },
       })
       .then((r) => r.data),

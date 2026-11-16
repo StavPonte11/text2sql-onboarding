@@ -641,6 +641,15 @@ export function RunHistoryTable({
                             {tag}
                           </span>
                         ))}
+                        {run.agent_model && (
+                          <span
+                            className="badge badge--neutral"
+                            style={{ fontSize: 10.5 }}
+                            title="LLM model the agent used"
+                          >
+                            {run.agent_model}
+                          </span>
+                        )}
                       </span>
                     ) : run.table_id ? (
                       <Link

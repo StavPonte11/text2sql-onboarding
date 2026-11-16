@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { agentApi } from '../api/agent';
+import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
@@ -495,6 +496,7 @@ function EvaluationTab({
   const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
     useQuestionTagSelection<any>(questions);
   const questionCount = selectedQuestions.length;
+  const [model, setModel] = useState('');
 
   const handleLaunch = () => {
     if (questionCount === 0) {
@@ -502,7 +504,7 @@ function EvaluationTab({
       return;
     }
     triggerMut.mutate(
-      { connectionId, connectionName, tags: selectedTags },
+      { connectionId, connectionName, tags: selectedTags, model: model || undefined },
       {
         onSuccess: (run: any) => {
           message.success(`Evaluation triggered! (Run ID: ${run.id?.slice(0, 8)}…)`);
@@ -556,6 +558,7 @@ function EvaluationTab({
       </div>
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
+      <AgentModelSelect value={model} onChange={setModel} />
 
       {questionCount > 0 && (
         <div className="eval-question-list">

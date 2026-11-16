@@ -47,12 +47,14 @@ export function useTriggerConnectionRun() {
       datasetName,
       triggeredBy,
       tags,
+      model,
     }: {
       connectionId: number;
       connectionName?: string;
       datasetName?: string;
       triggeredBy?: string;
       tags?: string[];
+      model?: string;
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -60,10 +62,20 @@ export function useTriggerConnectionRun() {
         datasetName,
         triggeredBy,
         tags,
+        model,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },
+  });
+}
+
+// ── The LLM models an evaluation can use ─────────────────────────────────────
+export function useAgentModels() {
+  return useQuery({
+    queryKey: ['agent-models'],
+    queryFn: orchestrationApi.listModels,
+    staleTime: 60_000,
   });
 }
 
@@ -155,11 +167,13 @@ export function useTriggerDatasetRun() {
       datasetName,
       connectionId,
       connectionName,
+      model,
     }: {
       datasetName: string;
       connectionId?: number;
       connectionName?: string;
-    }) => orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName),
+      model?: string;
+    }) => orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName, model),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

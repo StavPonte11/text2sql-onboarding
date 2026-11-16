@@ -46,6 +46,7 @@ from app.routers.evaluation import (
     execute_single_table_eval,
     save_case_results,
 )
+from app.services.agent_models import list_agent_models
 from app.services.eval_question_trace import fetch_question_trace
 from app.services.jeen_metadata import (
     fetch_jeen_sql_pairs,
@@ -363,6 +364,8 @@ def _run_dataset_pipeline(
             }
             if question_ids:
                 req["question_ids"] = question_ids
+            if run.agent_model:
+                req["model"] = run.agent_model
             saved_question_ids: set[str] = set()
 
             def save_progress(job: dict) -> None:
@@ -438,6 +441,7 @@ async def trigger_dataset_run(
     background_tasks: BackgroundTasks,
     connection_id: int | None = Query(default=None),
     connection_name: str | None = Query(default=None),
+    model: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     if connection_id is None:
@@ -577,6 +581,7 @@ async def trigger_dataset_run(
         connection_id=conn_id,
         connection_name=conn_name,
         dataset_id=actual_dataset_to_run,
+        agent_model=model or None,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -600,6 +605,12 @@ async def trigger_dataset_run(
     )
 
 
+@router.get("/models")
+async def list_evaluation_models():
+    """The LLM models an evaluation can run the agent with, and its default."""
+    return await list_agent_models()
+
+
 @router.post("/run-connection", response_model=EvalRunRead, status_code=202)
 async def trigger_connection_run(
     background_tasks: BackgroundTasks,
@@ -608,6 +619,7 @@ async def trigger_connection_run(
     dataset_name: str | None = Query(default=None),
     triggered_by: str = Query(default="user"),
     tags: list[str] | None = Query(default=None),
+    model: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """Evaluate a connection's golden questions: those with any of `tags`, or all."""
@@ -741,6 +753,7 @@ async def trigger_connection_run(
         dataset_id=ds_name,
         question_tags=selected_tags,
         question_ids=question_ids,
+        agent_model=model or None,
         status=EvalStatus.running,
     )
     session.add(run)

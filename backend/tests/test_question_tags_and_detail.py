@@ -48,7 +48,9 @@ def test_run_connection_with_tags_selects_any_matching_question(client, db_sessi
     assert body["question_tags"] == ["validation", "test"]
 
     run = db_session.get(EvalRun, body["id"])
-    selected = {db_session.get(GoldenQuestion, qid).question for qid in run.question_ids}
+    selected = {
+        db_session.get(GoldenQuestion, qid).question for qid in run.question_ids
+    }
     assert selected == {"q0?", "q1?", "q3?"}
     assert pipeline.call_args.args[3] == run.question_ids
 
@@ -91,14 +93,22 @@ async def test_tags_are_normalized_and_filled_from_knowledge_questions():
     ]
     knowledge = [{"question": "c?", "tags": ["from-knowledge"]}]
     with (
-        patch("app.services.jeen_metadata.fetch_jeen_sql_pairs", AsyncMock(return_value=pairs)),
+        patch(
+            "app.services.jeen_metadata.fetch_jeen_sql_pairs",
+            AsyncMock(return_value=pairs),
+        ),
         patch(
             "app.services.jeen_metadata.fetch_jeen_knowledge_questions",
             AsyncMock(return_value=knowledge),
         ),
     ):
         result = await fetch_jeen_sql_pairs_with_tags(1)
-    assert [p["tags"] for p in result] == [["x", "y"], ["m", "n"], ["from-knowledge"], []]
+    assert [p["tags"] for p in result] == [
+        ["x", "y"],
+        ["m", "n"],
+        ["from-knowledge"],
+        [],
+    ]
 
 
 @pytest.mark.asyncio
@@ -123,7 +133,11 @@ SAMPLE = {
     "projectId": "proj",
     "startTime": "2026-10-26T12:50:51Z",
     "name": "eval-sample:q1",
-    "metadata": {"total_latency_ms": 100, "scope": {"name": "sdk"}, "resourceAttributes": {}},
+    "metadata": {
+        "total_latency_ms": 100,
+        "scope": {"name": "sdk"},
+        "resourceAttributes": {},
+    },
     "output": (
         '{"generated_sql": "SELECT 2", "expected_sql": "SELECT 1", "succeeded": false,'
         ' "error": "boom", "evaluations": {'
@@ -141,7 +155,11 @@ CHILDREN = [
         "output": '{"success": true, "columns": ["a"], "rows": [[1]], "row_count": 1}',
         "metadata": {"execution_time_ms": 12.5},
     },
-    {"name": "expected_sql_execution", "parentObservationId": None, "output": '{"wrapper": 1}'},
+    {
+        "name": "expected_sql_execution",
+        "parentObservationId": None,
+        "output": '{"wrapper": 1}',
+    },
     {
         "name": "agent_execution",
         "parentObservationId": "sample",
@@ -165,7 +183,10 @@ def test_fetch_question_trace_collects_runs_scores_and_metadata():
         trace = fetch_question_trace("q1", start, start + timedelta(hours=2))
 
     assert get.call_args_list[0].kwargs["params"]["name"] == "eval-sample:q1"
-    assert get.call_args_list[0].kwargs["params"]["fromStartTime"] == "2026-10-26T12:00:00Z"
+    assert (
+        get.call_args_list[0].kwargs["params"]["fromStartTime"]
+        == "2026-10-26T12:00:00Z"
+    )
     assert trace["langfuse_url"].endswith("/project/proj/traces/trace1")
     assert trace["expected_run"] == {
         "sql": "SELECT 1",
@@ -192,7 +213,9 @@ def test_fetch_question_trace_falls_back_when_v2_is_not_implemented():
     not_implemented.raise_for_status.side_effect = requests.HTTPError(
         response=not_implemented
     )
-    legacy_sample = MagicMock(status_code=200, **{"json.return_value": {"data": [SAMPLE]}})
+    legacy_sample = MagicMock(
+        status_code=200, **{"json.return_value": {"data": [SAMPLE]}}
+    )
     legacy_trace = MagicMock(
         status_code=200,
         **{"json.return_value": {"observations": CHILDREN, "scores": SCORES}},
@@ -224,21 +247,32 @@ def test_fetch_question_trace_retries_when_rate_limited():
     now = datetime(2026, 10, 26, 12, 0)
     with (
         patch("app.services.eval_question_trace.time.sleep"),
-        patch("app.services.eval_question_trace.requests.get", side_effect=[limited, empty]) as get,
+        patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=[limited, empty],
+        ) as get,
     ):
         assert fetch_question_trace("q1", now, now) is None
     assert get.call_count == 2
 
 
 def _finished_question(db_session):
-    question = GoldenQuestion(connection_id=next(_next_connection), question="q?", expected_sql="SELECT 1")
+    question = GoldenQuestion(
+        connection_id=next(_next_connection), question="q?", expected_sql="SELECT 1"
+    )
     run = EvalRun(table_id=None, total_questions=1, status=EvalStatus.completed)
     db_session.add_all([question, run])
     db_session.commit()
     db_session.refresh(question)
     db_session.refresh(run)
     db_session.add(
-        EvalResult(run_id=run.id, question_id=question.id, score=0.0, status="fail", error_type="boom")
+        EvalResult(
+            run_id=run.id,
+            question_id=question.id,
+            score=0.0,
+            status="fail",
+            error_type="boom",
+        )
     )
     db_session.commit()
     return run, question
@@ -251,7 +285,9 @@ def test_question_endpoint_returns_trace(client, db_session):
         patch(f"{ORCH}.fetch_question_trace", return_value={"trace_id": "t"}),
     ):
         langfuse.enabled = True
-        body = client.get(f"/api/evaluations/runs/{run.id}/questions/{question.id}").json()
+        body = client.get(
+            f"/api/evaluations/runs/{run.id}/questions/{question.id}"
+        ).json()
     assert body["question"] == "q?"
     assert body["status"] == "fail"
     assert body["trace"] == {"trace_id": "t"}
@@ -264,7 +300,9 @@ def test_question_endpoint_still_answers_when_langfuse_fails(client, db_session)
     run, question = _finished_question(db_session)
     with (
         patch(f"{ORCH}.langfuse_client") as langfuse,
-        patch(f"{ORCH}.fetch_question_trace", side_effect=requests.ConnectionError("x")),
+        patch(
+            f"{ORCH}.fetch_question_trace", side_effect=requests.ConnectionError("x")
+        ),
     ):
         langfuse.enabled = True
         response = client.get(f"/api/evaluations/runs/{run.id}/questions/{question.id}")
@@ -276,4 +314,108 @@ def test_question_endpoint_still_answers_when_langfuse_fails(client, db_session)
 
 def test_question_endpoint_unknown_question(client, db_session):
     run, _ = _finished_question(db_session)
-    assert client.get(f"/api/evaluations/runs/{run.id}/questions/nope").status_code == 404
+    assert (
+        client.get(f"/api/evaluations/runs/{run.id}/questions/nope").status_code == 404
+    )
+
+
+def test_run_connection_remembers_the_chosen_model(client, db_session, test_engine):
+    response, _ = _run_connection(
+        client, next(_next_connection), _pairs(["a"]), model="gpt-oss:20b"
+    )
+    assert response.status_code == 202
+    assert response.json()["agent_model"] == "gpt-oss:20b"
+
+    # the pipeline asks the evaluation service for that model
+    with (
+        patch(f"{ORCH}.engine", test_engine),
+        patch(
+            f"{ORCH}._call_run_new_evaluation", side_effect=RuntimeError("stop")
+        ) as call,
+    ):
+        from app.routers.orchestration import _run_dataset_pipeline
+
+        _run_dataset_pipeline("ds", response.json()["id"])
+    assert call.call_args.args[0]["model"] == "gpt-oss:20b"
+
+
+def test_run_connection_without_a_model_uses_the_default(client, test_engine):
+    response, _ = _run_connection(client, next(_next_connection), _pairs(["a"]))
+    assert response.json()["agent_model"] is None
+    with (
+        patch(f"{ORCH}.engine", test_engine),
+        patch(
+            f"{ORCH}._call_run_new_evaluation", side_effect=RuntimeError("stop")
+        ) as call,
+    ):
+        from app.routers.orchestration import _run_dataset_pipeline
+
+        _run_dataset_pipeline("ds", response.json()["id"])
+    assert "model" not in call.call_args.args[0]
+
+
+def _agent_session(tool_names, list_result=None):
+    session = MagicMock()
+    session.initialize = AsyncMock()
+    session.list_tools = AsyncMock(
+        return_value=MagicMock(tools=[MagicMock(name=n) for n in tool_names])
+    )
+    for tool, name in zip(
+        session.list_tools.return_value.tools, tool_names, strict=True
+    ):
+        tool.name = name
+    session.call_tool = AsyncMock(
+        return_value=MagicMock(content=[MagicMock(text=list_result)])
+    )
+    return session
+
+
+def _patch_agent(session):
+    class _Ctx:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return (
+        patch(
+            "app.services.agent_models.streamablehttp_client",
+            return_value=_Ctx((None, None, None)),
+        ),
+        patch("app.services.agent_models.ClientSession", return_value=_Ctx(session)),
+    )
+
+
+def test_models_endpoint_lists_the_agents_models(client):
+    session = _agent_session(
+        ["chat_with_agent", "list_models"],
+        '{"models": ["gemma4:e4b", "gpt-oss:20b"], "default": "gemma4:e4b"}',
+    )
+    stream, client_session = _patch_agent(session)
+    with stream, client_session:
+        body = client.get("/api/evaluations/models").json()
+    assert body == {
+        "models": ["gemma4:e4b", "gpt-oss:20b"],
+        "default": "gemma4:e4b",
+        "list_error": None,
+    }
+
+
+def test_models_endpoint_with_an_agent_that_cant_choose(client):
+    stream, client_session = _patch_agent(_agent_session(["chat_with_agent"]))
+    with stream, client_session:
+        body = client.get("/api/evaluations/models").json()
+    assert body["models"] == [] and "default" in body["list_error"]
+
+
+def test_models_endpoint_when_the_agent_is_down(client):
+    with patch(
+        "app.services.agent_models.streamablehttp_client",
+        side_effect=OSError("refused"),
+    ):
+        body = client.get("/api/evaluations/models").json()
+    assert body["models"] == [] and "refused" in body["list_error"]
