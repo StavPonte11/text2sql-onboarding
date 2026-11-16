@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Modal } from 'antd';
-import { CheckCircle2, ExternalLink, MinusCircle, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, ExternalLink, MinusCircle, XCircle } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
 import { ScoreBar, Spinner } from '../common/EvalUI';
@@ -27,6 +28,33 @@ function formatValue(value: unknown): string {
   return typeof value === 'object' && value !== null
     ? JSON.stringify(value, null, 2)
     : String(value);
+}
+
+/** A result as tab-separated text with a header row, which pastes into a spreadsheet */
+function resultAsTsv(columns: string[], rows: unknown[][]): string {
+  const cell = (value: unknown) => formatCell(value).replace(/[\t\n\r]+/g, ' ');
+  return [columns.map(cell), ...rows.map((row) => row.map(cell))]
+    .map((line) => line.join('\t'))
+    .join('\n');
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" className="question-copy" onClick={copy} aria-label={label} title={label}>
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? 'Copied' : label}
+    </button>
+  );
 }
 
 function ScoreRow({ score }: { score: QuestionScore }) {
@@ -100,7 +128,10 @@ function SqlRunPanel({
         )}
       </div>
       {sql ? (
-        <pre className="question-sql__code">{sql}</pre>
+        <div className="question-copyable">
+          <pre className="question-sql__code">{sql}</pre>
+          <CopyButton text={sql} label={`Copy ${title}`} />
+        </div>
       ) : (
         <p className="question-muted">No SQL</p>
       )}
@@ -120,6 +151,12 @@ function SqlRunPanel({
             {run.truncated_by_executor && <span>cut off by the row limit</span>}
           </div>
           {run.error && <pre className="question-error">{run.error}</pre>}
+          {columns.length > 0 && (
+            <CopyButton
+              text={resultAsTsv(columns, rows)}
+              label={`Copy ${title.replace(/ SQL$/, '')} result`}
+            />
+          )}
           {columns.length > 0 && (
             <div className="question-table-wrap">
               <table className="question-table">
@@ -228,7 +265,10 @@ export function QuestionResultModal({
 
       {data && (
         <div className="question-modal__body">
-          <p className="question-modal__question">{data.question}</p>
+          <div className="question-modal__question-row">
+            <p className="question-modal__question">{data.question}</p>
+            <CopyButton text={data.question} label="Copy question" />
+          </div>
           {error && <pre className="question-error">{error}</pre>}
           {data.trace_unavailable_reason && (
             <p className="question-notice">{data.trace_unavailable_reason}</p>

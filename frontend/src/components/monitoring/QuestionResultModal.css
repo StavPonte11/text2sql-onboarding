@@ -271,3 +271,44 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.question-modal__question-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.question-modal__question-row .question-modal__question {
+  flex: 1;
+}
+
+.question-copyable {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.question-copyable .question-sql__code {
+  align-self: stretch;
+}
+
+.question-copy {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.question-copy:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}

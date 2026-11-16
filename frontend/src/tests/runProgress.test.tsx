@@ -198,15 +198,17 @@ describe('finished run details', () => {
 
     await user.click(await screen.findByText('AdventureWorksDW'));
     expect(await screen.findByText('143.2 min')).toBeInTheDocument();
-    expect(screen.getByText('75%')).toBeInTheDocument(); // q1's time shift, not its 0 contains
-    expect(screen.getAllByText('N/A')).toHaveLength(1); // q2 has no time shift score
+    // each row shows its contains accuracy (q1's 75% time shift is not shown)
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.queryByText('75%')).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole('button', { name: /How many orders/ }));
 
     expect(await screen.findByText('Question Result')).toBeInTheDocument();
     expect(screen.getByText('contains accuracy')).toBeInTheDocument();
     expect(screen.getByText('generated sql execution failed')).toBeInTheDocument();
-    expect(screen.getAllByText('N/A')).toHaveLength(2); // q2's row and the popup's time shift
+    expect(screen.getByText('N/A')).toBeInTheDocument(); // the popup's time shift
     expect(screen.getByText('order_total')).toBeInTheDocument();
     expect(screen.getByText('42')).toBeInTheDocument();
     expect(screen.getByText('Schema does not exist')).toBeInTheDocument();
@@ -215,5 +217,17 @@ describe('finished run details', () => {
       'href',
       'https://langfuse.test/project/p/traces/t1',
     );
+
+    // the question, each SQL and the result each copy on their own
+    await user.click(screen.getByRole('button', { name: 'Copy question' }));
+    expect(await navigator.clipboard.readText()).toBe('How many orders?');
+    await user.click(screen.getByRole('button', { name: 'Copy Golden SQL' }));
+    expect(await navigator.clipboard.readText()).toBe('SELECT 1');
+    await user.click(screen.getByRole('button', { name: 'Copy Generated SQL' }));
+    expect(await navigator.clipboard.readText()).toBe('SELECT bad');
+    await user.click(screen.getByRole('button', { name: 'Copy Golden result' }));
+    expect(await navigator.clipboard.readText()).toBe('order_total\n42');
+    // the failed generated run has no table to copy
+    expect(screen.queryByRole('button', { name: 'Copy Generated result' })).not.toBeInTheDocument();
   });
 });

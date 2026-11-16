@@ -36,6 +36,12 @@ const scoreColor = (score: number | null | undefined) =>
 const timeShiftScore = (dims: Record<string, number> | null | undefined): number | null =>
   dims?.time_shift_score ?? null;
 
+/** A question's contains accuracy; older results only have their overall score */
+const questionContains = (q: {
+  score?: number | null;
+  scores?: Record<string, number | null> | null;
+}): number | null => q.scores?.contains_accuracy ?? q.score ?? null;
+
 /** Contains accuracy over the questions finished so far, e.g. "0.40 so far" */
 function liveContainsAccuracy(perQuestion: { status: string }[] | undefined): string {
   const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
@@ -341,21 +347,17 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         </div>
                         <div
                           className="question-item__score"
-                          title="Time shift score"
+                          title="Contains accuracy"
                           style={{
                             color:
-                              q.status === 'pending'
-                                ? '#f59e0b'
-                                : scoreColor(q.scores?.time_shift ?? null),
+                              q.status === 'pending' ? '#f59e0b' : scoreColor(questionContains(q)),
                           }}
                         >
                           {q.status === 'pending'
                             ? '—'
-                            : !q.scores
-                              ? '—'
-                              : q.scores.time_shift == null
-                                ? 'N/A'
-                                : `${Math.round(q.scores.time_shift * 100)}%`}
+                            : questionContains(q) == null
+                              ? 'N/A'
+                              : `${Math.round(questionContains(q)! * 100)}%`}
                         </div>
                         {q.status === 'pending' && (
                           <span
