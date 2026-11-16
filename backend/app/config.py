@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     )
     JEEN_METADATA_CONNECTION_ID: int = 89
 
+    # Bearer key for the read-only /api/export endpoints (scripts outside the
+    # app, which can't sign in with SSO). Empty: those endpoints are off.
+    EVAL_EXPORT_API_KEY: str = ""
+
     APP_ENV: str = "development"
     RUN_SEED: bool = False
     RUN_INFRA_INIT: bool = False

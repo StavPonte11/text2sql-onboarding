@@ -419,3 +419,131 @@ def test_models_endpoint_when_the_agent_is_down(client):
     ):
         body = client.get("/api/evaluations/models").json()
     assert body["models"] == [] and "refused" in body["list_error"]
+
+
+def _finished_run(db_session, count):
+    connection_id = next(_next_connection)
+    run = EvalRun(
+        connection_id=connection_id,
+        status=EvalStatus.completed,
+        total_questions=count,
+        agent_model="gpt-oss:20b",
+    )
+    db_session.add(run)
+    questions = [
+        GoldenQuestion(
+            question=f"export q{i}?",
+            expected_sql=f"SELECT {i}",
+            connection_id=connection_id,
+        )
+        for i in range(count)
+    ]
+    db_session.add_all(questions)
+    db_session.flush()
+    for i, q in enumerate(questions):
+        db_session.add(
+            EvalResult(
+                run_id=run.id,
+                question_id=q.id,
+                score=float(i % 2),
+                status="pass" if i % 2 else "fail",
+                scores={"contains_accuracy": float(i % 2)},
+            )
+        )
+    db_session.commit()
+    return run, questions
+
+
+def _trace_for(question_id, *_):
+    return {
+        "expected_sql": "SELECT 1",
+        "generated_sql": "select 1",
+        "executed_generated_sql": None,
+        "expected_run": {
+            "success": True,
+            "columns": ["n"],
+            "rows": [[1]],
+            "row_count": 1,
+        },
+        "generated_run": {
+            "success": False,
+            "error": "boom",
+            "columns": [],
+            "rows": [],
+            "row_count": 0,
+        },
+        "langfuse_url": f"https://langfuse.test/{question_id}",
+    }
+
+
+def test_results_export_pages_through_a_run(client, db_session):
+    run, questions = _finished_run(db_session, 3)
+    with (
+        patch(f"{ORCH}.langfuse_client") as langfuse,
+        patch(f"{ORCH}.fetch_question_trace", side_effect=_trace_for),
+    ):
+        langfuse.enabled = True
+        first = client.get(
+            f"/api/evaluations/runs/{run.id}/results", params={"limit": 2}
+        )
+        second = client.get(
+            f"/api/evaluations/runs/{run.id}/results",
+            params={"limit": 2, "offset": first.json()["next_offset"]},
+        )
+
+    page = first.json()
+    assert page["total"] == 3 and page["next_offset"] == 2
+    assert page["agent_model"] == "gpt-oss:20b"
+    assert second.json()["next_offset"] is None
+    exported = page["results"] + second.json()["results"]
+    assert sorted(r["question_id"] for r in exported) == sorted(q.id for q in questions)
+
+    row = exported[0]
+    assert row["golden_sql"] == "SELECT 1" and row["generated_sql"] == "select 1"
+    assert row["golden_result"] == {
+        "success": True,
+        "error": None,
+        "columns": ["n"],
+        "rows": [[1]],
+        "row_count": 1,
+        "truncated": False,
+    }
+    assert row["generated_result"]["error"] == "boom"
+    assert row["details_unavailable_reason"] is None
+
+
+def test_results_export_without_langfuse_still_lists_the_questions(client, db_session):
+    run, _ = _finished_run(db_session, 1)
+    with patch(f"{ORCH}.langfuse_client") as langfuse:
+        langfuse.enabled = False
+        row = client.get(f"/api/evaluations/runs/{run.id}/results").json()["results"][0]
+    assert row["golden_sql"] == "SELECT 0"
+    assert row["generated_sql"] is None and row["golden_result"] is None
+    assert row["details_unavailable_reason"] == "Langfuse is not configured."
+
+
+def test_results_export_unknown_run(client):
+    assert client.get("/api/evaluations/runs/nope/results").status_code == 404
+
+
+def test_export_api_needs_its_key(client, db_session):
+    run, _ = _finished_run(db_session, 1)
+    url = f"/api/export/evaluations/runs/{run.id}/results"
+    with patch("app.routers.export.settings.EVAL_EXPORT_API_KEY", ""):
+        assert client.get(url).status_code == 503  # off until a key is set
+    with patch("app.routers.export.settings.EVAL_EXPORT_API_KEY", "secret-key"):
+        assert client.get(url).status_code == 401
+        assert (
+            client.get(url, headers={"Authorization": "Bearer wrong"}).status_code
+            == 401
+        )
+        with patch(f"{ORCH}.langfuse_client") as langfuse:
+            langfuse.enabled = False
+            ok = client.get(url, headers={"Authorization": "Bearer secret-key"})
+            runs = client.get(
+                "/api/export/evaluations/runs",
+                params={"connection_id": run.connection_id},
+                headers={"Authorization": "Bearer secret-key"},
+            )
+    assert ok.status_code == 200 and ok.json()["total"] == 1
+    assert [r["id"] for r in runs.json()] == [run.id]

@@ -924,6 +924,22 @@ def _connection_run_questions(run: EvalRun, session: Session) -> list[GoldenQues
     return list(session.exec(query).all())
 
 
+def _question_trace(run: EvalRun, question_id: str) -> tuple[dict | None, str | None]:
+    """A question's Langfuse record in a run, or why there is none."""
+    if not langfuse_client.enabled:
+        return None, "Langfuse is not configured."
+    try:
+        trace = fetch_question_trace(
+            question_id, run.started_at, run.completed_at or datetime.now()
+        )
+    except requests.RequestException as e:
+        logger.warning(f"[Eval] Langfuse read failed for question {question_id}: {e}")
+        return None, "Could not read this question's details from Langfuse."
+    if trace is None:
+        return None, "Langfuse has no record of this question in this run yet."
+    return trace, None
+
+
 @router.get("/runs/{run_id}/questions/{question_id}")
 def get_run_question(
     run_id: str, question_id: str, session: Session = Depends(get_session)
@@ -938,27 +954,7 @@ def get_run_question(
             EvalResult.run_id == run_id, EvalResult.question_id == question_id
         )
     ).first()
-
-    trace = None
-    trace_unavailable_reason = None
-    if not langfuse_client.enabled:
-        trace_unavailable_reason = "Langfuse is not configured."
-    else:
-        try:
-            trace = fetch_question_trace(
-                question_id, run.started_at, run.completed_at or datetime.now()
-            )
-            if trace is None:
-                trace_unavailable_reason = (
-                    "Langfuse has no record of this question in this run yet."
-                )
-        except requests.RequestException as e:
-            logger.warning(
-                f"[Eval] Langfuse read failed for question {question_id}: {e}"
-            )
-            trace_unavailable_reason = (
-                "Could not read this question's details from Langfuse."
-            )
+    trace, trace_unavailable_reason = _question_trace(run, question_id)
 
     return {
         "run_id": run_id,
@@ -970,6 +966,85 @@ def get_run_question(
         "failure_type": result.error_type if result else None,
         "trace": trace,
         "trace_unavailable_reason": trace_unavailable_reason,
+    }
+
+
+def _sql_result(run: dict | None) -> dict | None:
+    """A query's result rows, without the run's timing details."""
+    if not run:
+        return None
+    return {
+        "success": run.get("success"),
+        "error": run.get("error"),
+        "columns": run.get("columns") or [],
+        "rows": run.get("rows") or [],
+        "row_count": run.get("total_rows", run.get("row_count")),
+        "truncated": bool(run.get("truncated") or run.get("truncated_by_executor")),
+    }
+
+
+@router.get("/runs/{run_id}/results")
+def export_run_results(
+    run_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=50),
+    session: Session = Depends(get_session),
+):
+    """
+    Every finished question of a run with its golden and generated SQL and
+    the rows each returned, a page at a time (for scripts outside the app).
+    Results come from Langfuse, so a page of 10 takes a few seconds; follow
+    next_offset until it is null.
+    """
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    total = len(
+        session.exec(select(EvalResult.id).where(EvalResult.run_id == run_id)).all()
+    )
+    rows = session.exec(
+        select(EvalResult, GoldenQuestion)
+        .join(GoldenQuestion, EvalResult.question_id == GoldenQuestion.id)
+        .where(EvalResult.run_id == run_id)
+        .order_by(EvalResult.question_id)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    results = []
+    for result, question in rows:
+        trace, unavailable = _question_trace(run, question.id)
+        trace = trace or {}
+        results.append(
+            {
+                "question_id": question.id,
+                "question": question.question,
+                "status": result.status,
+                "failure_type": result.error_type,
+                "scores": result.scores or {"contains_accuracy": result.score},
+                "golden_sql": trace.get("expected_sql") or question.expected_sql,
+                "generated_sql": trace.get("generated_sql"),
+                # the generated SQL as it ran, when it was rewritten for the engine
+                "executed_generated_sql": trace.get("executed_generated_sql"),
+                "golden_result": _sql_result(trace.get("expected_run")),
+                "generated_result": _sql_result(trace.get("generated_run")),
+                "langfuse_url": trace.get("langfuse_url"),
+                "details_unavailable_reason": unavailable,
+            }
+        )
+
+    next_offset = offset + len(rows)
+    return {
+        "run_id": run.id,
+        "connection_id": run.connection_id,
+        "connection_name": run.connection_name,
+        "agent_model": run.agent_model,
+        "status": run.status,
+        "started_at": run.started_at,
+        "total": total,
+        "offset": offset,
+        "next_offset": next_offset if next_offset < total else None,
+        "results": results,
     }
 
 
