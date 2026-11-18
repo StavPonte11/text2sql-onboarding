@@ -41,9 +41,14 @@ JEEN_METADATA_PROFILE_TIMEOUT  Per-call timeout in seconds (default 15).
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import json
 import logging
-from typing import Any
+import time
+import weakref
+from datetime import timedelta
+from typing import Any, NoReturn
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -53,9 +58,136 @@ from agent.config import settings
 logger = logging.getLogger(__name__)
 
 
+class JeenMetadataError(RuntimeError):
+    """The MCP server reported an error, or returned a payload of an unexpected shape."""
+
+
+# Read-only metadata tools whose results may be served from the client's TTL cache.
+_CACHEABLE_TOOLS = frozenset({
+    "get_catalog_prompt", "get_tables", "get_columns", "get_relationships", "get_table_profile", "get_column_profile",
+})
+
+
 # ---------------------------------------------------------------------------
 # Low-level MCP call helper
 # ---------------------------------------------------------------------------
+
+class _PersistentSession:
+    """One long-lived MCP ClientSession, owned by a background task.
+
+    anyio requires the transport/session context managers to be entered and exited in the
+    same task, so a dedicated task holds them open; callers in other tasks use
+    `session.call_tool(...)` concurrently (MCP multiplexes requests by id). A broken
+    session is invalidated and transparently re-created on the next call.
+    """
+
+    def __init__(self, url: str, api_key: str, timeout: float) -> None:
+        self._url, self._api_key, self._timeout = url, api_key, timeout
+        self._session: ClientSession | None = None
+        self._task: asyncio.Task | None = None
+        self._ready = asyncio.Event()
+        self._stop = asyncio.Event()
+        self._error: BaseException | None = None
+        self._lock = asyncio.Lock()
+        self.handshakes = 0  # number of initialize() handshakes performed (observability/tests)
+
+    async def get(self) -> ClientSession:
+        async with self._lock:
+            if self._session is None or self._task is None or self._task.done():
+                self._ready, self._stop, self._error = asyncio.Event(), asyncio.Event(), None
+                self._task = asyncio.create_task(self._run(), name="jeen-mcp-session")
+                await asyncio.wait_for(self._ready.wait(), timeout=self._timeout + 5)
+                if self._session is None:
+                    raise JeenMetadataError(f"Could not open MCP session: {self._error}")
+            return self._session
+
+    async def _run(self) -> None:
+        try:
+            async with streamablehttp_client(
+                self._url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=self._timeout,
+                sse_read_timeout=self._timeout + 30,
+            ) as (read, write, _get_session_id):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self.handshakes += 1
+                    self._session = session
+                    self._ready.set()
+                    await self._stop.wait()
+        except BaseException as exc:  # noqa: BLE001 — recorded and surfaced to the caller
+            self._error = exc
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+        finally:
+            self._session = None
+            self._ready.set()
+
+    def invalidate(self) -> None:
+        self._session = None
+        self._stop.set()
+
+    async def close(self) -> None:
+        self._stop.set()
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
+
+
+# One persistent session per (event loop, url, key).
+_sessions: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple[str, str], _PersistentSession]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _persistent_session(url: str, api_key: str, timeout: float) -> _PersistentSession:
+    per_loop = _sessions.setdefault(asyncio.get_running_loop(), {})
+    if (url, api_key) not in per_loop:
+        per_loop[(url, api_key)] = _PersistentSession(url, api_key, timeout)
+    return per_loop[(url, api_key)]
+
+
+async def close_mcp_sessions() -> None:
+    """Close this event loop's persistent MCP sessions (call before the loop shuts down)."""
+    per_loop = _sessions.pop(asyncio.get_running_loop(), {})
+    await asyncio.gather(*(s.close() for s in per_loop.values()), return_exceptions=True)
+
+
+def _parse_tool_result(tool_name: str, result: Any) -> Any:
+    # result.content is a list of ContentBlock objects.
+    # We expect the first (and only) block to be a TextContent.
+    first = result.content[0] if result.content else None
+    text = getattr(first, "text", None)
+
+    if getattr(result, "isError", False):
+        raise JeenMetadataError(f"MCP tool '{tool_name}' failed: {text or 'no error details'}")
+    if text is None:
+        return {}
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+async def _call_with_persistent_session(
+    url: str, api_key: str, tool_name: str, arguments: dict[str, Any], timeout: float
+) -> Any:
+    holder = _persistent_session(url, api_key, timeout)
+    for attempt in (1, 2):
+        session = await holder.get()
+        try:
+            result = await session.call_tool(
+                tool_name, arguments, read_timeout_seconds=timedelta(seconds=timeout)
+            )
+            return _parse_tool_result(tool_name, result)
+        except JeenMetadataError:
+            raise
+        except Exception as exc:
+            holder.invalidate()  # stale/broken session: reconnect once
+            if attempt == 2:
+                raise
+            logger.info("MCP session for %s failed (%s); reconnecting", url, exc)
+
 
 async def _call_mcp_tool(
     url: str,
@@ -65,16 +197,19 @@ async def _call_mcp_tool(
     timeout: float = 15.0,
 ) -> Any:
     """
-    Open an MCP session, run the full initialization handshake, call one
-    tool, and return the parsed payload from the first text content block.
+    Call one MCP tool and return the parsed payload from the first text content block.
 
-    Uses the official Python MCP SDK so the
-    initialize → notifications/initialized → tools/call sequence is handled
-    automatically.  Returns parsed JSON (dict/list) or a raw string if the
+    With JEEN_METADATA_REUSE_SESSION (default) the MCP session is kept open per event loop,
+    so the initialize → notifications/initialized handshake happens once instead of on
+    every call. Otherwise (or if the persistent path cannot be set up) a session is opened
+    for this call only. Uses the official Python MCP SDK, which handles the handshake and
+    both JSON and SSE responses. Returns parsed JSON (dict/list) or a raw string if the
     content block is not JSON.
     """
-    headers = {"Authorization": f"Bearer {api_key}"}
+    if settings.JEEN_METADATA_REUSE_SESSION:
+        return await _call_with_persistent_session(url, api_key, tool_name, arguments, timeout)
 
+    headers = {"Authorization": f"Bearer {api_key}"}
     async with streamablehttp_client(
         url,
         headers=headers,
@@ -85,23 +220,23 @@ async def _call_mcp_tool(
     ) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
-
             result = await session.call_tool(tool_name, arguments)
+    return _parse_tool_result(tool_name, result)
 
-    # result.content is a list of ContentBlock objects.
-    # We expect the first (and only) block to be a TextContent.
-    if not result.content:
-        return {}
 
-    first = result.content[0]
-    text = getattr(first, "text", None)
-    if text is None:
-        return {}
+def _reraise_as_metadata_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, JeenMetadataError):
+        raise exc
+    raise JeenMetadataError(str(exc)) from exc
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return text
+
+def _expect_list(payload: Any, key: str, method: str) -> list[dict[str, Any]]:
+    """Unwrap a list payload (bare or under `key`); anything else is an error, never an empty result."""
+    if isinstance(payload, dict) and key in payload:
+        payload = payload[key]
+    if isinstance(payload, list):
+        return payload
+    raise JeenMetadataError(f"{method} returned unexpected payload: {str(payload)[:300]}")
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +261,8 @@ class JeenMetadataClient:
             getattr(settings, "JEEN_METADATA_SEARCH_LIMIT", settings.HYBRID_SEARCH_MAX_TABLES)
         )
         self._timeout: float = float(getattr(settings, "JEEN_METADATA_PROFILE_TIMEOUT", 15.0))
+        self._cache: dict[tuple[str, str], tuple[float, Any]] = {}
+        self._inflight: dict[tuple[str, str], asyncio.Future] = {}
 
         self.is_configured: bool = bool(
             self._mcp_url and self._mcp_key and self._connection_id
@@ -141,8 +278,35 @@ class JeenMetadataClient:
 
     # ── internal helper ────────────────────────────────────────────────────
 
+    def _cid(self, connection_id: int | None) -> int:
+        """Per-call connection override, falling back to the configured default."""
+        return connection_id if connection_id is not None else self._connection_id
+
     async def _call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        """Thin wrapper so individual methods don't repeat the URL/key/timeout."""
+        """Call an MCP tool; read-only metadata tools are served from a TTL cache (single-flight)."""
+        ttl = settings.JEEN_METADATA_CACHE_TTL_S
+        if tool_name not in _CACHEABLE_TOOLS or ttl <= 0:
+            return await self._call_uncached(tool_name, arguments)
+
+        key = (tool_name, json.dumps(arguments, sort_keys=True, default=str))
+        hit = self._cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return copy.deepcopy(hit[1])
+
+        inflight = self._inflight.get(key)
+        if inflight is None:
+            inflight = asyncio.ensure_future(self._call_uncached(tool_name, arguments))
+            self._inflight[key] = inflight
+            try:
+                value = await asyncio.shield(inflight)  # a cancelled caller must not cancel the shared fetch
+                self._cache[key] = (time.monotonic() + ttl, value)  # errors are never cached
+            finally:
+                self._inflight.pop(key, None)
+        else:
+            value = await asyncio.shield(inflight)
+        return copy.deepcopy(value)
+
+    async def _call_uncached(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         return await _call_mcp_tool(
             self._mcp_url,
             self._mcp_key,
@@ -151,32 +315,52 @@ class JeenMetadataClient:
             self._timeout,
         )
 
+    def clear_cache(self) -> None:
+        """Drop cached metadata (e.g. after a profiling run updates the catalog)."""
+        self._cache.clear()
+
     # ------------------------------------------------------------------
     # Search Column Values
     # ------------------------------------------------------------------
 
     async def search_column_values(
-        self, query: str, table_name: str | None = None, column_name: str | None = None
-    ) -> list[str]:
+        self,
+        search_term: str,
+        table: str | None = None,
+        column: str | None = None,
+        limit: int | None = None,
+        raw: bool = False,
+        connection_id: int | None = None,
+    ) -> list[str] | dict[str, Any]:
         """
         Looks up real values a column contains using semantic and keyword matching via MCP.
+        Uses exact MCP parameter names: search_term, table, column, limit.
+        When raw=True, returns the full payload dictionary from the MCP server.
         """
         if not self.is_configured:
             logger.warning("JeenMetadataClient is not configured. Returning empty search results.")
-            return []
-            
+            return [] if not raw else {"error": "JeenMetadataClient is not configured."}
+
+        lim = limit if limit is not None else self._search_limit
         args: dict[str, Any] = {
-            "connection_id": self._connection_id,
-            "search_term": query,
-            "limit": self._search_limit,
+            "connection_id": self._cid(connection_id),
+            "search_term": search_term,
+            "limit": lim,
         }
-        if table_name:
-            args["table"] = table_name
-        if column_name:
-            args["column"] = column_name
+        if table:
+            args["table"] = table
+        if column:
+            args["column"] = column
 
         try:
             payload = await self._call("search_column_values", args)
+            if raw:
+                if isinstance(payload, dict):
+                    return payload
+                if isinstance(payload, list):
+                    return {"values": payload}
+                raise JeenMetadataError(f"search_column_values returned unexpected payload: {str(payload)[:300]}")
+
             if isinstance(payload, dict) and "values" in payload:
                 results = []
                 for v in payload["values"]:
@@ -185,9 +369,13 @@ class JeenMetadataClient:
                     else:
                         results.append(str(v))
                 return results
+            elif isinstance(payload, list):
+                return [str(x) for x in payload]
             return []
         except Exception as exc:
             logger.error("JeenMetadataClient.search_column_values failed: %s", exc, exc_info=True)
+            if raw:
+                _reraise_as_metadata_error(exc)
             return []
 
     # ------------------------------------------------------------------
@@ -267,15 +455,21 @@ class JeenMetadataClient:
             table_profile: dict = payload.get("table_profile") or {} if isinstance(payload, dict) else {}
             columns_raw: list[dict] = payload.get("columns") or [] if isinstance(payload, dict) else []
 
-            # Normalise column list into the shape the agent already consumes
+            # Normalise column list into the shape the agent consumes
             columns = []
             for col in columns_raw:
+                null_val = col.get("nullRatio") if col.get("nullRatio") is not None else (col.get("nullRate") or col.get("null_rate"))
+                distinct_val = col.get("distinctCount") if col.get("distinctCount") is not None else col.get("distinct_count")
+                sem_type = col.get("semanticType") or col.get("semantic_type") or col.get("columnRole") or "unknown"
+
                 entry: dict[str, Any] = {
                     "name": col.get("columnName") or col.get("column_name") or col.get("name", ""),
                     "type": col.get("dataType") or col.get("data_type") or col.get("type", ""),
-                    "null_rate": round(float(col.get("nullRate") or col.get("null_rate") or 0.0), 4),
-                    "distinct_count": int(col.get("distinctCount") or col.get("distinct_count") or 0),
-                    "semantic_type": col.get("semantic_type") or "unknown",
+                    "null_rate": round(float(null_val or 0.0), 4),
+                    "distinct_count": int(distinct_val or 0),
+                    "semantic_type": sem_type,
+                    "domain_is_complete": bool(col.get("domainIsComplete") or col.get("domain_is_complete", False)),
+                    "example_values": col.get("exampleValues") or col.get("example_values") or [],
                 }
                 # Propagate optional stats if available
                 for src_key, dst_key in [
@@ -316,6 +510,79 @@ class JeenMetadataClient:
             )
             return None
 
+    async def get_column_profile(
+        self, table_name: str, column_name: str, connection_id: int | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Returns the latest stored statistics for a single column: role, null ratio, distinct count, min/max, and example values.
+        """
+        try:
+            res = await self._call(
+                "get_column_profile",
+                {
+                    "connection_id": self._cid(connection_id),
+                    "table_name": table_name,
+                    "column_name": column_name,
+                },
+            )
+        except Exception as exc:
+            logger.error("JeenMetadataClient.get_column_profile failed: %s", exc)
+            _reraise_as_metadata_error(exc)
+        if isinstance(res, dict):
+            return res.get("profile") or res
+        if isinstance(res, str) and res.strip():
+            raise JeenMetadataError(f"get_column_profile returned unexpected payload: {res[:300]}")
+        return None
+
+    # ------------------------------------------------------------------
+    # Tables, Columns & Relationships Structure
+    # ------------------------------------------------------------------
+
+    async def get_tables(self, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns the list of tables for a connection with business descriptions and quoted identifiers.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        res = await self._call("get_tables", {"connection_id": cid})
+        return _expect_list(res, "tables", "get_tables")
+
+    async def get_columns(self, table_name: str | None = None, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns columns for connection (data type, primary key, description, example values, profiling stats).
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        args: dict[str, Any] = {"connection_id": cid}
+        if table_name:
+            args["table_name"] = table_name
+        res = await self._call("get_columns", args)
+        return _expect_list(res, "columns", "get_columns")
+
+    async def get_relationships(self, connection_id: int | None = None) -> list[dict[str, Any]]:
+        """
+        Returns source-scoped foreign-key and semantic-model joins for a connection.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        res = await self._call("get_relationships", {"connection_id": cid})
+        return _expect_list(res, "relationships", "get_relationships")
+
+    async def get_source_statistics(self, connection_id: int | None = None) -> dict[str, Any]:
+        """
+        Stored source profile summary: latest profile run, table types, column roles.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        return await self._call("get_source_statistics", {"connection_id": cid})
+
+    # ------------------------------------------------------------------
+    # Query Execution via MCP
+    # ------------------------------------------------------------------
+
+    async def run_query(self, query: str, max_rows: int = 100, connection_id: int | None = None) -> dict[str, Any]:
+        """
+        Executes a read-only SQL query via the MCP server on connections where can_execute=True.
+        """
+        cid = connection_id if connection_id is not None else self._connection_id
+        return await self._call("run_query", {"connection_id": cid, "query": query, "max_rows": max_rows})
+
     # ------------------------------------------------------------------
     # Full table listing (fallback when search returns nothing)
     # ------------------------------------------------------------------
@@ -354,6 +621,34 @@ class JeenMetadataClient:
                 "JeenMetadataClient.list_tables_rich failed: %s", exc, exc_info=True
             )
             return []
+
+    # ------------------------------------------------------------------
+    # MCP Search Tools
+    # ------------------------------------------------------------------
+
+    async def search(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
+        """Search metadata for a connection across tables, columns, etc."""
+        try:
+            return await self._call("search", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search failed: %s", exc)
+            _reraise_as_metadata_error(exc)
+
+    async def search_business_terms(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
+        """Finds business glossary terms relevant to a question."""
+        try:
+            return await self._call("search_business_terms", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search_business_terms failed: %s", exc)
+            _reraise_as_metadata_error(exc)
+
+    async def search_knowledge_pairs(self, query: str, limit: int = 10, connection_id: int | None = None) -> Any:
+        """Finds saved question-and-query examples."""
+        try:
+            return await self._call("search_knowledge_pairs", {"connection_id": self._cid(connection_id), "query": query, "limit": limit})
+        except Exception as exc:
+            logger.error("search_knowledge_pairs failed: %s", exc)
+            _reraise_as_metadata_error(exc)
 
 
 # ---------------------------------------------------------------------------

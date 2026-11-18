@@ -1,0 +1,80 @@
+"""
+Prompt management for the Deep Agent.
+
+Prompts are Langfuse text prompts named `deep-agent/<key>` (`system`, `validator`), fetched by label (DEEP_AGENT_PROMPT_LABEL, default
+"production") with the SDK's TTL cache. The packaged `prompts/<key>.md` files are the
+fallback when Langfuse is unreachable or the prompt doesn't exist, and the only source when
+DEEP_AGENT_LANGFUSE_PROMPTS is off (tests, offline dev).
+
+The service rebuilds the agent when a prompt text changes (deep_agent.service.get_deep_agent),
+so moving a label in Langfuse changes behaviour from the next request, without a redeploy; a run
+keeps the prompt it started with. Push the packaged prompts with
+`uv run python scripts/sync_deep_agent_prompts.py --label staging`.
+"""
+
+import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from agent.config import settings
+
+logger = logging.getLogger(__name__)
+
+PROMPTS_DIR = Path(__file__).resolve().parent  # the .md files sit next to this module
+PROMPT_KEYS = ("system", "validator")
+
+
+def langfuse_name(key: str) -> str:
+    return f"deep-agent/{key}"
+
+
+def local_prompt(key: str) -> str:
+    return (PROMPTS_DIR / f"{key}.md").read_text(encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class LoadedPrompt:
+    key: str
+    text: str
+    source: str               # "langfuse" | "local"
+    version: int | None = None
+    client: Any = None        # langfuse TextPromptClient (links generations to the prompt version)
+
+
+# key -> monotonic deadline until which Langfuse is not asked again (prompt missing / unreachable).
+# The SDK caches successful fetches but not misses, and load_prompt runs on every request.
+_misses: dict[str, float] = {}
+
+
+def _miss(key: str, local: str) -> LoadedPrompt:
+    _misses[key] = time.monotonic() + max(settings.DEEP_AGENT_PROMPT_CACHE_TTL_S, 1)
+    return LoadedPrompt(key, local, "local")
+
+
+def load_prompt(key: str) -> LoadedPrompt:
+    local = local_prompt(key)
+    if not settings.DEEP_AGENT_LANGFUSE_PROMPTS:
+        return LoadedPrompt(key, local, "local")
+    if _misses.get(key, 0.0) > time.monotonic():
+        return LoadedPrompt(key, local, "local")
+    try:
+        from agent.langfuse_client import langfuse_client
+
+        client = langfuse_client.get_prompt(
+            langfuse_name(key),
+            label=settings.DEEP_AGENT_PROMPT_LABEL,
+            type="text",
+            fallback=local,
+            cache_ttl_seconds=settings.DEEP_AGENT_PROMPT_CACHE_TTL_S,
+            fetch_timeout_seconds=5,
+            max_retries=1,
+        )
+    except Exception as exc:
+        logger.warning("Langfuse prompt %s unavailable (%s); using packaged prompt", langfuse_name(key), exc)
+        return _miss(key, local)
+    if getattr(client, "is_fallback", False):
+        return _miss(key, local)
+    _misses.pop(key, None)
+    return LoadedPrompt(key, client.prompt, "langfuse", getattr(client, "version", None), client)
