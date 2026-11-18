@@ -627,3 +627,97 @@ def test_report_and_run_list_carry_the_score(client, db_session):
         "/api/evaluations/runs", params={"connection_id": run.connection_id}
     )
     assert listed.json()[0]["final_score"] == 0.25
+
+
+def _with_cloud_fallback():
+    s = "app.services.eval_question_trace.settings"
+    return (
+        patch(f"{s}.LANGFUSE_HOST", "https://langfuse.private"),
+        patch(f"{s}.LANGFUSE_FALLBACK_HOST", "https://cloud.langfuse.com"),
+        patch(f"{s}.LANGFUSE_FALLBACK_PUBLIC_KEY", "pk"),
+        patch(f"{s}.LANGFUSE_FALLBACK_SECRET_KEY", "sk"),
+        patch("app.services.eval_question_trace.time.sleep"),
+    )
+
+
+def _page(data):
+    return MagicMock(status_code=200, **{"json.return_value": {"data": data}})
+
+
+def test_cloud_is_read_when_the_private_langfuse_is_unreachable():
+    import requests
+
+    start = datetime(2026, 10, 26, 12, 0)
+    down = requests.ConnectionError("Name or service not known")
+    host, fb_host, pk, sk, sleep = _with_cloud_fallback()
+    with (
+        host,
+        fb_host,
+        pk,
+        sk,
+        sleep,
+        patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=[
+                down,
+                down,
+                down,
+                _page([SAMPLE]),
+                _page(CHILDREN),
+                _page(SCORES),
+            ],
+        ) as get,
+    ):
+        trace = fetch_question_trace("q1", start, start + timedelta(hours=2))
+
+    hosts = [c.args[0].split("/api/")[0] for c in get.call_args_list]
+    assert hosts[:3] == ["https://langfuse.private"] * 3  # retried, then gave up
+    assert set(hosts[3:]) == {"https://cloud.langfuse.com"}
+    assert get.call_args_list[3].kwargs["auth"] == ("pk", "sk")
+    assert trace["langfuse_url"].startswith("https://cloud.langfuse.com/project/proj/")
+
+
+def test_cloud_is_read_when_the_private_langfuse_has_no_record():
+    start = datetime(2026, 10, 26, 12, 0)
+    host, fb_host, pk, sk, sleep = _with_cloud_fallback()
+    with (
+        host,
+        fb_host,
+        pk,
+        sk,
+        sleep,
+        patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=[_page([]), _page([SAMPLE]), _page(CHILDREN), _page(SCORES)],
+        ),
+    ):
+        trace = fetch_question_trace("q1", start, start + timedelta(hours=2))
+    assert trace["trace_id"] == "trace1"
+
+
+def test_no_record_anywhere_is_none_and_all_down_raises():
+    import requests
+
+    start = datetime(2026, 10, 26, 12, 0)
+    host, fb_host, pk, sk, sleep = _with_cloud_fallback()
+    with host, fb_host, pk, sk, sleep:
+        with patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=[_page([]), _page([])],
+        ):
+            assert fetch_question_trace("q1", start, start) is None
+        with patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=requests.ConnectionError("down"),
+        ):
+            with pytest.raises(requests.ConnectionError):
+                fetch_question_trace("q1", start, start)
+
+
+def test_no_fallback_without_its_keys():
+    from app.services.eval_question_trace import langfuse_sources
+
+    with patch(
+        "app.services.eval_question_trace.settings.LANGFUSE_FALLBACK_PUBLIC_KEY", ""
+    ):
+        assert len(langfuse_sources()) == 1

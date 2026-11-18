@@ -6,10 +6,17 @@ with the SQL runs as child spans and the scores on the trace. Reads go through t
 /v2/observations and /v3/scores endpoints, which Langfuse Cloud requires from
 2026-11-16 on. Self-hosted Langfuse versions without them answer 501, and are read
 through the older /observations and /traces/{id} endpoints instead.
+
+The configured Langfuse (LANGFUSE_HOST) is read first. When it can't be read
+or has no record of the question, Langfuse Cloud is tried as a fallback
+(LANGFUSE_FALLBACK_HOST with its own LANGFUSE_FALLBACK_* keys), so runs
+written there still show their details.
 """
 
 import json
+import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -17,8 +24,10 @@ import requests
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _TIMEOUT_SECONDS = 30
-_RATE_LIMIT_ATTEMPTS = 3
+_ATTEMPTS = 3
 # How a Langfuse without the v2/v3 read endpoints answers them
 _NOT_AVAILABLE = {404, 405, 501}
 _OBSERVATION_FIELDS = "core,basic,io,metadata"
@@ -26,24 +35,62 @@ _OBSERVATION_FIELDS = "core,basic,io,metadata"
 _SDK_METADATA = ("scope", "resourceAttributes")
 
 
-def _request(path: str, **params: Any) -> dict:
-    for attempt in range(_RATE_LIMIT_ATTEMPTS):
-        res = requests.get(
-            f"{settings.LANGFUSE_HOST}/api/public/{path}",
-            auth=(settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY),
-            params=params,
-            timeout=_TIMEOUT_SECONDS,
+@dataclass(frozen=True)
+class LangfuseSource:
+    host: str
+    public_key: str
+    secret_key: str
+
+
+def langfuse_sources() -> list[LangfuseSource]:
+    """The configured Langfuse, then Langfuse Cloud when it has keys and differs."""
+    sources = [
+        LangfuseSource(
+            settings.LANGFUSE_HOST.rstrip("/"),
+            settings.LANGFUSE_PUBLIC_KEY,
+            settings.LANGFUSE_SECRET_KEY,
         )
-        if res.status_code != 429:
-            break
-        if attempt < _RATE_LIMIT_ATTEMPTS - 1:
+    ]
+    fallback = LangfuseSource(
+        settings.LANGFUSE_FALLBACK_HOST.rstrip("/"),
+        settings.LANGFUSE_FALLBACK_PUBLIC_KEY,
+        settings.LANGFUSE_FALLBACK_SECRET_KEY,
+    )
+    if (
+        fallback.host
+        and fallback.public_key
+        and fallback.secret_key
+        and fallback.host != sources[0].host
+    ):
+        sources.append(fallback)
+    return sources
+
+
+def _request(source: LangfuseSource, path: str, **params: Any) -> dict:
+    """GET with retries on rate limits (429) and dropped connections."""
+    for attempt in range(_ATTEMPTS):
+        last = attempt == _ATTEMPTS - 1
+        try:
+            res = requests.get(
+                f"{source.host}/api/public/{path}",
+                auth=(source.public_key, source.secret_key),
+                params=params,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        except (requests.ConnectionError, requests.Timeout):
+            if last:
+                raise
             time.sleep(2**attempt)
+            continue
+        if res.status_code != 429 or last:
+            break
+        time.sleep(2**attempt)
     res.raise_for_status()
     return res.json()
 
 
-def _get(path: str, **params: Any) -> list[dict]:
-    return _request(path, **params).get("data", [])
+def _get(source: LangfuseSource, path: str, **params: Any) -> list[dict]:
+    return _request(source, path, **params).get("data", [])
 
 
 def _parsed(value: Any) -> Any:
@@ -104,9 +151,12 @@ def _latest(samples: list[dict]) -> dict | None:
     return max(samples, key=lambda s: s.get("startTime") or "") if samples else None
 
 
-def _read_current(question_id: str, window: dict) -> tuple | None:
+def _read_current(
+    source: LangfuseSource, question_id: str, window: dict
+) -> tuple | None:
     sample = _latest(
         _get(
+            source,
             "v2/observations",
             name=f"eval-sample:{question_id}",
             fields=_OBSERVATION_FIELDS,
@@ -117,9 +167,14 @@ def _read_current(question_id: str, window: dict) -> tuple | None:
         return None
     trace_id = sample["traceId"]
     observations = _get(
-        "v2/observations", traceId=trace_id, fields=_OBSERVATION_FIELDS, **window
+        source,
+        "v2/observations",
+        traceId=trace_id,
+        fields=_OBSERVATION_FIELDS,
+        **window,
     )
     scores = _get(
+        source,
         "v3/scores",
         traceId=trace_id,
         fromTimestamp=window["fromStartTime"],
@@ -129,11 +184,15 @@ def _read_current(question_id: str, window: dict) -> tuple | None:
     return sample, observations, scores
 
 
-def _read_legacy(question_id: str, window: dict) -> tuple | None:
-    sample = _latest(_get("observations", name=f"eval-sample:{question_id}", **window))
+def _read_legacy(
+    source: LangfuseSource, question_id: str, window: dict
+) -> tuple | None:
+    sample = _latest(
+        _get(source, "observations", name=f"eval-sample:{question_id}", **window)
+    )
     if sample is None:
         return None
-    trace = _request(f"traces/{sample['traceId']}")
+    trace = _request(source, f"traces/{sample['traceId']}")
     return sample, trace.get("observations") or [], trace.get("scores") or []
 
 
@@ -142,22 +201,45 @@ def fetch_question_trace(
 ) -> dict | None:
     """
     Everything Langfuse holds for a question evaluated between the two times
-    (UTC), or None when it has no record of it. Raises requests exceptions when
-    Langfuse can't be read.
+    (UTC), or None when no Langfuse has a record of it. Tries each of
+    langfuse_sources() in turn; raises the last requests exception only when
+    none of them could be read.
     """
     window = {
         "fromStartTime": f"{started_at.isoformat()}Z",
         "toStartTime": f"{ended_at.isoformat()}Z",
     }
+    error: requests.RequestException | None = None
+    any_read = False
+    for source in langfuse_sources():
+        try:
+            found = _read_from(source, question_id, window)
+        except requests.RequestException as exc:
+            logger.warning(
+                f"[Eval] Langfuse at {source.host} failed for {question_id}: {exc}"
+            )
+            error = exc
+            continue
+        any_read = True
+        if found is not None:
+            return _question_record(source, *found)
+    if error is not None and not any_read:
+        raise error
+    return None
+
+
+def _read_from(source: LangfuseSource, question_id: str, window: dict) -> tuple | None:
     try:
-        found = _read_current(question_id, window)
+        return _read_current(source, question_id, window)
     except requests.HTTPError as exc:
         if exc.response is None or exc.response.status_code not in _NOT_AVAILABLE:
             raise
-        found = _read_legacy(question_id, window)
-    if found is None:
-        return None
-    sample, observations, scores = found
+        return _read_legacy(source, question_id, window)
+
+
+def _question_record(
+    source: LangfuseSource, sample: dict, observations: list[dict], scores: list[dict]
+) -> dict:
     trace_id = sample["traceId"]
     spans = {
         o["name"]: o
@@ -169,7 +251,7 @@ def fetch_question_trace(
     agent = spans.get("agent_execution") or {}
     return {
         "trace_id": trace_id,
-        "langfuse_url": f"{settings.LANGFUSE_HOST}/project/{sample.get('projectId')}/traces/{trace_id}",
+        "langfuse_url": f"{source.host}/project/{sample.get('projectId')}/traces/{trace_id}",
         "succeeded": output.get("succeeded"),
         "error": output.get("error"),
         "generated_sql": output.get("generated_sql"),

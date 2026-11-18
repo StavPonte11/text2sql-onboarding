@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    # Read question details here when LANGFUSE_HOST can't be read or has no
+    # record of them (e.g. a self-hosted LANGFUSE_HOST, runs written to Cloud).
+    # Off until both keys are set.
+    LANGFUSE_FALLBACK_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_FALLBACK_PUBLIC_KEY: str = ""
+    LANGFUSE_FALLBACK_SECRET_KEY: str = ""
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
