@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } 
 import { orchestrationApi } from '../../api/orchestration';
 import { useStopEvalRun } from '../../hooks/useEvaluations';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
+import { QuestionResultModal } from './QuestionResultModal';
 
 import './RunHistoryTable.css';
 
@@ -19,12 +20,28 @@ const RENAMED_DIMENSIONS: Record<string, string> = {
 
 const dimensionLabel = (dim: string) => (RENAMED_DIMENSIONS[dim] ?? dim).replace(/_/g, ' ');
 
-/** Pass rate over the questions finished so far, e.g. "40% so far" */
-function livePassRate(perQuestion: { status: string }[] | undefined): string {
+/** A run's duration in minutes, e.g. "143.2 min" (two decimals below a minute) */
+function formatDuration(seconds: number): string {
+  const minutes = seconds / 60;
+  return `${minutes.toFixed(minutes < 1 ? 2 : 1)} min`;
+}
+
+/** A 0–1 score as a plain number, e.g. "0.25" */
+const formatScore = (score: number) => score.toFixed(2);
+
+const scoreColor = (score: number | null | undefined) =>
+  score == null ? 'var(--text-muted)' : score >= 0.5 ? '#10b981' : '#ef4444';
+
+/** A run's average time shift score, when it has one */
+const timeShiftScore = (dims: Record<string, number> | null | undefined): number | null =>
+  dims?.time_shift_score ?? null;
+
+/** Contains accuracy over the questions finished so far, e.g. "0.40 so far" */
+function liveContainsAccuracy(perQuestion: { status: string }[] | undefined): string {
   const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
   if (!finished.length) return 'Calculating…';
   const passed = finished.filter((q) => q.status === 'pass').length;
-  return `${Math.round((passed / finished.length) * 100)}% so far`;
+  return `${formatScore(passed / finished.length)} so far`;
 }
 
 /** "Evaluating 36 of 58 questions" with a bar, shown while a run is in progress */
@@ -70,6 +87,7 @@ function RunProgress({ completed, total }: { completed: number; total: number })
 // ── Run detail drawer ──────────────────────────────────────────────────────────
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
   const stopMut = useStopEvalRun();
+  const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
   const { data: report, isLoading } = useQuery({
     queryKey: ['run-report', runId],
     queryFn: () => orchestrationApi.getRunReport(runId),
@@ -152,30 +170,26 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
             <div className="card summary-grid">
               {[
                 {
-                  label: 'Score',
+                  label: 'Contains Accuracy',
                   value:
                     report.status === 'running'
-                      ? 'Evaluating…'
-                      : `${Math.round(report.overall_score * 100)}%`,
-                  color:
-                    report.status === 'running'
-                      ? '#f59e0b'
-                      : report.overall_score >= 0.5
-                        ? '#10b981'
-                        : '#ef4444',
+                      ? liveContainsAccuracy(report.per_question)
+                      : formatScore(report.overall_score),
+                  color: report.status === 'running' ? '#f59e0b' : scoreColor(report.overall_score),
                 },
                 {
-                  label: 'Pass Rate',
+                  label: 'Time Shift',
                   value:
                     report.status === 'running'
-                      ? livePassRate(report.per_question)
-                      : `${Math.round(report.pass_rate * 100)}%`,
+                      ? 'Calculating…'
+                      : (() => {
+                          const timeShift = timeShiftScore(report.dimension_averages);
+                          return timeShift == null ? '—' : formatScore(timeShift);
+                        })(),
                   color:
                     report.status === 'running'
                       ? '#f59e0b'
-                      : report.pass_rate >= 0.5
-                        ? '#10b981'
-                        : '#ef4444',
+                      : scoreColor(timeShiftScore(report.dimension_averages)),
                 },
                 {
                   label: 'Questions',
@@ -187,7 +201,7 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                 },
                 {
                   label: 'Duration',
-                  value: report.duration_seconds ? `${report.duration_seconds}s` : '—',
+                  value: report.duration_seconds ? formatDuration(report.duration_seconds) : '—',
                   color: 'var(--text-secondary)',
                 },
               ].map(({ label, value, color }) => (
@@ -291,8 +305,23 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       score: number;
                       status: string;
                       failure_type: string | null;
+                      scores?: Record<string, number> | null;
                     }) => (
-                      <div key={q.question_id} className="question-item">
+                      <div
+                        key={q.question_id}
+                        className={`question-item${q.status !== 'pending' ? ' question-item--clickable' : ''}`}
+                        {...(q.status !== 'pending' && {
+                          role: 'button',
+                          tabIndex: 0,
+                          onClick: () => setOpenQuestionId(q.question_id),
+                          onKeyDown: (e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setOpenQuestionId(q.question_id);
+                            }
+                          },
+                        })}
+                      >
                         <div
                           className="question-item__dot"
                           style={{
@@ -312,16 +341,21 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         </div>
                         <div
                           className="question-item__score"
+                          title="Time shift score"
                           style={{
                             color:
                               q.status === 'pending'
                                 ? '#f59e0b'
-                                : q.score >= 0.5
-                                  ? '#10b981'
-                                  : '#ef4444',
+                                : scoreColor(q.scores?.time_shift ?? null),
                           }}
                         >
-                          {q.status === 'pending' ? '—' : q.score >= 0.5 ? '100%' : '0%'}
+                          {q.status === 'pending'
+                            ? '—'
+                            : !q.scores
+                              ? '—'
+                              : q.scores.time_shift == null
+                                ? 'N/A'
+                                : `${Math.round(q.scores.time_shift * 100)}%`}
                         </div>
                         {q.status === 'pending' && (
                           <span
@@ -465,6 +499,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
           </div>
         )}
       </div>
+
+      {openQuestionId && (
+        <QuestionResultModal
+          runId={runId}
+          questionId={openQuestionId}
+          onClose={() => setOpenQuestionId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -547,8 +589,8 @@ export function RunHistoryTable({
             <tr>
               {!compact && <th>Run ID</th>}
               {!tableId && <th>Target / Connection</th>}
-              <th>Score</th>
-              <th>Pass Rate</th>
+              <th>Contains Accuracy</th>
+              <th>Time Shift</th>
               {!compact && <th>Questions</th>}
               <th>Status</th>
               <th>Triggered By</th>
@@ -588,6 +630,15 @@ export function RunHistoryTable({
                           Connection
                         </span>
                         {run.connection_name || run.table_name || `ID: ${run.connection_id}`}
+                        {run.question_tags?.map((tag) => (
+                          <span
+                            key={tag}
+                            className="badge badge--neutral"
+                            style={{ fontSize: 10.5 }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
                       </span>
                     ) : run.table_id ? (
                       <Link
@@ -627,11 +678,8 @@ export function RunHistoryTable({
                         )}
                       </span>
                     ) : (
-                      <span
-                        className="score-text"
-                        style={{ color: run.score >= 0.5 ? '#10b981' : '#ef4444' }}
-                      >
-                        {Math.round(run.score * 100)}%
+                      <span className="score-text" style={{ color: scoreColor(run.score) }}>
+                        {formatScore(run.score)}
                       </span>
                     )}
                     {run.regression_detected && (
@@ -641,12 +689,17 @@ export function RunHistoryTable({
                     )}
                   </div>
                 </td>
-                <td className="pass-rate-cell">
-                  {run.status === 'running' ? (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
-                  ) : (
-                    <ScoreBar score={run.pass_rate} height={5} showLabel />
-                  )}
+                <td>
+                  {(() => {
+                    const timeShift = timeShiftScore(run.dimension_averages);
+                    return run.status === 'running' ? (
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
+                    ) : (
+                      <span className="score-text" style={{ color: scoreColor(timeShift) }}>
+                        {timeShift == null ? '—' : formatScore(timeShift)}
+                      </span>
+                    );
+                  })()}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>

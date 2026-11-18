@@ -310,6 +310,7 @@ def save_case_results(
                 score=score,
                 status=status,
                 error_type=None if status == "pass" else _field(case, "error"),
+                scores=dict(_field(case, "scores") or {}),
             )
         )
     return valid_ids

@@ -479,3 +479,24 @@
   background: rgba(148, 163, 184, 0.08);
   color: #94a3b8;
 }
+
+.eval-question-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #1e293b);
+  border-radius: 8px;
+}
+
+.eval-question-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.eval-question-row + .eval-question-row {
+  border-top: 1px solid var(--border, #1e293b);
+}

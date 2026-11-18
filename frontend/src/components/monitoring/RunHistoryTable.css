@@ -204,6 +204,17 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.question-item--clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.question-item--clickable:hover,
+.question-item--clickable:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+
 .question-item__dot {
   width: 8px;
   height: 8px;

@@ -258,13 +258,14 @@ def test_execute_query_failure(mock_settings, mock_get_conn, client):
 
 
 # ── Connection Golden Questions via Jeen Metadata ──────────────────────────────
-@patch("app.routers.questions.fetch_jeen_sql_pairs")
+@patch("app.routers.questions.fetch_jeen_sql_pairs_with_tags")
 def test_list_connection_questions_from_jeen(mock_fetch_jeen, client):
     mock_fetch_jeen.return_value = [
         {
             "question": "What are sales by category?",
             "sql_statement": "SELECT category, SUM(amount) FROM sales GROUP BY category",
             "category": "sales",
+            "tags": ["validation"],
         }
     ]
     response = client.get("/api/connections/89/questions")
@@ -274,6 +275,7 @@ def test_list_connection_questions_from_jeen(mock_fetch_jeen, client):
     assert data[0]["question"] == "What are sales by category?"
     assert "SELECT category" in data[0]["expected_sql"]
     assert data[0]["connection_id"] == 89
+    assert data[0]["tags"] == ["validation"]
 
 
 @patch("app.routers.questions.save_jeen_sql_pair")
