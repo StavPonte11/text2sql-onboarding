@@ -203,8 +203,8 @@ function JudgeSection({
     return (
       <p className="question-muted">
         {status === 'pass'
-          ? 'Not used: the question passed contains accuracy.'
-          : 'Not used: the LLM judge was not enabled for this run.'}
+          ? 'Contains accuracy: not needed, the question passed it.'
+          : 'Contains accuracy: not used, the LLM judge was not enabled for this run.'}
       </p>
     );
   }
@@ -262,6 +262,53 @@ function JudgeSection({
           ? ` · prompt ${d.prompt_name}${d.prompt_version ? ` v${d.prompt_version}` : ''}`
           : ''}
       </div>
+    </div>
+  );
+}
+
+/** The judge's verdict on each time shift the contains check failed */
+function ShiftJudgeSection({ timeShift }: { timeShift: QuestionScore | undefined }) {
+  const shifts = (timeShift?.details?.shift_results ?? []) as Record<string, any>[];
+  const judged = shifts.filter((shift) => shift.llm_judge);
+  if (!timeShift?.applicable || !shifts.length) return null;
+  if (!judged.length) {
+    return (
+      <p className="question-muted">
+        Time shifts: none needed the judge (no shift failed the contains check).
+      </p>
+    );
+  }
+  const passed = judged.filter((shift) => shift.llm_judge.overturned).length;
+  return (
+    <div className="question-judge-shifts">
+      <div className="question-judge__verdict">
+        <Gavel size={14} />
+        <strong>
+          Time shifts: judged {judged.length} failed shift{judged.length === 1 ? '' : 's'}, passed{' '}
+          {passed}
+        </strong>
+      </div>
+      <ul className="question-judge__differences">
+        {judged.map((shift) => {
+          const verdict = shift.llm_judge;
+          return (
+            <li key={shift.offset_days}>
+              <strong>{shift.offset_days} days:</strong>{' '}
+              {verdict.error
+                ? `judge unavailable (${verdict.error})`
+                : verdict.overturned
+                  ? 'overturned, judged correct'
+                  : verdict.is_false_negative
+                    ? 'leaned correct, not confident enough'
+                    : 'upheld, wrong'}
+              {verdict.confidence != null && (
+                <span className="question-muted"> · confidence {verdict.confidence}%</span>
+              )}
+              {verdict.reasoning && <div className="question-muted">{verdict.reasoning}</div>}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -400,6 +447,7 @@ export function QuestionResultModal({
             <>
               <h3 className="question-heading">LLM Judge</h3>
               <JudgeSection judge={judge} status={data.status} />
+              <ShiftJudgeSection timeShift={allScores.find((s) => s.name === 'time_shift')} />
             </>
           )}
 

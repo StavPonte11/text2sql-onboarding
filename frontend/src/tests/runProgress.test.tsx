@@ -307,6 +307,38 @@ describe('LLM judge in the question popup', () => {
             generated_run: null,
             scores: [
               {
+                name: 'time_shift',
+                value: 1,
+                passed: true,
+                applicable: true,
+                error: null,
+                details: {
+                  shift_results: [
+                    { offset_days: -1, status: 'passed' },
+                    {
+                      offset_days: -7,
+                      status: 'passed',
+                      llm_judge: {
+                        overturned: true,
+                        is_false_negative: true,
+                        confidence: 90,
+                        reasoning: 'Rounding only.',
+                      },
+                    },
+                    {
+                      offset_days: -30,
+                      status: 'failed',
+                      llm_judge: {
+                        overturned: false,
+                        is_false_negative: false,
+                        confidence: 95,
+                        reasoning: 'A year is missing.',
+                      },
+                    },
+                  ],
+                },
+              },
+              {
                 name: 'llm_judge',
                 value: 1,
                 passed: true,
@@ -346,5 +378,11 @@ describe('LLM judge in the question popup', () => {
     expect(screen.getByText('NULL and 0 both mean no passengers.')).toBeInTheDocument();
     expect(screen.getByText('NULL instead of 0')).toBeInTheDocument();
     expect(screen.getByText(/model gpt-4.1-mini · prompt judge v1/)).toBeInTheDocument();
+    // each failed time shift has its own verdict
+    expect(screen.getByText('Time shifts: judged 2 failed shifts, passed 1')).toBeInTheDocument();
+    expect(screen.getByText('Rounding only.')).toBeInTheDocument();
+    expect(screen.getByText('A year is missing.')).toBeInTheDocument();
+    expect(screen.getByText(/overturned, judged correct/)).toBeInTheDocument();
+    expect(screen.getByText(/upheld, wrong/)).toBeInTheDocument();
   });
 });
