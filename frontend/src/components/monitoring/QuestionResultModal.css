@@ -312,3 +312,59 @@
   color: var(--text-primary);
   border-color: var(--text-muted);
 }
+
+.question-final-score {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.question-final-score strong {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.question-judge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.question-judge--overturned {
+  border-left-color: #10b981;
+}
+
+.question-judge--upheld {
+  border-left-color: #ef4444;
+}
+
+.question-judge__verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.question-judge__confidence {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.question-judge__reasoning {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.question-judge__differences {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}

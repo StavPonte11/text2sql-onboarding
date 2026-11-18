@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Modal } from 'antd';
-import { Check, CheckCircle2, Copy, ExternalLink, MinusCircle, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, ExternalLink, Gavel, MinusCircle, XCircle } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
 import { ScoreBar, Spinner } from '../common/EvalUI';
@@ -185,6 +185,92 @@ function SqlRunPanel({
   );
 }
 
+const JUDGE_NOT_USED: Record<string, string> = {
+  generated_sql_did_not_run:
+    "Not used: the generated SQL didn't run, so there was no result to judge.",
+  judge_unavailable: 'The judge was asked but could not answer',
+};
+
+/** Whether the LLM judge took a second look at this question, and what it decided */
+function JudgeSection({
+  judge,
+  status,
+}: {
+  judge: QuestionScore | undefined;
+  status: string | null;
+}) {
+  if (!judge) {
+    return (
+      <p className="question-muted">
+        {status === 'pass'
+          ? 'Not used: the question passed contains accuracy.'
+          : 'Not used: the LLM judge was not enabled for this run.'}
+      </p>
+    );
+  }
+  const d = judge.details as Record<string, any>;
+  if (!judge.applicable) {
+    const reason = String(d.reason ?? '');
+    return (
+      <p className="question-muted">
+        {JUDGE_NOT_USED[reason] ?? label(reason)}
+        {d.error ? `: ${d.error}` : ''}
+      </p>
+    );
+  }
+  const overturned = Boolean(d.overturned);
+  const differences: Record<string, any>[] = Array.isArray(d.key_differences)
+    ? d.key_differences
+    : [];
+  return (
+    <div className={`question-judge question-judge--${overturned ? 'overturned' : 'upheld'}`}>
+      <div className="question-judge__verdict">
+        <Gavel size={14} />
+        <strong>
+          {overturned
+            ? 'Overturned: judged correct, so the question passes'
+            : d.is_false_negative
+              ? 'Leaned correct, but not confident enough to overturn'
+              : 'Upheld: the answer is wrong'}
+        </strong>
+        {d.confidence != null && (
+          <span className="question-judge__confidence">
+            confidence {d.confidence}% (needs {d.min_confidence ?? 80}%)
+          </span>
+        )}
+      </div>
+      {d.reasoning && <p className="question-judge__reasoning">{d.reasoning}</p>}
+      {differences.length > 0 && (
+        <ul className="question-judge__differences">
+          {differences.map((diff, i) => (
+            <li key={i}>
+              <span>{String(diff.difference ?? '')}</span>
+              {String(diff.prevents_correct_answer) === 'true' ? (
+                <em> (prevents a correct answer)</em>
+              ) : (
+                <em> (cosmetic)</em>
+              )}
+              {diff.explanation && <div className="question-muted">{String(diff.explanation)}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="question-muted">
+        Metrics failed it for: {label(String(d.judged_failure_reason ?? 'results differ'))}
+        {d.model ? ` · model ${d.model}` : ''}
+        {d.prompt_name
+          ? ` · prompt ${d.prompt_name}${d.prompt_version ? ` v${d.prompt_version}` : ''}`
+          : ''}
+      </div>
+    </div>
+  );
+}
+
+const SCORE_SOURCE: Record<string, string> = {
+  time_shift: 'its time shift score',
+  contains_accuracy: 'its contains accuracy (no time shift for this question)',
+};
+
 // Shown as tiles above the scores; the rest of the metadata goes under "Run information"
 const TILE_KEYS = [
   'total_latency_ms',
@@ -214,7 +300,9 @@ export function QuestionResultModal({
 
   const trace = data?.trace;
   const metadata = trace?.metadata ?? {};
-  const scores = (trace?.scores ?? []).filter((s) => !s.name.endsWith('_seconds'));
+  const allScores = trace?.scores ?? [];
+  const judge = allScores.find((s) => s.name === 'llm_judge');
+  const scores = allScores.filter((s) => !s.name.endsWith('_seconds') && s.name !== 'llm_judge');
   const error = trace?.error || data?.failure_type;
 
   const tiles = [
@@ -274,6 +362,18 @@ export function QuestionResultModal({
             <p className="question-notice">{data.trace_unavailable_reason}</p>
           )}
 
+          {data.final_score !== undefined && (
+            <p className="question-final-score">
+              Score{' '}
+              <strong>
+                {data.final_score == null ? 'N/A' : `${Math.round(data.final_score * 100)}%`}
+              </strong>
+              {data.score_source && (
+                <span className="question-muted"> = {SCORE_SOURCE[data.score_source]}</span>
+              )}
+            </p>
+          )}
+
           {tiles.length > 0 && (
             <div className="question-tiles">
               {tiles.map((tile) => (
@@ -293,6 +393,13 @@ export function QuestionResultModal({
                   <ScoreRow key={score.name} score={score} />
                 ))}
               </div>
+            </>
+          )}
+
+          {trace && (
+            <>
+              <h3 className="question-heading">LLM Judge</h3>
+              <JudgeSection judge={judge} status={data.status} />
             </>
           )}
 

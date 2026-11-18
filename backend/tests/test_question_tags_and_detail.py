@@ -547,3 +547,83 @@ def test_export_api_needs_its_key(client, db_session):
             )
     assert ok.status_code == 200 and ok.json()["total"] == 1
     assert [r["id"] for r in runs.json()] == [run.id]
+
+
+def _result(scores, score=0.0):
+    return EvalResult(
+        run_id="r", question_id="q", score=score, status="fail", scores=scores
+    )
+
+
+def test_question_score_prefers_time_shift():
+    from app.services.run_score import question_score
+
+    assert question_score(_result({"contains_accuracy": 1.0, "time_shift": 0.6})) == (
+        0.6,
+        "time_shift",
+    )
+    assert question_score(_result({"contains_accuracy": 0.0})) == (
+        0.0,
+        "contains_accuracy",
+    )
+    assert question_score(_result(None, score=1.0)) == (
+        1.0,
+        "contains_accuracy",
+    )  # old result
+    assert question_score(_result({"sql_exact_match": 0.0})) == (None, None)
+
+
+def test_run_score_averages_and_explains():
+    from app.services.run_score import run_score
+
+    score, breakdown = run_score(
+        [
+            _result({"contains_accuracy": 1.0, "time_shift": 0.8}),
+            _result({"contains_accuracy": 1.0, "time_shift": 0.4}),
+            _result({"contains_accuracy": 1.0}),
+            _result({"contains_accuracy": 0.0}),
+            _result({}),
+        ]
+    )
+    assert score == round((0.8 + 0.4 + 1.0 + 0.0) / 4, 4)
+    assert breakdown == {
+        "questions": 4,
+        "time_shift": {"count": 2, "average": 0.6},
+        "contains_accuracy": {"count": 2, "average": 0.5},
+        "unscored": 1,
+    }
+    assert run_score([]) == (
+        None,
+        {
+            "questions": 0,
+            "time_shift": {"count": 0, "average": None},
+            "contains_accuracy": {"count": 0, "average": None},
+            "unscored": 0,
+        },
+    )
+
+
+def test_report_and_run_list_carry_the_score(client, db_session):
+    run, questions = _finished_run(db_session, 2)
+    # q0 fails contains (0), q1 passes contains (1) — give q1 a time shift of 0.5
+    result = db_session.exec(
+        __import__("sqlmodel")
+        .select(EvalResult)
+        .where(EvalResult.question_id == questions[1].id)
+    ).one()
+    result.scores = {"contains_accuracy": 1.0, "time_shift": 0.5}
+    db_session.add(result)
+    db_session.commit()
+
+    report = client.get(f"/api/evaluations/runs/{run.id}/report").json()
+    assert report["score"] == 0.25
+    assert report["score_breakdown"]["time_shift"] == {"count": 1, "average": 0.5}
+    by_id = {q["question_id"]: q for q in report["per_question"]}
+    assert by_id[questions[1].id]["final_score"] == 0.5
+    assert by_id[questions[1].id]["score_source"] == "time_shift"
+    assert by_id[questions[0].id]["score_source"] == "contains_accuracy"
+
+    listed = client.get(
+        "/api/evaluations/runs", params={"connection_id": run.connection_id}
+    )
+    assert listed.json()[0]["final_score"] == 0.25

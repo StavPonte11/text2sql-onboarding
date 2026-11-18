@@ -2,6 +2,14 @@ import api from './client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+/** How a run's score was calculated: each question counts its time shift score when it has one, else its contains accuracy */
+export interface ScoreBreakdown {
+  questions: number;
+  time_shift: { count: number; average: number | null };
+  contains_accuracy: { count: number; average: number | null };
+  unscored: number;
+}
+
 export interface EvalRunFull {
   id: string;
   table_id: string;
@@ -19,6 +27,9 @@ export interface EvalRunFull {
   question_tags?: string[] | null;
   /** The LLM model the agent ran with; null = its default */
   agent_model?: string | null;
+  /** Average question score (time shift, else contains accuracy) */
+  final_score?: number | null;
+  score_breakdown?: ScoreBreakdown | null;
   duration_seconds: number | null;
   triggered_by: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
@@ -204,6 +215,9 @@ export interface QuestionResultDetail {
   score: number | null;
   status: string | null;
   failure_type: string | null;
+  /** Time shift when the question has one, else contains accuracy */
+  final_score?: number | null;
+  score_source?: 'time_shift' | 'contains_accuracy' | null;
   trace: QuestionTrace | null;
   trace_unavailable_reason: string | null;
 }

@@ -53,6 +53,7 @@ from app.services.jeen_metadata import (
     fetch_jeen_sql_pairs_with_tags,
 )
 from app.services.langfuse_client import langfuse_client
+from app.services.run_score import question_score, run_score
 
 logger = logging.getLogger(__name__)
 
@@ -813,6 +814,11 @@ def list_runs(
                 .group_by(EvalResult.run_id)
             ).all()
         )
+    results_by_run: dict[str, list[EvalResult]] = {}
+    for result in session.exec(
+        select(EvalResult).where(EvalResult.run_id.in_([run.id for run, _ in results]))
+    ).all():
+        results_by_run.setdefault(result.run_id, []).append(result)
     runs = []
     for run, table_name in results:
         if table_name:
@@ -825,9 +831,12 @@ def list_runs(
         else:
             t_name = "Catalog Evaluation"
 
+        final_score, score_breakdown = run_score(results_by_run.get(run.id, []))
         read = EvalRunRead.model_validate(
             run,
             update={
+                "final_score": final_score,
+                "score_breakdown": score_breakdown,
                 "table_name": t_name,
                 "connection_name": run.connection_name,
                 "completed_questions": completed_counts.get(run.id, 0)
@@ -964,6 +973,14 @@ def get_run_question(
         "score": result.score if result else None,
         "status": result.status if result else None,
         "failure_type": result.error_type if result else None,
+        # time shift when the question has one, else contains accuracy
+        **dict(
+            zip(
+                ("final_score", "score_source"),
+                question_score(result) if result else (None, None),
+                strict=True,
+            )
+        ),
         "trace": trace,
         "trace_unavailable_reason": trace_unavailable_reason,
     }
@@ -1015,11 +1032,14 @@ def export_run_results(
     for result, question in rows:
         trace, unavailable = _question_trace(run, question.id)
         trace = trace or {}
+        score, score_source = question_score(result)
         results.append(
             {
                 "question_id": question.id,
                 "question": question.question,
                 "status": result.status,
+                "score": score,
+                "score_source": score_source,
                 "failure_type": result.error_type,
                 "scores": result.scores or {"contains_accuracy": result.score},
                 "golden_sql": trace.get("expected_sql") or question.expected_sql,
@@ -1034,8 +1054,12 @@ def export_run_results(
         )
 
     next_offset = offset + len(rows)
+    run_final_score, _ = run_score(
+        session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+    )
     return {
         "run_id": run.id,
+        "score": run_final_score,
         "connection_id": run.connection_id,
         "connection_name": run.connection_name,
         "agent_model": run.agent_model,
@@ -1103,6 +1127,10 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "failure_type": r.error_type,
                 # None for results saved before scores were kept
                 "scores": r.scores,
+                # time shift when the question has one, else contains accuracy
+                **dict(
+                    zip(("final_score", "score_source"), question_score(r), strict=True)
+                ),
             }
             for r in results
         ]
@@ -1132,10 +1160,14 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         else {}
     )
 
+    score, score_breakdown = run_score(results)
     return {
         "run_id": run_id,
         "table_id": run.table_id,
         "overall_score": run.score,
+        # time shift per question when it has one, else contains accuracy, averaged
+        "score": score,
+        "score_breakdown": score_breakdown,
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
         "total_questions": run.total_questions or len(per_question),

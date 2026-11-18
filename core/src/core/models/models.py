@@ -217,6 +217,9 @@ class EvalRunRead(SQLModel):
     completed_questions: int | None = None
     question_tags: list[str] | None = None
     agent_model: str | None = None
+    # Time shift per question when it has one, else contains accuracy, averaged
+    final_score: float | None = None
+    score_breakdown: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

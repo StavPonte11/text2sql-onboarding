@@ -8,6 +8,7 @@ import { orchestrationApi } from '../../api/orchestration';
 import { useStopEvalRun } from '../../hooks/useEvaluations';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 import { QuestionResultModal } from './QuestionResultModal';
+import { ScoreInfo } from './ScoreInfo';
 
 import './RunHistoryTable.css';
 
@@ -32,23 +33,22 @@ const formatScore = (score: number) => score.toFixed(2);
 const scoreColor = (score: number | null | undefined) =>
   score == null ? 'var(--text-muted)' : score >= 0.5 ? '#10b981' : '#ef4444';
 
-/** A run's average time shift score, when it has one */
-const timeShiftScore = (dims: Record<string, number> | null | undefined): number | null =>
-  dims?.time_shift_score ?? null;
+/** A run's score: its questions' scores averaged (older runs: their contains accuracy) */
+const runScore = (run: { final_score?: number | null; score: number }): number | null =>
+  run.final_score !== undefined && run.final_score !== null ? run.final_score : run.score;
 
-/** A question's contains accuracy; older results only have their overall score */
-const questionContains = (q: {
+/** A question's score: time shift when it has one, else contains accuracy */
+const questionScore = (q: {
+  final_score?: number | null;
   score?: number | null;
   scores?: Record<string, number | null> | null;
-}): number | null => q.scores?.contains_accuracy ?? q.score ?? null;
+}): number | null =>
+  q.final_score !== undefined ? q.final_score : (q.scores?.contains_accuracy ?? q.score ?? null);
 
-/** Contains accuracy over the questions finished so far, e.g. "0.40 so far" */
-function liveContainsAccuracy(perQuestion: { status: string }[] | undefined): string {
-  const finished = (perQuestion ?? []).filter((q) => q.status !== 'pending');
-  if (!finished.length) return 'Calculating…';
-  const passed = finished.filter((q) => q.status === 'pass').length;
-  return `${formatScore(passed / finished.length)} so far`;
-}
+const SCORE_SOURCE_LABEL: Record<string, string> = {
+  time_shift: 'Time shift score',
+  contains_accuracy: 'Contains accuracy (no time shift for this question)',
+};
 
 /** "Evaluating 36 of 58 questions" with a bar, shown while a run is in progress */
 function RunProgress({ completed, total }: { completed: number; total: number }) {
@@ -176,26 +176,15 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
             <div className="card summary-grid">
               {[
                 {
-                  label: 'Contains Accuracy',
+                  label: 'Score',
+                  info: <ScoreInfo breakdown={report.score_breakdown} score={report.score} />,
                   value:
-                    report.status === 'running'
-                      ? liveContainsAccuracy(report.per_question)
-                      : formatScore(report.overall_score),
-                  color: report.status === 'running' ? '#f59e0b' : scoreColor(report.overall_score),
-                },
-                {
-                  label: 'Time Shift',
-                  value:
-                    report.status === 'running'
-                      ? 'Calculating…'
-                      : (() => {
-                          const timeShift = timeShiftScore(report.dimension_averages);
-                          return timeShift == null ? '—' : formatScore(timeShift);
-                        })(),
-                  color:
-                    report.status === 'running'
-                      ? '#f59e0b'
-                      : scoreColor(timeShiftScore(report.dimension_averages)),
+                    report.score == null
+                      ? report.status === 'running'
+                        ? 'Calculating…'
+                        : '—'
+                      : `${formatScore(report.score)}${report.status === 'running' ? ' so far' : ''}`,
+                  color: report.status === 'running' ? '#f59e0b' : scoreColor(report.score),
                 },
                 {
                   label: 'Questions',
@@ -210,14 +199,32 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                   value: report.duration_seconds ? formatDuration(report.duration_seconds) : '—',
                   color: 'var(--text-secondary)',
                 },
-              ].map(({ label, value, color }) => (
-                <div key={label}>
-                  <div className="summary-metric-label">{label}</div>
-                  <div className="summary-metric-value" style={{ color }}>
-                    {value}
+              ].map(
+                ({
+                  label,
+                  value,
+                  color,
+                  info,
+                }: {
+                  label: string;
+                  value: any;
+                  color: string;
+                  info?: JSX.Element;
+                }) => (
+                  <div key={label}>
+                    <div
+                      className="summary-metric-label"
+                      style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      {label}
+                      {info}
+                    </div>
+                    <div className="summary-metric-value" style={{ color }}>
+                      {value}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ),
+              )}
             </div>
 
             {/* Publishable status */}
@@ -312,6 +319,8 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                       status: string;
                       failure_type: string | null;
                       scores?: Record<string, number> | null;
+                      final_score?: number | null;
+                      score_source?: string | null;
                     }) => (
                       <div
                         key={q.question_id}
@@ -347,17 +356,17 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         </div>
                         <div
                           className="question-item__score"
-                          title="Contains accuracy"
+                          title={SCORE_SOURCE_LABEL[q.score_source ?? ''] ?? 'Score'}
                           style={{
                             color:
-                              q.status === 'pending' ? '#f59e0b' : scoreColor(questionContains(q)),
+                              q.status === 'pending' ? '#f59e0b' : scoreColor(questionScore(q)),
                           }}
                         >
                           {q.status === 'pending'
                             ? '—'
-                            : questionContains(q) == null
+                            : questionScore(q) == null
                               ? 'N/A'
-                              : `${Math.round(questionContains(q)! * 100)}%`}
+                              : `${Math.round(questionScore(q)! * 100)}%`}
                         </div>
                         {q.status === 'pending' && (
                           <span
@@ -591,8 +600,7 @@ export function RunHistoryTable({
             <tr>
               {!compact && <th>Run ID</th>}
               {!tableId && <th>Target / Connection</th>}
-              <th>Contains Accuracy</th>
-              <th>Time Shift</th>
+              <th>Score</th>
               {!compact && <th>Questions</th>}
               <th>Status</th>
               <th>Triggered By</th>
@@ -689,8 +697,17 @@ export function RunHistoryTable({
                         )}
                       </span>
                     ) : (
-                      <span className="score-text" style={{ color: scoreColor(run.score) }}>
-                        {formatScore(run.score)}
+                      <span
+                        className="score-text"
+                        style={{
+                          color: scoreColor(runScore(run)),
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                      >
+                        {runScore(run) == null ? '—' : formatScore(runScore(run)!)}
+                        <ScoreInfo breakdown={run.score_breakdown} score={run.final_score} />
                       </span>
                     )}
                     {run.regression_detected && (
@@ -699,18 +716,6 @@ export function RunHistoryTable({
                       </span>
                     )}
                   </div>
-                </td>
-                <td>
-                  {(() => {
-                    const timeShift = timeShiftScore(run.dimension_averages);
-                    return run.status === 'running' ? (
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Calculating…</span>
-                    ) : (
-                      <span className="score-text" style={{ color: scoreColor(timeShift) }}>
-                        {timeShift == null ? '—' : formatScore(timeShift)}
-                      </span>
-                    );
-                  })()}
                 </td>
                 {!compact && <td className="questions-count-cell">{run.total_questions}</td>}
                 <td>
