@@ -374,12 +374,14 @@ async def list_connections():
             result = await session.call_tool(
                 "list_connections",
                 arguments={},
-                read_timeout_seconds=timedelta(seconds=60.0),
+                read_timeout_seconds=timedelta(
+                    seconds=settings.JEEN_MCP_READ_TIMEOUT_SECONDS
+                ),
             )
             content = result.content[0].text
             return json.loads(content)
     except Exception as e:
-        logger.error(f"List connections error: {e}")
+        logger.error(f"List connections error: {type(e).__name__}: {e}")
         return {"connections": []}
 
 
@@ -391,7 +393,9 @@ async def list_connection_tables(connection_id: int):
             result = await session.call_tool(
                 "list_tables_rich",
                 arguments={"connection_id": connection_id},
-                read_timeout_seconds=timedelta(seconds=60.0),
+                read_timeout_seconds=timedelta(
+                    seconds=settings.JEEN_MCP_READ_TIMEOUT_SECONDS
+                ),
             )
             content = result.content[0].text
             rows = json.loads(content)
@@ -417,6 +421,7 @@ async def list_connection_tables(connection_id: int):
             return tables
     except Exception as e:
         logger.error(
-            f"List connection tables error (connection_id={connection_id}): {e}"
+            f"List connection tables error (connection_id={connection_id}): "
+            f"{type(e).__name__}: {e}"
         )
         return []

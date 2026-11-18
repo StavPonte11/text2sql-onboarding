@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     AGENT_URL: str = "http://localhost:8001"
     AGENT_READ_TIMEOUT_SECONDS: float = 900.0
     AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
+    # How long to wait for Jeen's metadata MCP (listing a big connection's
+    # tables can take minutes); the frontend's nginx waits up to 300s
+    JEEN_MCP_READ_TIMEOUT_SECONDS: float = 300.0
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     # Overall deadline for one evaluation run (the service runs it as a
     # background job that the backend polls)
