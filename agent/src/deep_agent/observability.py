@@ -62,8 +62,12 @@ def build_run_config(
     connection_id: int | None = None,
     callbacks: list[BaseCallbackHandler] | None = None,
     tracing: bool | None = None,
+    mode: str | None = None,
 ) -> RunnableConfig:
-    """RunnableConfig for one deep-agent invocation: one Langfuse trace per run, grouped by thread."""
+    """RunnableConfig for one deep-agent invocation: one Langfuse trace per run, grouped by thread.
+
+    Training-mode runs (mode, else DEEP_AGENT_MODE) are tagged `training`, so they don't mix with real usage.
+    """
     handlers = list(callbacks or [])
     if tracing if tracing is not None else settings.DEEP_AGENT_TRACING_ENABLED:
         handler = _langfuse_handler()
@@ -72,21 +76,15 @@ def build_run_config(
 
     metadata: dict[str, Any] = {
         "langfuse_session_id": thread_id,
-        "langfuse_tags": [AGENT_NAME],
+        "langfuse_tags": [AGENT_NAME, *(["training"] if (mode or settings.DEEP_AGENT_MODE) == "training" else [])],
         "agent": AGENT_NAME,
         "agent_version": agent_version(),
         "connection_id": connection_id if connection_id is not None else settings.JEEN_METADATA_CONNECTION_ID,
     }
     if user_id:
         metadata["langfuse_user_id"] = user_id
-    if handlers:
-        from deep_agent.prompts.registry import load_prompt
-
-        prompt = load_prompt("system")
-        if prompt.client is not None:
-            metadata["langfuse_prompt"] = prompt.client  # links generations to the served prompt version
-        metadata["prompt_source"] = prompt.source
-        metadata["prompt_version"] = prompt.version
+    # Each generation is linked to its own agent's prompt version by PromptLinkMiddleware (main agent: system,
+    # reviewer: validator) — not here, where it would apply to every nested agent's calls.
 
     return RunnableConfig(
         configurable={"thread_id": thread_id},

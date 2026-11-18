@@ -10,7 +10,7 @@ Serving the Deep Agent behind the existing `chat_with_agent` MCP tool.
   named `deep:<tool>` (e.g. deep:execute_trino_query), `deep:review:<tool>` for the independent
   reviewer's tools (deep_agent.validator), plus `deep:answer`.
 - Response: the legacy JSON contract (status / summary / sql_query / sql_explanation /
-  interrupt_details / trace_id / execution_path / is_unanswerable) plus `engine`,
+  interrupt_details / trace_id / execution_path / is_unanswerable) plus
   `verification`, `executed`, `recovered_from_text`, `semantic_validation` and `confidence`.
 - Run limit: none by default. A caller that stops waiting after N seconds passes `timeout_s`;
   the run is then cancelled at that point (no tokens spent on an answer nobody receives).
@@ -39,8 +39,8 @@ from deep_agent.validator.reviewer import VALIDATOR_NAME
 
 logger = logging.getLogger(__name__)
 
-_agent = None
-_agent_prompts: tuple[str, ...] | None = None  # the prompt texts _agent was built with
+# model (None = the configured default) -> (agent, the prompt texts it was built with)
+_agents: dict[str | None, tuple[Any, tuple[str, ...] | None]] = {}
 _agent_lock: asyncio.Lock | None = None
 _checkpointer = None
 _pg_pool = None
@@ -73,34 +73,44 @@ def _current_prompts() -> tuple[str, ...]:
     return tuple(load_prompt(key).text for key in PROMPT_KEYS)
 
 
-async def get_deep_agent():
-    """The process-wide Deep Agent, rebuilt when one of its prompts changed (e.g. a Langfuse label moved).
+async def get_deep_agent(model: str | None = None):
+    """The process-wide Deep Agent for `model` (None = the configured default), rebuilt when a prompt changed.
 
-    Checked per request, so a run keeps the prompt it started with and the next request gets the new one.
+    One agent per model: the chosen model is both the agent and its reviewer. Prompts are checked per request,
+    so a run keeps the prompt it started with and the next request gets the new one.
     """
-    global _agent, _agent_prompts, _agent_lock, _checkpointer
+    global _agent_lock, _checkpointer
     prompts = await asyncio.to_thread(_current_prompts)
-    if _agent is not None and prompts == _agent_prompts:
-        return _agent
+    cached = _agents.get(model)
+    if cached is not None and cached[1] == prompts:
+        return cached[0]
     if _agent_lock is None:
         _agent_lock = asyncio.Lock()
     async with _agent_lock:
-        if _agent is None or prompts != _agent_prompts:
+        cached = _agents.get(model)
+        if cached is None or cached[1] != prompts:
+            from agent.llm import get_llm
             from deep_agent.agent import create_deep_agent
 
             if _checkpointer is None:
                 _checkpointer = await build_checkpointer()
-            if _agent is not None:
-                logger.info("Deep agent prompts changed — rebuilding the agent")
-            _agent = create_deep_agent(checkpointer=_checkpointer)
-            _agent_prompts = prompts
-    return _agent
+            if cached is not None:
+                logger.info("Deep agent prompts changed — rebuilding the agent (model=%s)", model or "default")
+            if model is None:
+                agent = create_deep_agent(checkpointer=_checkpointer)
+            else:
+                llm = get_llm(model=model)
+                agent = create_deep_agent(checkpointer=_checkpointer, model=llm, validator_model=llm)
+            _agents[model] = (agent, prompts)
+    return _agents[model][0]
 
 
 def reset_for_tests(agent=None) -> None:
-    global _agent, _agent_prompts, _agent_lock, _checkpointer
-    _agent, _agent_lock, _checkpointer = agent, None, None
-    _agent_prompts = _current_prompts() if agent is not None else None
+    global _agent_lock, _checkpointer
+    _agents.clear()
+    _agent_lock, _checkpointer = None, None
+    if agent is not None:
+        _agents[None] = (agent, _current_prompts())
 
 
 class StreamPublisher(AsyncCallbackHandler):
@@ -134,7 +144,6 @@ def to_response(thread_id: str, final_result: dict[str, Any], trace_id: str | No
     status = final_result.get("status", "no_answer")
     base = {
         "thread_id": thread_id,
-        "engine": "deep",
         "verification": status,
         "executed": bool(final_result.get("executed")),
         "recovered_from_text": bool(final_result.get("recovered_from_text")),
@@ -181,18 +190,24 @@ async def run_deep_chat(
     resume_value: str | dict | None = None,
     user_id: str | None = None,
     timeout_s: float | None = None,
+    model: str | None = None,
     agent=None,
 ) -> dict[str, Any]:
     """One chat turn on the Deep Agent, in the legacy chat_with_agent response shape.
 
     timeout_s: how long the caller will wait. The run is cancelled when it expires; None = no limit.
+    model: a model LLM_BASE_URL serves (agent and reviewer); None = the configured default.
     """
     message = query if resume_value is None else _resume_text(resume_value)
     if not message:
         return {"error": "Query is required for new chat session." if resume_value is None
                 else "resume_value must be the user's answer (a string or {'feedback': ...})."}
 
-    agent = agent or await get_deep_agent()
+    agent = agent or await get_deep_agent(model)
+    if resume_value is not None:
+        existing = await agent.aget_state({"configurable": {"thread_id": thread_id}})
+        if not existing.values:  # an answer to a question this agent never asked
+            return {"error": f"Thread ID '{thread_id}' not found or has no active session."}
     context = DeepAgentContext(connection_id=connection_id, user_id=user_id)
     publisher = StreamPublisher(thread_id)
     config = observability.build_run_config(thread_id, user_id=user_id, connection_id=connection_id,

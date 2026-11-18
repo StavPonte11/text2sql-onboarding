@@ -31,7 +31,8 @@ def _run_through_core(error: dict) -> TrinoExecutionResult:
 def test_trino_errors_are_passed_through_unchanged(error):
     res = _run_through_core(error)
     assert res.success is False
-    assert res.error_message == error["message"]  # clean message, not the exception repr
+    assert res.trino_message == error["message"]  # Trino's own message, for the deep agent
+    assert res.error_message.startswith("TrinoUserError(") and error["errorName"] in res.error_message  # unchanged for legacy
     assert res.query_id == "20261020_000000_00001_abcde"
 
     out = trino_errors.from_result(res)

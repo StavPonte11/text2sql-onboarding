@@ -52,18 +52,22 @@ class AgentSettings(BaseSettings):
     DEEP_AGENT_MAX_SAMPLE_ROWS: int | None = Field(default=10, gt=0)  # get_sample_rows
     DEEP_AGENT_TRACING_ENABLED: bool = True  # Langfuse callbacks, span metadata and run scores
     DEEP_AGENT_CLARIFICATIONS_ENABLED: bool = False  # let the model ask a clarifying question instead of answering
+    # serving = guardrails so today's model answers reliably (reviewer required, submit fallback);
+    # training = the environment only observes: on-demand reviewer, no submit fallback, a model-call bound
+    # (an RL environment — see deep_agent/run_mode.py). Not exposed on the MCP tool.
+    DEEP_AGENT_MODE: Literal["serving", "training"] = "serving"
     # Independent semantic review (see deep_agent/validator/), by the `semantic-validator` subagent:
     # always = submit_answer is accepted only for SQL it passed (or that the agent disputes);
     # on_demand = the agent may call it, submit only requires that the SQL ran; off = no reviewer.
-    DEEP_AGENT_SEMANTIC_VALIDATION: Literal["always", "on_demand", "off"] = "always"
+    # Unset = by mode (serving: always, training: on_demand).
+    DEEP_AGENT_SEMANTIC_VALIDATION: Literal["always", "on_demand", "off"] | None = None
     DEEP_AGENT_VALIDATOR_MAX_ROUNDS: int | None = Field(default=None, gt=0)  # reviews per turn before submit stops requiring one; "none" = no limit
-    # Strict submit: no recovery of answers written as text and no "submit now" reminder — a model that doesn't
-    # call submit_answer (or the reviewer submit_verdict) simply ends without an answer.
-    DEEP_AGENT_STRICT_SUBMIT: bool = False
+    DEEP_AGENT_TRAINING_MAX_MODEL_CALLS: int = Field(default=30, gt=0)  # training only: model calls per run, then no answer
     JEEN_METADATA_CACHE_TTL_S: float = Field(default=300.0, ge=0)  # metadata read cache (0 disables)
     JEEN_METADATA_REUSE_SESSION: bool = True                       # keep one MCP session open per event loop
-    # Prompts (see deep_agent/prompts/registry.py). Off until the prompts are finalised and synced to Langfuse.
-    DEEP_AGENT_LANGFUSE_PROMPTS: bool = False      # serve deep-agent/<name> prompts from Langfuse (packaged .md fallback)
+    # Prompts (see deep_agent/prompts/registry.py): Langfuse is the source of truth; the packaged .md files are the
+    # fallback when Langfuse is unreachable or has no such prompt. Set false to always use the packaged files.
+    DEEP_AGENT_LANGFUSE_PROMPTS: bool = True       # serve text2sql/deep_agent/<name> prompts from Langfuse
     DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
     DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
     # Serving (see deep_agent/service.py)
