@@ -93,9 +93,10 @@ describe('LLM model choice', () => {
     const user = userEvent.setup();
     renderWithProviders(<AgentModelSelect value="" onChange={() => {}} />);
     expect(await screen.findByText('gemma4:e4b')).toBeInTheDocument();
-    expect(screen.getByText('default')).toBeInTheDocument();
+    expect(screen.queryByText('default')).toBeNull(); // the box shows the name alone
     await user.click(screen.getByRole('combobox', { name: 'LLM model for the evaluation' }));
     expect((await screen.findAllByText('gpt-oss:20b')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('default')).toBeInTheDocument(); // marked in the list
   });
 
   test("names the agent's model and warns when it can't list models", async () => {

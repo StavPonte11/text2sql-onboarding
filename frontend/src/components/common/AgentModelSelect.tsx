@@ -60,6 +60,8 @@ export function AgentModelSelect({
       value={isPrevious ? undefined : value || defaultModel || undefined}
       placeholder={isPrevious ? "The agent's own model" : "Agent's default model"}
       onChange={(model: string) => onChange(model === defaultModel ? '' : model)}
+      // the box shows the name alone; "default" is marked in the list
+      labelRender={({ value: model }) => model}
       options={models.map((model) => ({
         value: model,
         label:
