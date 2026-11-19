@@ -61,8 +61,9 @@ logger = logging.getLogger(__name__)
 
 
 # The Text-to-SQL agents an evaluation can run: the current connection-based
-# one, or the previous TextToSQL agent (evaluation service PREVIOUS_AGENT_*)
-EvalAgent = Literal["current", "previous"]
+# one (chat_with_agent), the Deep Agent (deep_agent on the same agent server),
+# or the previous TextToSQL agent (evaluation service PREVIOUS_AGENT_*)
+EvalAgent = Literal["current", "deep", "previous"]
 
 RUN_NAME_MAX_LENGTH = 200
 
@@ -606,7 +607,7 @@ async def trigger_dataset_run(
         connection_name=conn_name,
         dataset_id=actual_dataset_to_run,
         # The previous agent has no model choice
-        agent_model=(model or None) if agent == "current" else None,
+        agent_model=(model or None) if agent != "previous" else None,
         agent=agent,
         name=_run_name(name),
         status=EvalStatus.running,
@@ -783,7 +784,7 @@ async def trigger_connection_run(
         question_tags=selected_tags,
         question_ids=question_ids,
         # The previous agent has no model choice
-        agent_model=(model or None) if agent == "current" else None,
+        agent_model=(model or None) if agent != "previous" else None,
         agent=agent,
         name=_run_name(name),
         status=EvalStatus.running,

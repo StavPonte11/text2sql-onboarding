@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Input, Segmented, Select, Tooltip } from 'antd';
 
 import { useAgentModels } from '../../hooks/useEvaluations';
@@ -8,11 +9,13 @@ import './AgentModelSelect.css';
 
 export const AGENT_LABELS: Record<EvalAgent, string> = {
   current: 'Current agent',
+  deep: 'Deep Agent',
   previous: 'Previous agent (TextToSQL)',
 };
 
 const AGENT_OPTIONS: { label: string; value: EvalAgent }[] = [
   { label: 'Current', value: 'current' },
+  { label: 'Deep', value: 'deep' },
   { label: 'Previous (TextToSQL)', value: 'previous' },
 ];
 
@@ -45,7 +48,18 @@ export function AgentModelSelect({
     ...(data?.models ?? []).filter((model) => model !== defaultModel),
   ];
   const listError = data?.list_error ?? null;
+  const agents = data?.agents;
+  // Before the agent server answers, only the current agent is offered
+  const agentInfo = (name: EvalAgent) =>
+    agents?.[name] ?? { available: name !== 'deep', supports_model: name === 'current' };
+  // The previous agent, and agent versions whose tool takes no model, run on their own
   const isPrevious = agent === 'previous';
+  const noModelChoice = isPrevious || (!!agents && !agentInfo(agent).supports_model);
+
+  // A model picked for another agent is not sent to one that can't take it
+  useEffect(() => {
+    if (noModelChoice && value) onChange('');
+  }, [noModelChoice, value, onChange]);
 
   const modelSelect = (
     <Select
@@ -54,7 +68,7 @@ export function AgentModelSelect({
       popupMatchSelectWidth={false}
       showSearch
       loading={isLoading}
-      disabled={disabled || isPrevious}
+      disabled={disabled || noModelChoice}
       status={listError && !isPrevious ? 'warning' : undefined}
       // '' is the default model: show it by name
       value={isPrevious ? undefined : value || defaultModel || undefined}
@@ -98,7 +112,21 @@ export function AgentModelSelect({
               value={agent}
               onChange={onAgentChange}
               disabled={disabled}
-              options={AGENT_OPTIONS}
+              options={AGENT_OPTIONS.map((option) => {
+                const info = agentInfo(option.value);
+                return {
+                  value: option.value,
+                  disabled: !info.available,
+                  label:
+                    info.available || !info.reason ? (
+                      option.label
+                    ) : (
+                      <Tooltip title={info.reason}>
+                        <span>{option.label}</span>
+                      </Tooltip>
+                    ),
+                };
+              })}
             />
           </div>
         )}
@@ -111,6 +139,11 @@ export function AgentModelSelect({
           )}
         </div>
       </div>
+      {agent === 'deep' && noModelChoice && (
+        <span className="eval-run-settings__note">
+          This Deep Agent version can't switch models; it runs on its own.
+        </span>
+      )}
       {isPrevious && (
         <span className="eval-run-settings__note">
           The previous agent runs on its own model and looks in the evaluation service's

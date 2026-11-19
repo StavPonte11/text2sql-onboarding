@@ -167,4 +167,96 @@ describe('LLM model choice', () => {
     await user.click(screen.getByText('launch named'));
     await waitFor(() => expect(url?.searchParams.get('name')).toBe('Baseline'));
   });
+
+  test('the Deep option is off, with the reason, when the agent server has no deep_agent', async () => {
+    server.use(
+      http.get(`${API}/evaluations/models`, () =>
+        HttpResponse.json({
+          models: ['openai/gpt-oss-120b'],
+          default: 'openai/gpt-oss-120b',
+          agents: {
+            current: { available: true, supports_model: false },
+            deep: {
+              available: false,
+              supports_model: false,
+              reason: 'This agent version has no deep_agent tool',
+            },
+            previous: { available: true, supports_model: false },
+          },
+        }),
+      ),
+    );
+    const picked: string[] = [];
+    const user = userEvent.setup();
+    renderWithProviders(
+      <AgentModelSelect
+        value=""
+        onChange={() => {}}
+        agent="current"
+        onAgentChange={(a) => picked.push(a)}
+      />,
+    );
+    await screen.findByText('openai/gpt-oss-120b');
+    await user.click(screen.getByText('Deep'));
+    expect(picked).toEqual([]); // can't be chosen
+    await user.hover(screen.getByText('Deep'));
+    expect(await screen.findByText(/no deep_agent tool/)).toBeInTheDocument();
+    // this agent version takes no model
+    expect(screen.getByRole('combobox', { name: 'LLM model for the evaluation' })).toBeDisabled();
+  });
+
+  test('the Deep Agent keeps its model choice when it takes one', async () => {
+    server.use(
+      http.get(`${API}/evaluations/models`, () =>
+        HttpResponse.json({
+          models: ['gemma4:e4b', 'gpt-oss:20b'],
+          default: 'gemma4:e4b',
+          agents: {
+            current: { available: true, supports_model: true },
+            deep: { available: true, supports_model: true },
+            previous: { available: true, supports_model: false },
+          },
+        }),
+      ),
+    );
+    const chosen: string[] = [];
+    renderWithProviders(
+      <AgentModelSelect
+        value="gpt-oss:20b"
+        onChange={(m) => chosen.push(m)}
+        agent="deep"
+        onAgentChange={() => {}}
+      />,
+    );
+    await screen.findByText('gpt-oss:20b');
+    expect(screen.getByRole('combobox', { name: 'LLM model for the evaluation' })).toBeEnabled();
+    expect(chosen).toEqual([]); // the chosen model stays
+  });
+
+  test('a model picked earlier is dropped for an agent that takes none', async () => {
+    server.use(
+      http.get(`${API}/evaluations/models`, () =>
+        HttpResponse.json({
+          models: ['gemma4:e4b', 'gpt-oss:20b'],
+          default: 'gemma4:e4b',
+          agents: {
+            current: { available: true, supports_model: true },
+            deep: { available: true, supports_model: false },
+            previous: { available: true, supports_model: false },
+          },
+        }),
+      ),
+    );
+    const chosen: string[] = [];
+    renderWithProviders(
+      <AgentModelSelect
+        value="gpt-oss:20b"
+        onChange={(m) => chosen.push(m)}
+        agent="deep"
+        onAgentChange={() => {}}
+      />,
+    );
+    await waitFor(() => expect(chosen).toEqual(['']));
+    expect(screen.getByText(/can't switch models; it runs on its own/)).toBeInTheDocument();
+  });
 });

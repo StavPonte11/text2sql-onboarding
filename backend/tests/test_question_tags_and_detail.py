@@ -387,7 +387,8 @@ def test_run_connection_rejects_an_unknown_agent(client):
     assert response.status_code == 422
 
 
-def _agent_session(tool_names, list_result=None):
+def _agent_session(tool_names, list_result=None, schemas=None):
+    schemas = schemas or {}
     session = MagicMock()
     session.initialize = AsyncMock()
     session.list_tools = AsyncMock(
@@ -397,6 +398,7 @@ def _agent_session(tool_names, list_result=None):
         session.list_tools.return_value.tools, tool_names, strict=True
     ):
         tool.name = name
+        tool.inputSchema = schemas.get(name, {"properties": {}})
     session.call_tool = AsyncMock(
         return_value=MagicMock(content=[MagicMock(text=list_result)])
     )
@@ -431,6 +433,7 @@ def test_models_endpoint_lists_the_agents_models(client):
     stream, client_session = _patch_agent(session)
     with stream, client_session:
         body = client.get("/api/evaluations/models").json()
+    body.pop("agents")
     assert body == {
         "models": ["gemma4:e4b", "gpt-oss:20b"],
         "default": "gemma4:e4b",
@@ -462,6 +465,61 @@ def test_models_endpoint_names_the_agents_model_when_it_cant_list(client):
     assert body["default"] == "openai/gpt-oss-120b"
     assert body["models"] == ["openai/gpt-oss-120b"]
     assert "runs on openai/gpt-oss-120b" in body["list_error"]
+
+
+def test_models_endpoint_says_which_agents_are_offered(client):
+    stream, client_session = _patch_agent(
+        _agent_session(
+            ["chat_with_agent", "deep_agent", "list_models"],
+            '{"models": ["gpt-oss:20b"], "default": "gpt-oss:20b"}',
+            schemas={
+                "chat_with_agent": {"properties": {"query": {}, "model": {}}},
+                "deep_agent": {"properties": {"query": {}, "timeout_s": {}}},
+            },
+        )
+    )
+    with stream, client_session:
+        agents = client.get("/api/evaluations/models").json()["agents"]
+    assert agents["current"] == {
+        "available": True,
+        "supports_model": True,
+        "reason": None,
+    }
+    # offered, but this version takes no model
+    assert agents["deep"]["available"] and not agents["deep"]["supports_model"]
+    assert agents["previous"]["available"]
+
+
+def test_models_endpoint_without_the_deep_agent(client):
+    stream, client_session = _patch_agent(_agent_session(["chat_with_agent"]))
+    with stream, client_session:
+        agents = client.get("/api/evaluations/models").json()["agents"]
+    assert agents["current"]["available"]
+    assert not agents["deep"]["available"]
+    assert "deep_agent" in agents["deep"]["reason"]
+
+
+def test_run_connection_with_the_deep_agent(client, test_engine):
+    response, _ = _run_connection(
+        client,
+        next(_next_connection),
+        _pairs(["a"]),
+        agent="deep",
+        model="gpt-oss:20b",
+    )
+    assert response.json()["agent"] == "deep"
+    assert response.json()["agent_model"] == "gpt-oss:20b"
+    with (
+        patch(f"{ORCH}.engine", test_engine),
+        patch(
+            f"{ORCH}._call_run_new_evaluation", side_effect=RuntimeError("stop")
+        ) as call,
+    ):
+        from app.routers.orchestration import _run_dataset_pipeline
+
+        _run_dataset_pipeline("ds", response.json()["id"])
+    assert call.call_args.args[0]["agent"] == "deep"
+    assert call.call_args.args[0]["model"] == "gpt-oss:20b"
 
 
 def test_run_is_named_at_launch_and_renamed_after(client, db_session):

@@ -512,7 +512,7 @@ function EvaluationTab({
         connectionId,
         connectionName,
         tags: selectedTags,
-        model: agent === 'current' ? model || undefined : undefined,
+        model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
       },

@@ -226,14 +226,22 @@ export interface QuestionResultDetail {
   trace_unavailable_reason: string | null;
 }
 
-/** The current connection-based agent, or the previous TextToSQL agent */
-export type EvalAgent = 'current' | 'previous';
+/** The current connection-based agent, the Deep Agent, or the previous TextToSQL agent */
+export type EvalAgent = 'current' | 'deep' | 'previous';
+
+/** Whether the agent server offers an agent, and whether it takes a model */
+export interface EvalAgentInfo {
+  available: boolean;
+  supports_model: boolean;
+  reason?: string | null;
+}
 
 /** The models the agent's LLM endpoint serves, and the one used when none is chosen */
 export interface AgentModels {
   models: string[];
   default: string | null;
   list_error?: string | null;
+  agents?: Partial<Record<EvalAgent, EvalAgentInfo>>;
 }
 
 export const orchestrationApi = {

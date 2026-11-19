@@ -690,13 +690,13 @@ export function RunHistoryTable({
                             {run.agent_model}
                           </span>
                         )}
-                        {run.agent === 'previous' && (
+                        {run.agent && run.agent !== 'current' && (
                           <span
                             className="badge badge--neutral"
                             style={{ fontSize: 10.5 }}
                             title="Text-to-SQL agent that answered"
                           >
-                            {AGENT_LABELS.previous}
+                            {AGENT_LABELS[run.agent]}
                           </span>
                         )}
                       </span>
