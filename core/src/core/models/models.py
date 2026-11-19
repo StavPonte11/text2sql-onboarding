@@ -180,6 +180,8 @@ class EvalRun(SQLModel, table=True):
     agent_model: str | None = None
     # Which Text-to-SQL agent answered: None/"current" or "previous"
     agent: str | None = None
+    # A name the user gave the run, before or after it ran
+    name: str | None = None
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -220,6 +222,7 @@ class EvalRunRead(SQLModel):
     question_tags: list[str] | None = None
     agent_model: str | None = None
     agent: str | None = None
+    name: str | None = None
     # Time shift per question when it has one, else contains accuracy, averaged
     final_score: float | None = None
     score_breakdown: dict[str, Any] | None = None

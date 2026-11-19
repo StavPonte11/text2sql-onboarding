@@ -99,6 +99,32 @@ describe('live evaluation progress', () => {
     expect(screen.getByText('0.50 so far')).toBeInTheDocument(); // the score so far
     expect(screen.getByText('Question Results (3)')).toBeInTheDocument();
   });
+
+  test('shows the run name and renames the run from its details', async () => {
+    let renamed: unknown;
+    server.use(
+      http.get(`${API}/evaluations/runs`, () =>
+        HttpResponse.json([{ ...runningRun, name: 'Baseline' }]),
+      ),
+      http.get(`${API}/evaluations/runs/run-live/report`, () =>
+        HttpResponse.json({ ...runningReport, name: 'Baseline' }),
+      ),
+      http.patch(`${API}/evaluations/runs/run-live`, async ({ request }) => {
+        renamed = await request.json();
+        return HttpResponse.json({ ...runningRun, name: 'After fix' });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<RunHistoryTable limit={10} />);
+
+    await user.click(await screen.findByText('Baseline')); // the row shows the name
+    await user.click(await screen.findByRole('button', { name: 'Rename run' }));
+    const box = screen.getByRole('textbox');
+    await user.clear(box);
+    await user.type(box, 'After fix');
+    await user.tab(); // leaving the box saves it
+    await waitFor(() => expect(renamed).toEqual({ name: 'After fix' }));
+  });
 });
 
 describe('finished run details', () => {

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
     AGENT_READ_TIMEOUT_SECONDS: float = 900.0
+    # The model the agent runs on (its LLM_MODEL). Shown as the default in the
+    # evaluation model picker when the agent can't list its models itself.
+    AGENT_LLM_MODEL: str = ""
     AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
     # How long to wait for Jeen's metadata MCP (listing a big connection's
     # tables can take minutes); the frontend's nginx waits up to 300s

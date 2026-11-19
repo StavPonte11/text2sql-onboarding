@@ -49,6 +49,7 @@ export function useTriggerConnectionRun() {
       tags,
       model,
       agent,
+      name,
     }: {
       connectionId: number;
       connectionName?: string;
@@ -57,6 +58,7 @@ export function useTriggerConnectionRun() {
       tags?: string[];
       model?: string;
       agent?: EvalAgent;
+      name?: string;
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -66,6 +68,7 @@ export function useTriggerConnectionRun() {
         tags,
         model,
         agent,
+        name,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -83,6 +86,18 @@ export function useAgentModels() {
 }
 
 // ── Stop/cancel evaluation run ───────────────────────────────────────────────
+export function useRenameEvalRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, name }: { runId: string; name: string }) =>
+      orchestrationApi.renameRun(runId, name),
+    onSuccess: (run) => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+      queryClient.invalidateQueries({ queryKey: ['run-report', run.id] });
+    },
+  });
+}
+
 export function useStopEvalRun() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -172,14 +187,23 @@ export function useTriggerDatasetRun() {
       connectionName,
       model,
       agent,
+      name,
     }: {
       datasetName: string;
       connectionId?: number;
       connectionName?: string;
       model?: string;
       agent?: EvalAgent;
+      name?: string;
     }) =>
-      orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName, model, agent),
+      orchestrationApi.triggerDatasetRun(
+        datasetName,
+        connectionId,
+        connectionName,
+        model,
+        agent,
+        name,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

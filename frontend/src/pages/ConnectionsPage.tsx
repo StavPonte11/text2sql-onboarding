@@ -500,6 +500,7 @@ function EvaluationTab({
   const questionCount = selectedQuestions.length;
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
+  const [runName, setRunName] = useState('');
 
   const handleLaunch = () => {
     if (questionCount === 0) {
@@ -513,9 +514,11 @@ function EvaluationTab({
         tags: selectedTags,
         model: agent === 'current' ? model || undefined : undefined,
         agent,
+        name: runName,
       },
       {
         onSuccess: (run: any) => {
+          setRunName('');
           message.success(`Evaluation triggered! (Run ID: ${run.id?.slice(0, 8)}…)`);
           navigate('/evaluations');
         },
@@ -567,7 +570,14 @@ function EvaluationTab({
       </div>
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
-      <AgentModelSelect value={model} onChange={setModel} agent={agent} onAgentChange={setAgent} />
+      <AgentModelSelect
+        value={model}
+        onChange={setModel}
+        agent={agent}
+        onAgentChange={setAgent}
+        runName={runName}
+        onRunNameChange={setRunName}
+      />
 
       {questionCount > 0 && (
         <div className="eval-question-list">

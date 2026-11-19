@@ -37,6 +37,7 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -62,6 +63,18 @@ logger = logging.getLogger(__name__)
 # The Text-to-SQL agents an evaluation can run: the current connection-based
 # one, or the previous TextToSQL agent (evaluation service PREVIOUS_AGENT_*)
 EvalAgent = Literal["current", "previous"]
+
+RUN_NAME_MAX_LENGTH = 200
+
+
+def _run_name(name: str | None) -> str | None:
+    """A run's name, trimmed; blank means no name."""
+    return (name or "").strip() or None
+
+
+class RunRename(BaseModel):
+    name: str | None = Field(default=None, max_length=RUN_NAME_MAX_LENGTH)
+
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -452,6 +465,7 @@ async def trigger_dataset_run(
     connection_name: str | None = Query(default=None),
     model: str | None = Query(default=None),
     agent: EvalAgent = Query(default="current"),
+    name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
     session: Session = Depends(get_session),
 ):
     if connection_id is None:
@@ -594,6 +608,7 @@ async def trigger_dataset_run(
         # The previous agent has no model choice
         agent_model=(model or None) if agent == "current" else None,
         agent=agent,
+        name=_run_name(name),
         status=EvalStatus.running,
     )
     session.add(run)
@@ -633,6 +648,7 @@ async def trigger_connection_run(
     tags: list[str] | None = Query(default=None),
     model: str | None = Query(default=None),
     agent: EvalAgent = Query(default="current"),
+    name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
     session: Session = Depends(get_session),
 ):
     """Evaluate a connection's golden questions: those with any of `tags`, or all."""
@@ -769,6 +785,7 @@ async def trigger_connection_run(
         # The previous agent has no model choice
         agent_model=(model or None) if agent == "current" else None,
         agent=agent,
+        name=_run_name(name),
         status=EvalStatus.running,
     )
     session.add(run)
@@ -891,6 +908,18 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
             "connection_name": run.connection_name,
         },
     )
+
+
+@router.patch("/runs/{run_id}", response_model=EvalRunRead)
+def rename_run(run_id: str, body: RunRename, session: Session = Depends(get_session)):
+    """Name (or, with an empty name, unname) a run, while it runs or after."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    run.name = _run_name(body.name)
+    session.add(run)
+    session.commit()
+    return get_run(run_id, session)
 
 
 @router.post("/runs/{run_id}/stop", response_model=EvalRunRead)
@@ -1076,6 +1105,7 @@ def export_run_results(
         "score": run_final_score,
         "connection_id": run.connection_id,
         "connection_name": run.connection_name,
+        "name": run.name,
         "agent_model": run.agent_model,
         "agent": run.agent or "current",
         "status": run.status,
@@ -1191,6 +1221,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
+        "name": run.name,
+        "agent": run.agent or "current",
+        "agent_model": run.agent_model,
         "promotion_run_id": run.promotion_run_id,
         "is_publishable": run.score >= 0.50
         if run.status == EvalStatus.completed

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { Typography } from 'antd';
 import dayjs from 'dayjs';
 import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
-import { useStopEvalRun } from '../../hooks/useEvaluations';
+import { useRenameEvalRun, useStopEvalRun } from '../../hooks/useEvaluations';
 import { AGENT_LABELS } from '../common/AgentModelSelect';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 import { QuestionResultModal } from './QuestionResultModal';
@@ -92,6 +93,28 @@ function RunProgress({ completed, total }: { completed: number; total: number })
 }
 
 // ── Run detail drawer ──────────────────────────────────────────────────────────
+/** The run's name, renamed in place (an empty name removes it) */
+function RunNameEditor({ runId, name }: { runId: string; name: string | null }) {
+  const renameMut = useRenameEvalRun();
+  return (
+    <Typography.Text
+      className="run-name-editor"
+      type={name ? undefined : 'secondary'}
+      editable={{
+        text: name ?? '',
+        tooltip: 'Rename run',
+        maxLength: 200,
+        triggerType: ['icon', 'text'],
+        onChange: (value) => {
+          if (value.trim() !== (name ?? '')) renameMut.mutate({ runId, name: value });
+        },
+      }}
+    >
+      {name || 'Unnamed run — click to name it'}
+    </Typography.Text>
+  );
+}
+
 function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => void }) {
   const stopMut = useStopEvalRun();
   const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
@@ -123,7 +146,10 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
       {/* panel */}
       <div className="run-detail-panel">
         <div className="run-detail-header">
-          <div className="run-detail-title">Run Details</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <div className="run-detail-title">Run Details</div>
+            {report && <RunNameEditor runId={runId} name={report.name ?? null} />}
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {report?.status === 'running' && (
               <button
@@ -622,6 +648,11 @@ export function RunHistoryTable({
                 )}
                 {!tableId && (
                   <td className="table-link-cell">
+                    {run.name && (
+                      <div className="run-history-name" title={run.name}>
+                        {run.name}
+                      </div>
+                    )}
                     {run.connection_id ? (
                       <span
                         className="table-link run-table-name"

@@ -440,9 +440,57 @@ def test_models_endpoint_lists_the_agents_models(client):
 
 def test_models_endpoint_with_an_agent_that_cant_choose(client):
     stream, client_session = _patch_agent(_agent_session(["chat_with_agent"]))
-    with stream, client_session:
+    with (
+        stream,
+        client_session,
+        patch("app.services.agent_models.settings.AGENT_LLM_MODEL", ""),
+    ):
         body = client.get("/api/evaluations/models").json()
-    assert body["models"] == [] and "default" in body["list_error"]
+    assert body["models"] == [] and "AGENT_LLM_MODEL" in body["list_error"]
+
+
+def test_models_endpoint_names_the_agents_model_when_it_cant_list(client):
+    stream, client_session = _patch_agent(_agent_session(["chat_with_agent"]))
+    with (
+        stream,
+        client_session,
+        patch(
+            "app.services.agent_models.settings.AGENT_LLM_MODEL", "openai/gpt-oss-120b"
+        ),
+    ):
+        body = client.get("/api/evaluations/models").json()
+    assert body["default"] == "openai/gpt-oss-120b"
+    assert body["models"] == ["openai/gpt-oss-120b"]
+    assert "runs on openai/gpt-oss-120b" in body["list_error"]
+
+
+def test_run_is_named_at_launch_and_renamed_after(client, db_session):
+    response, _ = _run_connection(
+        client, next(_next_connection), _pairs(["a"]), name="  Baseline  "
+    )
+    assert response.status_code == 202
+    run_id = response.json()["id"]
+    assert response.json()["name"] == "Baseline"
+
+    renamed = client.patch(
+        f"/api/evaluations/runs/{run_id}", json={"name": "After prompt fix"}
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "After prompt fix"
+    assert client.get(f"/api/evaluations/runs/{run_id}").json()["name"] == (
+        "After prompt fix"
+    )
+
+    # a blank name removes it
+    cleared = client.patch(f"/api/evaluations/runs/{run_id}", json={"name": "  "})
+    assert cleared.json()["name"] is None
+
+
+def test_renaming_an_unknown_run(client):
+    assert (
+        client.patch("/api/evaluations/runs/nope", json={"name": "x"}).status_code
+        == 404
+    )
 
 
 def test_models_endpoint_when_the_agent_is_down(client):

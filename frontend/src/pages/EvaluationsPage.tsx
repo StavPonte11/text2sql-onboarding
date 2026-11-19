@@ -462,6 +462,7 @@ function ConnectionRunPanel({
 
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
+  const [runName, setRunName] = useState('');
 
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
@@ -480,9 +481,11 @@ function ConnectionRunPanel({
         tags: selectedTags,
         model: agent === 'current' ? model || undefined : undefined,
         agent,
+        name: runName,
       },
       {
         onSuccess: (run) => {
+          setRunName('');
           message.success(`Evaluation launched for ${activeConn?.name || selectedConnection}`);
           setRunningRunId(run.id);
           onLaunch?.();
@@ -629,7 +632,14 @@ function ConnectionRunPanel({
       )}
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
-      <AgentModelSelect value={model} onChange={setModel} agent={agent} onAgentChange={setAgent} />
+      <AgentModelSelect
+        value={model}
+        onChange={setModel}
+        agent={agent}
+        onAgentChange={setAgent}
+        runName={runName}
+        onRunNameChange={setRunName}
+      />
 
       {/* Main CTA */}
       <button
@@ -943,6 +953,7 @@ function DatasetRunPanel({
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
+  const [runName, setRunName] = useState('');
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -964,9 +975,11 @@ function DatasetRunPanel({
         connectionName: connObj?.name,
         model: agent === 'current' ? model || undefined : undefined,
         agent,
+        name: runName,
       },
       {
         onSuccess: (run) => {
+          setRunName('');
           setRunningRunId(run.id);
           // Switch to history tab so the user can watch progress
           onLaunch?.();
@@ -1012,6 +1025,8 @@ function DatasetRunPanel({
           onChange={setModel}
           agent={agent}
           onAgentChange={setAgent}
+          runName={runName}
+          onRunNameChange={setRunName}
         />
       </div>
 

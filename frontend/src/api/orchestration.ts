@@ -29,6 +29,8 @@ export interface EvalRunFull {
   agent_model?: string | null;
   /** The Text-to-SQL agent that answered; null/'current' = the current one */
   agent?: EvalAgent | null;
+  /** A name the user gave the run, before or after it ran */
+  name?: string | null;
   /** Average question score (time shift, else contains accuracy) */
   final_score?: number | null;
   score_breakdown?: ScoreBreakdown | null;
@@ -244,6 +246,7 @@ export const orchestrationApi = {
     tags?: string[],
     model?: string,
     agent: EvalAgent = 'current',
+    name?: string,
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -255,6 +258,7 @@ export const orchestrationApi = {
           ...(tags?.length ? { tags } : {}),
           ...(model ? { model } : {}),
           ...(agent !== 'current' ? { agent } : {}),
+          ...(name?.trim() ? { name: name.trim() } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },
@@ -275,6 +279,7 @@ export const orchestrationApi = {
     connection_name?: string,
     model?: string,
     agent: EvalAgent = 'current',
+    name?: string,
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-dataset', null, {
@@ -284,6 +289,7 @@ export const orchestrationApi = {
           ...(connection_name ? { connection_name } : {}),
           ...(model ? { model } : {}),
           ...(agent !== 'current' ? { agent } : {}),
+          ...(name?.trim() ? { name: name.trim() } : {}),
         },
       })
       .then((r) => r.data),
@@ -326,6 +332,10 @@ export const orchestrationApi = {
 
   getRun: (run_id: string) =>
     api.get<EvalRunFull>(`/evaluations/runs/${run_id}`).then((r) => r.data),
+
+  /** Name a run; an empty name removes it */
+  renameRun: (run_id: string, name: string) =>
+    api.patch<EvalRunFull>(`/evaluations/runs/${run_id}`, { name }).then((r) => r.data),
 
   stopRun: (run_id: string) =>
     api.post<EvalRunFull>(`/evaluations/runs/${run_id}/stop`).then((r) => r.data),
