@@ -12,6 +12,7 @@ New endpoints:
 
 import logging
 from datetime import datetime, timedelta
+from typing import Literal
 
 import requests
 from core.db.engine import engine, get_session
@@ -56,6 +57,11 @@ from app.services.langfuse_client import langfuse_client
 from app.services.run_score import question_score, run_score
 
 logger = logging.getLogger(__name__)
+
+
+# The Text-to-SQL agents an evaluation can run: the current connection-based
+# one, or the previous TextToSQL agent (evaluation service PREVIOUS_AGENT_*)
+EvalAgent = Literal["current", "previous"]
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
 
@@ -367,6 +373,8 @@ def _run_dataset_pipeline(
                 req["question_ids"] = question_ids
             if run.agent_model:
                 req["model"] = run.agent_model
+            if run.agent and run.agent != "current":
+                req["agent"] = run.agent
             saved_question_ids: set[str] = set()
 
             def save_progress(job: dict) -> None:
@@ -443,6 +451,7 @@ async def trigger_dataset_run(
     connection_id: int | None = Query(default=None),
     connection_name: str | None = Query(default=None),
     model: str | None = Query(default=None),
+    agent: EvalAgent = Query(default="current"),
     session: Session = Depends(get_session),
 ):
     if connection_id is None:
@@ -582,7 +591,9 @@ async def trigger_dataset_run(
         connection_id=conn_id,
         connection_name=conn_name,
         dataset_id=actual_dataset_to_run,
-        agent_model=model or None,
+        # The previous agent has no model choice
+        agent_model=(model or None) if agent == "current" else None,
+        agent=agent,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -621,6 +632,7 @@ async def trigger_connection_run(
     triggered_by: str = Query(default="user"),
     tags: list[str] | None = Query(default=None),
     model: str | None = Query(default=None),
+    agent: EvalAgent = Query(default="current"),
     session: Session = Depends(get_session),
 ):
     """Evaluate a connection's golden questions: those with any of `tags`, or all."""
@@ -754,7 +766,9 @@ async def trigger_connection_run(
         dataset_id=ds_name,
         question_tags=selected_tags,
         question_ids=question_ids,
-        agent_model=model or None,
+        # The previous agent has no model choice
+        agent_model=(model or None) if agent == "current" else None,
+        agent=agent,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -1063,6 +1077,7 @@ def export_run_results(
         "connection_id": run.connection_id,
         "connection_name": run.connection_name,
         "agent_model": run.agent_model,
+        "agent": run.agent or "current",
         "status": run.status,
         "started_at": run.started_at,
         "total": total,

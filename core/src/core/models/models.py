@@ -178,6 +178,8 @@ class EvalRun(SQLModel, table=True):
     question_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
     # The LLM model the agent used; None = the agent's default
     agent_model: str | None = None
+    # Which Text-to-SQL agent answered: None/"current" or "previous"
+    agent: str | None = None
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -217,6 +219,7 @@ class EvalRunRead(SQLModel):
     completed_questions: int | None = None
     question_tags: list[str] | None = None
     agent_model: str | None = None
+    agent: str | None = None
     # Time shift per question when it has one, else contains accuracy, averaged
     final_score: float | None = None
     score_breakdown: dict[str, Any] | None = None

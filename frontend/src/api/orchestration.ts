@@ -27,6 +27,8 @@ export interface EvalRunFull {
   question_tags?: string[] | null;
   /** The LLM model the agent ran with; null = its default */
   agent_model?: string | null;
+  /** The Text-to-SQL agent that answered; null/'current' = the current one */
+  agent?: EvalAgent | null;
   /** Average question score (time shift, else contains accuracy) */
   final_score?: number | null;
   score_breakdown?: ScoreBreakdown | null;
@@ -222,6 +224,9 @@ export interface QuestionResultDetail {
   trace_unavailable_reason: string | null;
 }
 
+/** The current connection-based agent, or the previous TextToSQL agent */
+export type EvalAgent = 'current' | 'previous';
+
 /** The models the agent's LLM endpoint serves, and the one used when none is chosen */
 export interface AgentModels {
   models: string[];
@@ -238,6 +243,7 @@ export const orchestrationApi = {
     triggered_by = 'user',
     tags?: string[],
     model?: string,
+    agent: EvalAgent = 'current',
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -248,6 +254,7 @@ export const orchestrationApi = {
           triggered_by,
           ...(tags?.length ? { tags } : {}),
           ...(model ? { model } : {}),
+          ...(agent !== 'current' ? { agent } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },
@@ -267,6 +274,7 @@ export const orchestrationApi = {
     connection_id?: number,
     connection_name?: string,
     model?: string,
+    agent: EvalAgent = 'current',
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-dataset', null, {
@@ -275,6 +283,7 @@ export const orchestrationApi = {
           ...(connection_id !== undefined ? { connection_id } : {}),
           ...(connection_name ? { connection_name } : {}),
           ...(model ? { model } : {}),
+          ...(agent !== 'current' ? { agent } : {}),
         },
       })
       .then((r) => r.data),

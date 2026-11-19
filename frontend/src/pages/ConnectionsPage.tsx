@@ -30,6 +30,8 @@ import {
   useTriggerConnectionRun,
 } from '../hooks/useEvaluations';
 
+import type { EvalAgent } from '../api/orchestration';
+
 import './ConnectionsPage.css';
 
 // ─── Tab types ─────────────────────────────────────────────────────────────────
@@ -497,6 +499,7 @@ function EvaluationTab({
     useQuestionTagSelection<any>(questions);
   const questionCount = selectedQuestions.length;
   const [model, setModel] = useState('');
+  const [agent, setAgent] = useState<EvalAgent>('current');
 
   const handleLaunch = () => {
     if (questionCount === 0) {
@@ -504,7 +507,13 @@ function EvaluationTab({
       return;
     }
     triggerMut.mutate(
-      { connectionId, connectionName, tags: selectedTags, model: model || undefined },
+      {
+        connectionId,
+        connectionName,
+        tags: selectedTags,
+        model: agent === 'current' ? model || undefined : undefined,
+        agent,
+      },
       {
         onSuccess: (run: any) => {
           message.success(`Evaluation triggered! (Run ID: ${run.id?.slice(0, 8)}…)`);
@@ -558,7 +567,7 @@ function EvaluationTab({
       </div>
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
-      <AgentModelSelect value={model} onChange={setModel} />
+      <AgentModelSelect value={model} onChange={setModel} agent={agent} onAgentChange={setAgent} />
 
       {questionCount > 0 && (
         <div className="eval-question-list">

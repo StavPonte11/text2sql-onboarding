@@ -5,7 +5,7 @@ import { evalApi, healthApi } from '../api/client';
 import { orchestrationApi } from '../api/orchestration';
 import { QUERY_CONFIG, QUERY_KEYS } from '../config/constants';
 
-import type { EvalScheduleCreate, EvalScheduleUpdate } from '../api/orchestration';
+import type { EvalAgent, EvalScheduleCreate, EvalScheduleUpdate } from '../api/orchestration';
 
 // ── Trigger single table evaluation ──────────────────────────────────────────
 export function useTriggerEval() {
@@ -48,6 +48,7 @@ export function useTriggerConnectionRun() {
       triggeredBy,
       tags,
       model,
+      agent,
     }: {
       connectionId: number;
       connectionName?: string;
@@ -55,6 +56,7 @@ export function useTriggerConnectionRun() {
       triggeredBy?: string;
       tags?: string[];
       model?: string;
+      agent?: EvalAgent;
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -63,6 +65,7 @@ export function useTriggerConnectionRun() {
         triggeredBy,
         tags,
         model,
+        agent,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -168,12 +171,15 @@ export function useTriggerDatasetRun() {
       connectionId,
       connectionName,
       model,
+      agent,
     }: {
       datasetName: string;
       connectionId?: number;
       connectionName?: string;
       model?: string;
-    }) => orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName, model),
+      agent?: EvalAgent;
+    }) =>
+      orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName, model, agent),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

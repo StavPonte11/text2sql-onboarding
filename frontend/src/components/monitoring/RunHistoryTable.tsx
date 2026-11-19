@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronRight, RefreshCw, Square, X } 
 
 import { orchestrationApi } from '../../api/orchestration';
 import { useStopEvalRun } from '../../hooks/useEvaluations';
+import { AGENT_LABELS } from '../common/AgentModelSelect';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
 import { QuestionResultModal } from './QuestionResultModal';
 import { ScoreInfo } from './ScoreInfo';
@@ -656,6 +657,15 @@ export function RunHistoryTable({
                             title="LLM model the agent used"
                           >
                             {run.agent_model}
+                          </span>
+                        )}
+                        {run.agent === 'previous' && (
+                          <span
+                            className="badge badge--neutral"
+                            style={{ fontSize: 10.5 }}
+                            title="Text-to-SQL agent that answered"
+                          >
+                            {AGENT_LABELS.previous}
                           </span>
                         )}
                       </span>

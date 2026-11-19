@@ -39,6 +39,7 @@ import {
 } from '../hooks/useEvaluations';
 import { useTables } from '../hooks/useTables';
 
+import type { EvalAgent } from '../api/orchestration';
 import type { Table } from '../types';
 
 import './EvaluationsPage.css';
@@ -460,6 +461,7 @@ function ConnectionRunPanel({
     useQuestionTagSelection<any>(questions);
 
   const [model, setModel] = useState('');
+  const [agent, setAgent] = useState<EvalAgent>('current');
 
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
@@ -476,7 +478,8 @@ function ConnectionRunPanel({
         connectionId: selectedConnection,
         connectionName: activeConn?.name,
         tags: selectedTags,
-        model: model || undefined,
+        model: agent === 'current' ? model || undefined : undefined,
+        agent,
       },
       {
         onSuccess: (run) => {
@@ -626,7 +629,7 @@ function ConnectionRunPanel({
       )}
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
-      <AgentModelSelect value={model} onChange={setModel} />
+      <AgentModelSelect value={model} onChange={setModel} agent={agent} onAgentChange={setAgent} />
 
       {/* Main CTA */}
       <button
@@ -939,6 +942,7 @@ function DatasetRunPanel({
   const { message } = App.useApp();
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
   const [model, setModel] = useState('');
+  const [agent, setAgent] = useState<EvalAgent>('current');
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -958,7 +962,8 @@ function DatasetRunPanel({
         datasetName,
         connectionId: selectedConnection,
         connectionName: connObj?.name,
-        model: model || undefined,
+        model: agent === 'current' ? model || undefined : undefined,
+        agent,
       },
       {
         onSuccess: (run) => {
@@ -1002,7 +1007,12 @@ function DatasetRunPanel({
       />
 
       <div style={{ marginTop: 16 }}>
-        <AgentModelSelect value={model} onChange={setModel} />
+        <AgentModelSelect
+          value={model}
+          onChange={setModel}
+          agent={agent}
+          onAgentChange={setAgent}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>

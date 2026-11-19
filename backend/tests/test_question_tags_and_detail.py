@@ -352,6 +352,39 @@ def test_run_connection_without_a_model_uses_the_default(client, test_engine):
 
         _run_dataset_pipeline("ds", response.json()["id"])
     assert "model" not in call.call_args.args[0]
+    assert "agent" not in call.call_args.args[0]
+
+
+def test_run_connection_with_the_previous_agent(client, test_engine):
+    response, _ = _run_connection(
+        client,
+        next(_next_connection),
+        _pairs(["a"]),
+        agent="previous",
+        model="gpt-oss:20b",
+    )
+    assert response.status_code == 202
+    # the previous agent has no model choice
+    assert response.json()["agent"] == "previous"
+    assert response.json()["agent_model"] is None
+    with (
+        patch(f"{ORCH}.engine", test_engine),
+        patch(
+            f"{ORCH}._call_run_new_evaluation", side_effect=RuntimeError("stop")
+        ) as call,
+    ):
+        from app.routers.orchestration import _run_dataset_pipeline
+
+        _run_dataset_pipeline("ds", response.json()["id"])
+    assert call.call_args.args[0]["agent"] == "previous"
+    assert "model" not in call.call_args.args[0]
+
+
+def test_run_connection_rejects_an_unknown_agent(client):
+    response, _ = _run_connection(
+        client, next(_next_connection), _pairs(["a"]), agent="other"
+    )
+    assert response.status_code == 422
 
 
 def _agent_session(tool_names, list_result=None):
