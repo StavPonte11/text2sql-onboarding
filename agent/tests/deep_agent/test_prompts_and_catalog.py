@@ -131,7 +131,7 @@ async def test_prompt_change_rebuilds_the_agent_on_the_next_request(langfuse_ena
 
     service.reset_for_tests()
     with patch("agent.langfuse_client.langfuse_client", fake), \
-         patch("deep_agent.agent.create_deep_agent", fake_build), \
+         patch("deep_agent.service.create_deep_agent", fake_build), \
          patch.object(service, "build_checkpointer", MagicMock(side_effect=lambda: _async(object()))):
         first = await service.get_deep_agent()
         assert await service.get_deep_agent() is first  # unchanged prompts: same agent

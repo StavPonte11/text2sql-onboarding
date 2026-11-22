@@ -17,8 +17,9 @@ def served(monkeypatch):
     """LLM_BASE_URL serves two models; the /models call is counted."""
     monkeypatch.setattr(llm_module, "_models_cache", None)
     client = MagicMock()
+    client.__enter__.return_value = client
     client.models.list.return_value = [SimpleNamespace(id="qwen"), SimpleNamespace(id="gpt-oss")]
-    with patch("openai.OpenAI", return_value=client) as factory:
+    with patch("agent.llm.OpenAI", return_value=client) as factory:
         yield factory, client
 
 
@@ -113,8 +114,8 @@ async def test_deep_service_builds_one_agent_per_model_with_that_model_as_review
 
     service.reset_for_tests()
     qwen_llm = object()
-    with patch("deep_agent.agent.create_deep_agent", fake_create), \
-         patch("agent.llm.get_llm", MagicMock(return_value=qwen_llm)) as get, \
+    with patch("deep_agent.service.create_deep_agent", fake_create), \
+         patch("deep_agent.service.get_llm", MagicMock(return_value=qwen_llm)) as get, \
          patch.object(service, "build_checkpointer", AsyncMock(return_value=object())):
         default = await service.get_deep_agent()
         qwen = await service.get_deep_agent("qwen")

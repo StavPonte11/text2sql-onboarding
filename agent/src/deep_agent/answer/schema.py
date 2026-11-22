@@ -9,6 +9,7 @@ from langchain_core.messages import ToolMessage
 from pydantic import BaseModel, Field, create_model
 
 from agent.config import settings
+from deep_agent.run_mode import validation_for
 
 TOOL_NAME = "submit_answer"
 # Content of the tool message for an accepted submission (anything else there is an error or a review's feedback).
@@ -79,8 +80,6 @@ def answer_schema(
     if clarifications_enabled is None:
         clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED
     if validation_enabled is None:
-        from deep_agent.run_mode import validation_for
-
         validation_enabled = validation_for(settings.DEEP_AGENT_MODE, settings.DEEP_AGENT_SEMANTIC_VALIDATION) != "off"
     return _SCHEMAS[(bool(clarifications_enabled), bool(validation_enabled))]
 

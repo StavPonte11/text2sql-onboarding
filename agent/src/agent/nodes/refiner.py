@@ -28,15 +28,15 @@ def build_refiner_schema_context(state: AgentState) -> str:
     return "No schema context available."
 
 
-_VALUES_ALL = "— values (all):"
+JEEN_METADATA_FIELD_VALUES_ALL = "— values (all):"
 
 
 def _complete_values(description: str) -> list[str] | None:
     """The column's full value list when the catalog marks it complete (`— values (all): 'a', 'b'`), else None."""
-    idx = description.find(_VALUES_ALL)
+    idx = description.find(JEEN_METADATA_FIELD_VALUES_ALL)
     if idx == -1:
         return None
-    values = [v.replace("''", "'") for v in re.findall(r"'((?:[^']|'')*)'", description[idx + len(_VALUES_ALL):])]
+    values = [v.replace("''", "'") for v in re.findall(r"'((?:[^']|'')*)'", description[idx + len(JEEN_METADATA_FIELD_VALUES_ALL):])]
     if not values or any(v.endswith("…") for v in values):  # truncated values can't be compared
         return None
     return values

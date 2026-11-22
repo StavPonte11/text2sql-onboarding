@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from typing import Iterator, Optional
 
 from langchain_openai import ChatOpenAI
+from openai import OpenAI
 
 from agent.config import settings
 
@@ -25,10 +26,8 @@ def available_models() -> list[str]:
     global _models_cache
     if _models_cache is not None and _models_cache[0] > time.monotonic():
         return list(_models_cache[1])
-    from openai import OpenAI
-
-    client = OpenAI(base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, timeout=15.0)
-    models = sorted(m.id for m in client.models.list())
+    with OpenAI(base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY, timeout=15.0) as client:
+        models = sorted(m.id for m in client.models.list())
     _models_cache = (time.monotonic() + MODELS_CACHE_TTL_S, models)
     return list(models)
 

@@ -30,11 +30,10 @@ logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent  # the .md files sit next to this module
 PROMPT_KEYS = ("system", "validator")
-LANGFUSE_FOLDER = "text2sql/deep_agent"  # Langfuse shows "/" as folders
 
 
 def langfuse_name(key: str) -> str:
-    return f"{LANGFUSE_FOLDER}/{key}"
+    return f"{settings.DEEP_AGENT_LANGFUSE_FOLDER}/{key}"
 
 
 def local_prompt(key: str) -> str:

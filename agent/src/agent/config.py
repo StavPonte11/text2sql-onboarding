@@ -69,6 +69,7 @@ class AgentSettings(BaseSettings):
     # fallback when Langfuse is unreachable or has no such prompt. Set false to always use the packaged files.
     DEEP_AGENT_LANGFUSE_PROMPTS: bool = True       # serve text2sql/deep_agent/<name> prompts from Langfuse
     DEEP_AGENT_PROMPT_LABEL: str = "production"    # Langfuse prompt label to serve
+    DEEP_AGENT_LANGFUSE_FOLDER: str = "text2sql/deep_agent"  # Langfuse prompt folder (Langfuse shows "/" as folders)
     DEEP_AGENT_PROMPT_CACHE_TTL_S: int = Field(default=60, ge=0)
     # Serving (see deep_agent/service.py)
     DEEP_AGENT_CHECKPOINT_DB_URL: str | None = None       # postgresql://... for durable deep-agent threads; unset = in-memory

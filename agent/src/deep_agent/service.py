@@ -30,8 +30,10 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.config import settings
+from agent.llm import get_llm
 from agent.utils.redis_publisher import publish_node_event
 from deep_agent import observability
+from deep_agent.agent import create_deep_agent
 from deep_agent.answer.render import render_markdown
 from deep_agent.context import DeepAgentContext, current_turn
 from deep_agent.prompts.registry import PROMPT_KEYS, load_prompt
@@ -89,9 +91,6 @@ async def get_deep_agent(model: str | None = None):
     async with _agent_lock:
         cached = _agents.get(model)
         if cached is None or cached[1] != prompts:
-            from agent.llm import get_llm
-            from deep_agent.agent import create_deep_agent
-
             if _checkpointer is None:
                 _checkpointer = await build_checkpointer()
             if cached is not None:
