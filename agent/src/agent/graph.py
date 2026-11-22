@@ -225,13 +225,9 @@ def route_detect_ambiguity(state: AgentState) -> str:
 
 
 def route_query_builder(state: AgentState) -> str:
-    runtime_flags = state.get("runtime_flags") or {}
-    enable_ambiguity = runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
-    if isinstance(enable_ambiguity, str):
-        enable_ambiguity = enable_ambiguity.lower() == "true"
-        
-    if enable_ambiguity:
-        return "detect_ambiguity"
+    """Ambiguity detection is off until the ambiguity / clarification work is designed: no ambiguity check, no
+    clarifying question and no early stop, whatever SCHEMA_AMBIGUITY_DETECT says (the config DB seeds it true).
+    detect_ambiguity / ambiguity_resolution stay in the graph, unreachable, for that work."""
     return "hitl_query_approval"
 
 
