@@ -193,21 +193,23 @@ class SubmitApprovalMiddleware(AgentMiddleware):
         executed = (state.get("executed_queries") or [])[state.get("turn_execution_start") or 0:]
         if match_execution(answer.sql, executed) is None:
             return self._refuse(submission, NOT_RUN)
-        if not self.require_review:
-            return None
         sql = normalize_sql(answer.sql)
         records = list(state.get("semantic_validations") or [])
         reviews = [r for r in records if r.get("sql") == sql and r["verdict"] in _REVIEWED]
+        failed = bool(reviews) and reviews[-1]["verdict"] == "fail"
+        dispute = (
+            {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "disputed", "sql": sql,
+                                       "issues": reviews[-1]["issues"], "response": answer.validation_response}]}
+            if failed and getattr(answer, "validation_response", None) else None
+        )
+        if not self.require_review:
+            return dispute  # on demand: submit is accepted either way; a disputed fail is still recorded
         if reviews and reviews[-1]["verdict"] == "pass":
             return None
         if reviews and reviews[-1]["verdict"] == "needs_check":
             return self._refuse(submission, _checks_text(reviews[-1].get("checks") or []))
-        if reviews:  # failed
-            if getattr(answer, "validation_response", None):
-                return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "disputed", "sql": sql,
-                                                  "issues": reviews[-1]["issues"],
-                                                  "response": answer.validation_response}]}
-            return self._refuse(submission, _failed_text(reviews[-1]["issues"]))
+        if failed:
+            return dispute or self._refuse(submission, _failed_text(reviews[-1]["issues"]))
         done = sum(1 for r in records if r["verdict"] in _REVIEWED)
         if self.max_rounds is not None and done >= self.max_rounds:
             return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "skipped", "sql": sql, "issues": [],

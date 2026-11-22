@@ -458,11 +458,22 @@ async def test_each_agents_generations_link_its_own_langfuse_prompt(scripted_mod
         await agent.ainvoke({"messages": [("user", QUESTION)]}, observability.build_run_config("links", tracing=True))
     langfuse.flush()
 
-    generations = [s for s in exporter.get_finished_spans()
-                   if s.attributes.get("langfuse.observation.type") == "generation"]
-    linked = [s.attributes.get("langfuse.observation.prompt.name") for s in generations]
-    assert linked.count("text2sql/deep_agent/validator") == 1       # the reviewer's one call
-    assert linked.count("text2sql/deep_agent/system") == len(linked) - 1  # every other call is the main agent's
+    spans = exporter.get_finished_spans()
+    by_id = {s.context.span_id: s for s in spans}
+
+    def in_reviewer(span):  # is this span inside the reviewer subagent's run?
+        while span is not None:
+            if span.name == "semantic-validator":
+                return True
+            span = by_id.get(span.parent.span_id) if span.parent else None
+        return False
+
+    generations = [s for s in spans if s.attributes.get("langfuse.observation.type") == "generation"]
+    owner_and_prompt = [("reviewer" if in_reviewer(g) else "main", g.attributes.get("langfuse.observation.prompt.name"))
+                        for g in generations]
+    assert owner_and_prompt.count(("reviewer", "text2sql/deep_agent/validator")) == 1   # the reviewer's one call
+    assert owner_and_prompt.count(("main", "text2sql/deep_agent/system")) == 3          # execute, review, submit
+    assert len(owner_and_prompt) == 4                                                   # and nothing linked wrongly
 
 
 # ── run modes (deep_agent.run_mode) ──────────────────────────────────────────
@@ -524,3 +535,31 @@ def test_training_runs_are_tagged():
     assert build_run_config("t", mode="training", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent", "training"]
     assert build_run_config("t", mode="serving", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent"]
 
+
+
+@pytest.mark.asyncio
+async def test_training_bounds_a_delegated_subagent_too(policy_model):
+    """A general-purpose subagent that keeps calling tools stops at the model-call bound in training mode."""
+    sub_calls = []
+
+    def policy(messages):
+        if any(m.type == "human" and "explore" in m.text for m in messages):              # inside the subagent
+            sub_calls.append(1)
+            return _execute(call_id=f"sub{len(sub_calls)}")
+        if not any(m.type == "tool" and m.name == "task" for m in messages):              # main agent: delegate once
+            return _call("task", {"description": "explore the orders table", "subagent_type": "general-purpose"}, "t1")
+        return AIMessage("done")
+
+    agent = create_deep_agent(model=policy_model(policy), mode="training", semantic_validation="off", max_model_calls=3)
+    with _fake_trino():
+        await agent.ainvoke({"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "bound-sub"}})
+    assert len(sub_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_on_demand_records_a_dispute_of_a_failed_review(scripted_model):
+    main = scripted_model(_execute(), _review(), _submit(validation_response="הספירה נכונה: כל שורה היא הזמנה"))
+    state = await _run(main, scripted_model(_verdict("fail", [ISSUE])), mode="on_demand")
+    assert _submit_results(state) == [ANSWER_RECEIVED]          # on demand: accepted
+    review = state["final_result"]["semantic_validation"]
+    assert review["verdict"] == "disputed" and review["response"].startswith("הספירה נכונה")

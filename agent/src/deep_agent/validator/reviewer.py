@@ -229,7 +229,7 @@ class ReviewRecordMiddleware(AgentMiddleware):
         return self.after_agent(state, runtime)
 
 
-def build_validator(model: BaseChatModel):
+def build_validator(model: BaseChatModel, extra_middleware: list | None = None):
     """The reviewer agent: facts-only input, catalog + date in context, no SQL tools, verdict via submit_verdict."""
     served = load_prompt("validator")
     agent = create_agent(
@@ -243,6 +243,7 @@ def build_validator(model: BaseChatModel):
             PromptLinkMiddleware(served),
             *submit_fallback(VERDICT_TOOL),  # the reviewer is environment, not policy: fallback in both modes
             ReviewRecordMiddleware(),
+            *(extra_middleware or []),  # e.g. the training-mode model-call bound
         ],
         response_format=submission_strategy(SubmitVerdict),
         context_schema=DeepAgentContext,

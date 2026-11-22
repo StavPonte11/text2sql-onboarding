@@ -36,13 +36,14 @@ If the question is genuinely ambiguous, set `needs_clarification` (a short Hebre
 """
 
 
-def _general_purpose_subagent() -> dict:
+def _general_purpose_subagent(extra_middleware: list | None = None) -> dict:
     """deepagents' default `task` subagent, with our request context and the catalog it can no longer fetch itself."""
     return {
         "name": "general-purpose",
         "description": DEFAULT_GENERAL_PURPOSE_DESCRIPTION,
         "system_prompt": DEFAULT_SUBAGENT_PROMPT,
-        "middleware": [DeepAgentContextMiddleware(), CatalogMiddleware(), BuiltinToolFilterMiddleware()],
+        "middleware": [DeepAgentContextMiddleware(), CatalogMiddleware(), BuiltinToolFilterMiddleware(),
+                       *(extra_middleware or [])],
     }
 
 
@@ -75,7 +76,7 @@ def create_deep_agent(
     if clarifications_enabled is None:
         clarifications_enabled = settings.DEEP_AGENT_CLARIFICATIONS_ENABLED
     run_mode = mode or settings.DEEP_AGENT_MODE
-    training = run_mode == "training"
+    is_training = run_mode == "training"
     validation = validation_for(run_mode, semantic_validation or settings.DEEP_AGENT_SEMANTIC_VALIDATION)
     llm = model or get_llm()
     memory = checkpointer or MemorySaver()
@@ -85,9 +86,16 @@ def create_deep_agent(
     review_prompt = REVIEW_PROMPT if has_reviewer else ""  # the same instructions in serving and training
     served = load_prompt("system")
     system_prompt = served.text + (CLARIFICATION_PROMPT if clarifications_enabled else "") + review_prompt
-    subagents = [_general_purpose_subagent()]
+    # Training bounds every agent's model calls per run — the main agent's and each subagent run's (a delegated
+    # task must not escape the budget). Serving has no bound.
+    limit = max_model_calls or settings.DEEP_AGENT_TRAINING_MAX_MODEL_CALLS
+
+    def call_limit() -> list:
+        return [ModelCallLimitMiddleware(run_limit=limit, exit_behavior="end")] if is_training else []
+
+    subagents = [_general_purpose_subagent(call_limit())]
     if has_reviewer:
-        subagents.append(validator_subagent(validator_model or llm))
+        subagents.append(validator_subagent(validator_model or llm, call_limit()))
 
     agent = create_harness_agent(
         model=llm,
@@ -98,9 +106,8 @@ def create_deep_agent(
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
             PromptLinkMiddleware(served),
-            *submit_fallback(TOOL_NAME, strict=training),
-            *([ModelCallLimitMiddleware(run_limit=max_model_calls or settings.DEEP_AGENT_TRAINING_MAX_MODEL_CALLS,
-                                        exit_behavior="end")] if training else []),
+            *submit_fallback(TOOL_NAME, strict=is_training),
+            *call_limit(),
             AnswerVerificationMiddleware(has_reviewer),
             *([ReviewTurnMiddleware()] if has_reviewer else []),
             SubmitApprovalMiddleware(review_required, settings.DEEP_AGENT_VALIDATOR_MAX_ROUNDS),

@@ -1101,10 +1101,13 @@ export function AgentTestingPage() {
   }, [threadId]);
 
   const isResuming = chatMutation.isPending && chatResponse?.status === 'interrupted';
-  const isInputDisabled = chatMutation.isPending || chatResponse?.status === 'interrupted';
+  // A run is "starting" during the short delay before its request is sent (so the live stream can connect).
+  const [starting, setStarting] = useState(false);
+  const isInputDisabled = starting || chatMutation.isPending || chatResponse?.status === 'interrupted';
 
   const handleSubmit = () => {
-    if (!query || !selectedConnection) return;
+    if (!query || !selectedConnection || starting || chatMutation.isPending) return;
+    setStarting(true);
     setChatResponse(null);
     const newThreadId = uuidv4();
     setThreadId(newThreadId);
@@ -1127,6 +1130,7 @@ export function AgentTestingPage() {
           model,
         },
       });
+      setStarting(false);
     }, 300);
   };
 
@@ -1212,7 +1216,7 @@ export function AgentTestingPage() {
       <AgentTestingHeader
         agentKind={agentKind}
         setAgentKind={setAgentKind}
-        agentKindLocked={chatMutation.isPending}
+        agentKindLocked={starting || chatMutation.isPending}
         modelsInfo={modelsInfo}
         model={model}
         setModel={setModel}

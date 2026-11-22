@@ -38,11 +38,19 @@ class CompleteValueLists:
                     self._lists[(t_name, c_name)] = meta["values_all"]
 
     def for_filter(self, f: SQLFilterParams) -> Optional[List[str]]:
-        """The list for the filter's column; a column name in several tables needs the filter's table to tell."""
+        """The list for the filter's column in the filter's table.
+
+        A named table is matched in full, or by its last part (unqualified SQL: `policies`); a table that matches
+        no catalog table gets no list — never another table's. Only a filter with no table at all falls back to
+        the column, when exactly one table has it.
+        """
         col, table = f.source_column.lower(), table_key(f.source_table)
-        if (table, col) in self._lists:
-            return self._lists[(table, col)]
         owners = self._tables_by_column.get(col, set())
+        if table:
+            if table in owners:
+                return self._lists.get((table, col))
+            by_name = [t for t in owners if t.rsplit(".", 1)[-1] == table.rsplit(".", 1)[-1]]
+            return self._lists.get((by_name[0], col)) if len(by_name) == 1 else None
         return self._lists.get((next(iter(owners)), col)) if len(owners) == 1 else None
 
     def unlisted(self, f: SQLFilterParams) -> List[str]:

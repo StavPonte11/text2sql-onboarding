@@ -56,6 +56,7 @@ class ReviewTurnMiddleware(AgentMiddleware):
         return self.before_agent(state, runtime)
 
 
-def validator_subagent(model: BaseChatModel) -> dict[str, Any]:
+def validator_subagent(model: BaseChatModel, extra_middleware: list | None = None) -> dict[str, Any]:
     """The reviewer as a deepagents CompiledSubAgent (called through `task`)."""
-    return {"name": VALIDATOR_NAME, "description": VALIDATOR_DESCRIPTION, "runnable": build_validator(model)}
+    return {"name": VALIDATOR_NAME, "description": VALIDATOR_DESCRIPTION,
+            "runnable": build_validator(model, extra_middleware)}

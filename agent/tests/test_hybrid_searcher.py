@@ -151,3 +151,17 @@ def test_catalog_parsing_keeps_complete_value_lists_only():
     assert cols["flight_policy"]["values_all"] == ["No-Fly Zone below 15k feet", "Fully Closed Airspace", "Pilot's Choice"]
     assert cols["note"]["values_all"] is None      # examples are not the full list
     assert cols["shape"]["values_all"] is None     # truncated values can't be compared
+
+
+@pytest.mark.asyncio
+async def test_unqualified_table_name_finds_its_list(mock_mcp_client):
+    from agent.config import settings
+    d = settings.CACHE_KEY_DELIMITER
+    results = await HybridSearcher.search([_filter("policies", "flight_policy", "=", "Fully Closed")], _tables())
+    assert results == {f"flight_policy{d}Fully Closed": POLICIES}
+
+
+@pytest.mark.asyncio
+async def test_a_table_outside_the_catalog_never_borrows_another_tables_list(mock_mcp_client):
+    # flight_policy exists only in `policies`; a filter on another table must not get the policies list
+    assert await HybridSearcher.search([_filter("postgres.public.other", "flight_policy", "=", "x")], _tables()) == {}
