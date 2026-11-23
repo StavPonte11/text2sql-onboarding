@@ -9,6 +9,7 @@ import asyncio
 import re
 from typing import List, Dict, Tuple, Optional
 from agent.services.enrichment_models import SQLFilterParams, AgentSQLTable
+from agent.services.value_lists import CompleteValueLists, table_key
 from agent.utils.jeen_metadata_client import get_jeen_metadata_client
 from agent.config import settings
 
@@ -36,8 +37,9 @@ class HybridSearcher:
         """
         # Build map of (table_name, column_name) -> semantic_type
         col_type_map = {}
+        complete_lists = CompleteValueLists(tables)
         for table in tables:
-            t_name = table.name.lower()
+            t_name = table_key(table.name)
             for col_name, col_meta in table.columns.items():
                 c_name = col_name.lower()
                 target_type = "categorical"
@@ -61,9 +63,11 @@ class HybridSearcher:
         delimiter = settings.CACHE_KEY_DELIMITER
         client = get_jeen_metadata_client()
         
+        final_dict: Dict[str, List[str]] = {}
+
         for f in filters:
             col_lower = f.source_column.lower()
-            table_lower = f.source_table.lower() if f.source_table else ""
+            table_lower = table_key(f.source_table)
             
             # Lookup type
             sem_type = "categorical"
@@ -73,6 +77,10 @@ class HybridSearcher:
                 sem_type = col_type_map[col_lower]
                 
             if sem_type not in ("large_categorical", "large_unit_id"):
+                # Not searched: the catalog shows this column's values. When it lists them all, a filter value
+                # outside that list matches nothing — the list itself becomes the candidate set.
+                for value in complete_lists.unlisted(f):
+                    final_dict[f"{f.source_column}{delimiter}{value}"] = complete_lists.for_filter(f)
                 continue
                 
             values_to_search = []
@@ -91,20 +99,19 @@ class HybridSearcher:
                 # Schedule search task directly via MCP client
                 # The MCP backend handles semantic_type routing automatically
                 task = client.search_column_values(
-                    query=clean_val, 
-                    table_name=table_lower or None, 
-                    column_name=col_lower or None
+                    search_term=clean_val, 
+                    table=table_lower or None, 
+                    column=col_lower or None
                 )
                     
                 tasks.append(task)
                 task_keys.append(f"{f.source_column}{delimiter}{val}")
                 
         if not tasks:
-            return {}
-            
+            return final_dict
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        final_dict: Dict[str, List[str]] = {}
+
         for key, res in zip(task_keys, results):
             if isinstance(res, Exception):
                 logger.error(f"Search task failed for {key}: {res}")

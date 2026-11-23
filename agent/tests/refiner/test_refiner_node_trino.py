@@ -142,8 +142,9 @@ async def test_trino_exec_esca_failure_survival(
     mock_langfuse, mock_execute, mock_get_esca, mock_publish
 ):
     """
-    STRICT FAILURE (ESCA): If the DB succeeds but the external ESCA blob storage
-    is offline, the system must CRASH to ensure strict failure propagation.
+    ESCA SURVIVAL: If the DB succeeds but the external ESCA blob storage is offline,
+    the node must not crash — ESCA is an optional output store. The result is still
+    returned inline and the failure is flagged.
     """
     mock_execute.return_value = MockTrinoResult(
         success=True, rows=[[1]], columns=["id"]
@@ -155,10 +156,12 @@ async def test_trino_exec_esca_failure_survival(
 
     state = AgentState(sql_query="SELECT 1", runtime_flags={"ESCA_WRITE_ENABLED": True})
 
-    with pytest.raises(
-        RuntimeError, match="Failed to write query result to ESCA: ESCA Storage Offline"
-    ):
-        await trino_exec_node(state)
+    result = await trino_exec_node(state)
+
+    assert result["esca_write_failed"] is True
+    assert result["raw_data_ref"] is None
+    assert result["inline_result_rows"] == [[1]]
+    assert result["trino_error"] is None
 
 
 
