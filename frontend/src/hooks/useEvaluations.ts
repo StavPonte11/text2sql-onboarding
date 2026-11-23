@@ -5,7 +5,7 @@ import { evalApi, healthApi } from '../api/client';
 import { orchestrationApi } from '../api/orchestration';
 import { QUERY_CONFIG, QUERY_KEYS } from '../config/constants';
 
-import type { EvalScheduleCreate, EvalScheduleUpdate } from '../api/orchestration';
+import type { EvalAgent, EvalScheduleCreate, EvalScheduleUpdate } from '../api/orchestration';
 
 // ── Trigger single table evaluation ──────────────────────────────────────────
 export function useTriggerEval() {
@@ -47,12 +47,18 @@ export function useTriggerConnectionRun() {
       datasetName,
       triggeredBy,
       tags,
+      model,
+      agent,
+      name,
     }: {
       connectionId: number;
       connectionName?: string;
       datasetName?: string;
       triggeredBy?: string;
       tags?: string[];
+      model?: string;
+      agent?: EvalAgent;
+      name?: string;
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -60,6 +66,9 @@ export function useTriggerConnectionRun() {
         datasetName,
         triggeredBy,
         tags,
+        model,
+        agent,
+        name,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -67,7 +76,28 @@ export function useTriggerConnectionRun() {
   });
 }
 
+// ── The LLM models an evaluation can use ─────────────────────────────────────
+export function useAgentModels() {
+  return useQuery({
+    queryKey: ['agent-models'],
+    queryFn: orchestrationApi.listModels,
+    staleTime: 60_000,
+  });
+}
+
 // ── Stop/cancel evaluation run ───────────────────────────────────────────────
+export function useRenameEvalRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, name }: { runId: string; name: string }) =>
+      orchestrationApi.renameRun(runId, name),
+    onSuccess: (run) => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+      queryClient.invalidateQueries({ queryKey: ['run-report', run.id] });
+    },
+  });
+}
+
 export function useStopEvalRun() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -155,11 +185,25 @@ export function useTriggerDatasetRun() {
       datasetName,
       connectionId,
       connectionName,
+      model,
+      agent,
+      name,
     }: {
       datasetName: string;
       connectionId?: number;
       connectionName?: string;
-    }) => orchestrationApi.triggerDatasetRun(datasetName, connectionId, connectionName),
+      model?: string;
+      agent?: EvalAgent;
+      name?: string;
+    }) =>
+      orchestrationApi.triggerDatasetRun(
+        datasetName,
+        connectionId,
+        connectionName,
+        model,
+        agent,
+        name,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
     },

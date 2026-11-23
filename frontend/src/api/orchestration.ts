@@ -2,6 +2,14 @@ import api from './client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+/** How a run's score was calculated: each question counts its time shift score when it has one, else its contains accuracy */
+export interface ScoreBreakdown {
+  questions: number;
+  time_shift: { count: number; average: number | null };
+  contains_accuracy: { count: number; average: number | null };
+  unscored: number;
+}
+
 export interface EvalRunFull {
   id: string;
   table_id: string;
@@ -17,6 +25,15 @@ export interface EvalRunFull {
   completed_questions?: number | null;
   /** Set when the run covers only the questions with these tags */
   question_tags?: string[] | null;
+  /** The LLM model the agent ran with; null = its default */
+  agent_model?: string | null;
+  /** The Text-to-SQL agent that answered; null/'current' = the current one */
+  agent?: EvalAgent | null;
+  /** A name the user gave the run, before or after it ran */
+  name?: string | null;
+  /** Average question score (time shift, else contains accuracy) */
+  final_score?: number | null;
+  score_breakdown?: ScoreBreakdown | null;
   duration_seconds: number | null;
   triggered_by: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
@@ -202,8 +219,29 @@ export interface QuestionResultDetail {
   score: number | null;
   status: string | null;
   failure_type: string | null;
+  /** Time shift when the question has one, else contains accuracy */
+  final_score?: number | null;
+  score_source?: 'time_shift' | 'contains_accuracy' | null;
   trace: QuestionTrace | null;
   trace_unavailable_reason: string | null;
+}
+
+/** The current connection-based agent, the Deep Agent, or the previous TextToSQL agent */
+export type EvalAgent = 'current' | 'deep' | 'previous';
+
+/** Whether the agent server offers an agent, and whether it takes a model */
+export interface EvalAgentInfo {
+  available: boolean;
+  supports_model: boolean;
+  reason?: string | null;
+}
+
+/** The models the agent's LLM endpoint serves, and the one used when none is chosen */
+export interface AgentModels {
+  models: string[];
+  default: string | null;
+  list_error?: string | null;
+  agents?: Partial<Record<EvalAgent, EvalAgentInfo>>;
 }
 
 export const orchestrationApi = {
@@ -214,6 +252,9 @@ export const orchestrationApi = {
     dataset_name?: string,
     triggered_by = 'user',
     tags?: string[],
+    model?: string,
+    agent: EvalAgent = 'current',
+    name?: string,
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -223,24 +264,40 @@ export const orchestrationApi = {
           ...(dataset_name ? { dataset_name } : {}),
           triggered_by,
           ...(tags?.length ? { tags } : {}),
+          ...(model ? { model } : {}),
+          ...(agent !== 'current' ? { agent } : {}),
+          ...(name?.trim() ? { name: name.trim() } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },
       })
       .then((r) => r.data),
 
+  /** The LLM models an evaluation can run the agent with */
+  listModels: () => api.get<AgentModels>('/evaluations/models').then((r) => r.data),
+
   triggerRun: (table_ids: string[], triggered_by = 'user') =>
     api
       .post<EvalRunFull[]>('/evaluations/run', table_ids, { params: { triggered_by } })
       .then((r) => r.data),
 
-  triggerDatasetRun: (dataset_name: string, connection_id?: number, connection_name?: string) =>
+  triggerDatasetRun: (
+    dataset_name: string,
+    connection_id?: number,
+    connection_name?: string,
+    model?: string,
+    agent: EvalAgent = 'current',
+    name?: string,
+  ) =>
     api
       .post<EvalRunFull>('/evaluations/run-dataset', null, {
         params: {
           dataset_name,
           ...(connection_id !== undefined ? { connection_id } : {}),
           ...(connection_name ? { connection_name } : {}),
+          ...(model ? { model } : {}),
+          ...(agent !== 'current' ? { agent } : {}),
+          ...(name?.trim() ? { name: name.trim() } : {}),
         },
       })
       .then((r) => r.data),
@@ -283,6 +340,10 @@ export const orchestrationApi = {
 
   getRun: (run_id: string) =>
     api.get<EvalRunFull>(`/evaluations/runs/${run_id}`).then((r) => r.data),
+
+  /** Name a run; an empty name removes it */
+  renameRun: (run_id: string, name: string) =>
+    api.patch<EvalRunFull>(`/evaluations/runs/${run_id}`, { name }).then((r) => r.data),
 
   stopRun: (run_id: string) =>
     api.post<EvalRunFull>(`/evaluations/runs/${run_id}/stop`).then((r) => r.data),

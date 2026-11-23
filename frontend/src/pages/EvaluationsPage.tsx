@@ -21,6 +21,7 @@ import {
 
 import { agentApi } from '../api/agent';
 import { orchestrationApi } from '../api/orchestration';
+import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
@@ -38,6 +39,7 @@ import {
 } from '../hooks/useEvaluations';
 import { useTables } from '../hooks/useTables';
 
+import type { EvalAgent } from '../api/orchestration';
 import type { Table } from '../types';
 
 import './EvaluationsPage.css';
@@ -458,6 +460,10 @@ function ConnectionRunPanel({
   const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
     useQuestionTagSelection<any>(questions);
 
+  const [model, setModel] = useState('');
+  const [agent, setAgent] = useState<EvalAgent>('current');
+  const [runName, setRunName] = useState('');
+
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
     setSelectedTags([]);
@@ -473,9 +479,13 @@ function ConnectionRunPanel({
         connectionId: selectedConnection,
         connectionName: activeConn?.name,
         tags: selectedTags,
+        model: agent !== 'previous' ? model || undefined : undefined,
+        agent,
+        name: runName,
       },
       {
         onSuccess: (run) => {
+          setRunName('');
           message.success(`Evaluation launched for ${activeConn?.name || selectedConnection}`);
           setRunningRunId(run.id);
           onLaunch?.();
@@ -622,6 +632,14 @@ function ConnectionRunPanel({
       )}
 
       <QuestionTagSelect options={tagOptions} value={selectedTags} onChange={setSelectedTags} />
+      <AgentModelSelect
+        value={model}
+        onChange={setModel}
+        agent={agent}
+        onAgentChange={setAgent}
+        runName={runName}
+        onRunNameChange={setRunName}
+      />
 
       {/* Main CTA */}
       <button
@@ -933,6 +951,9 @@ function DatasetRunPanel({
   const triggerDatasetMut = useTriggerDatasetRun();
   const { message } = App.useApp();
   const [selectedConnection, setSelectedConnection] = useState<number | undefined>(undefined);
+  const [model, setModel] = useState('');
+  const [agent, setAgent] = useState<EvalAgent>('current');
+  const [runName, setRunName] = useState('');
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -952,9 +973,13 @@ function DatasetRunPanel({
         datasetName,
         connectionId: selectedConnection,
         connectionName: connObj?.name,
+        model: agent !== 'previous' ? model || undefined : undefined,
+        agent,
+        name: runName,
       },
       {
         onSuccess: (run) => {
+          setRunName('');
           setRunningRunId(run.id);
           // Switch to history tab so the user can watch progress
           onLaunch?.();
@@ -993,6 +1018,17 @@ function DatasetRunPanel({
           </div>
         }
       />
+
+      <div style={{ marginTop: 16 }}>
+        <AgentModelSelect
+          value={model}
+          onChange={setModel}
+          agent={agent}
+          onAgentChange={setAgent}
+          runName={runName}
+          onRunNameChange={setRunName}
+        />
+      </div>
 
       <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
         <button

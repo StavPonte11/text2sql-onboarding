@@ -176,6 +176,16 @@ class EvalRun(SQLModel, table=True):
     # Set when the run covers only the questions with these Jeen tags
     question_tags: list[str] | None = Field(default=None, sa_column=Column(JSON))
     question_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    # The LLM model the agent used; None = the agent's default
+    agent_model: str | None = None
+    # Which Text-to-SQL agent answered: None/"current", "deep" or "previous"
+    agent: str | None = None
+    # A name the user gave the run, before or after it ran
+    name: str | None = None
+    # Saved when the run finishes: time shift per question when it has one, else
+    # contains accuracy, unscored questions as 0, averaged (app.services.run_score)
+    final_score: float | None = None
+    score_breakdown: Any | None = Field(default=None, sa_column=Column(JSON))
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -214,6 +224,12 @@ class EvalRunRead(SQLModel):
     # Questions with a result so far (filled for running runs)
     completed_questions: int | None = None
     question_tags: list[str] | None = None
+    agent_model: str | None = None
+    agent: str | None = None
+    name: str | None = None
+    # The run's final score (0 for a failed run; see app.services.run_score)
+    final_score: float | None = None
+    score_breakdown: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

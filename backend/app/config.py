@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    # Read question details here when LANGFUSE_HOST can't be read or has no
+    # record of them (e.g. a self-hosted LANGFUSE_HOST, runs written to Cloud).
+    # Off until both keys are set.
+    LANGFUSE_FALLBACK_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_FALLBACK_PUBLIC_KEY: str = ""
+    LANGFUSE_FALLBACK_SECRET_KEY: str = ""
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
@@ -30,7 +36,13 @@ class Settings(BaseSettings):
     # Agent MCP service URL (internal service-to-service)
     AGENT_URL: str = "http://localhost:8001"
     AGENT_READ_TIMEOUT_SECONDS: float = 900.0
+    # The model the agent runs on (its LLM_MODEL). Shown as the default in the
+    # evaluation model picker when the agent can't list its models itself.
+    AGENT_LLM_MODEL: str = ""
     AGENT_SUGGEST_FIXES_TIMEOUT_SECONDS: float = 300.0
+    # How long to wait for Jeen's metadata MCP (listing a big connection's
+    # tables can take minutes); the frontend's nginx waits up to 300s
+    JEEN_MCP_READ_TIMEOUT_SECONDS: float = 300.0
     EVALUATION_SERVICE_URL: str = "http://localhost:8001"
     # Overall deadline for one evaluation run (the service runs it as a
     # background job that the backend polls)
@@ -45,6 +57,10 @@ class Settings(BaseSettings):
         "mcp_d61337a926f6b1e1c88218994c731c28d64ff925918a2dd384c89db1383ee7e3"
     )
     JEEN_METADATA_CONNECTION_ID: int = 89
+
+    # Bearer key for the read-only /api/export endpoints (scripts outside the
+    # app, which can't sign in with SSO). Empty: those endpoints are off.
+    EVAL_EXPORT_API_KEY: str = ""
 
     APP_ENV: str = "development"
     RUN_SEED: bool = False

@@ -350,3 +350,19 @@
   display: inline-block;
   vertical-align: middle;
 }
+
+/* A run's name, above its connection in the history */
+.run-history-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-name-editor {
+  font-size: 13px;
+}

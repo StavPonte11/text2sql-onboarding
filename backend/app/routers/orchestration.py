@@ -12,6 +12,7 @@ New endpoints:
 
 import logging
 from datetime import datetime, timedelta
+from typing import Any, Literal
 
 import requests
 from core.db.engine import engine, get_session
@@ -36,6 +37,7 @@ from core.models.models import (
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from langfuse import observe, propagate_attributes
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -46,16 +48,50 @@ from app.routers.evaluation import (
     execute_single_table_eval,
     save_case_results,
 )
-from app.services.eval_question_trace import fetch_question_trace
+from app.services.agent_models import list_agent_models
+from app.services.eval_question_trace import fetch_question_trace, langfuse_sources
 from app.services.jeen_metadata import (
     fetch_jeen_sql_pairs,
     fetch_jeen_sql_pairs_with_tags,
 )
 from app.services.langfuse_client import langfuse_client
+from app.services.run_score import final_run_score, question_score, results_score
 
 logger = logging.getLogger(__name__)
 
+
+# The Text-to-SQL agents an evaluation can run: the current connection-based
+# one (chat_with_agent), the Deep Agent (deep_agent on the same agent server),
+# or the previous TextToSQL agent (evaluation service PREVIOUS_AGENT_*)
+EvalAgent = Literal["current", "deep", "previous"]
+
+RUN_NAME_MAX_LENGTH = 200
+
+
+def _run_name(name: str | None) -> str | None:
+    """A run's name, trimmed; blank means no name."""
+    return (name or "").strip() or None
+
+
+class RunRename(BaseModel):
+    name: str | None = Field(default=None, max_length=RUN_NAME_MAX_LENGTH)
+
+
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
+
+
+def _run_final_score(
+    run: EvalRun, running_results: list[EvalResult] | None = None
+) -> tuple[float | None, dict[str, Any] | None]:
+    """The run's score and breakdown to show.
+
+    A running run is scored from the results saved so far (`running_results`);
+    any other run shows its saved final score (0 when it failed).
+    """
+    if run.status == EvalStatus.running and running_results is not None:
+        return results_score(running_results)
+    return final_run_score(run), run.score_breakdown
+
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 REGRESSION_BLOCK_DELTA = 0.10
@@ -105,6 +141,8 @@ def _run_full_pipeline(
                     # Fetch updated run state
                     session.refresh(run)
 
+                    # The run's final score (and the previous run's) decide the alerts
+                    final = final_run_score(run) or 0.0
                     # Detect regression vs previous run
                     prev_runs = session.exec(
                         select(EvalRun)
@@ -117,11 +155,14 @@ def _run_full_pipeline(
                         .limit(1)
                     ).first()
 
+                    prev_score = (
+                        (final_run_score(prev_runs) or 0.0) if prev_runs else 0.0
+                    )
                     regression_detected = False
                     regression_delta = None
 
-                    if prev_runs and prev_runs.score > 0:
-                        delta = prev_runs.score - score
+                    if prev_runs and prev_score:
+                        delta = prev_score - final
                         if delta > REGRESSION_BLOCK_DELTA:
                             regression_detected = True
                             regression_delta = round(delta, 4)
@@ -131,10 +172,10 @@ def _run_full_pipeline(
                                 table_id,
                                 "regression",
                                 AlertSeverity.critical,
-                                f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                f"Score dropped {delta:.1%} (from {prev_score:.2f} → {final:.2f})",
                                 {
-                                    "previous_score": prev_runs.score,
-                                    "current_score": score,
+                                    "previous_score": prev_score,
+                                    "current_score": final,
                                     "delta": delta,
                                 },
                             )
@@ -149,21 +190,21 @@ def _run_full_pipeline(
                                 AlertSeverity.warning,
                                 f"Score warning: {delta:.1%} drop detected",
                                 {
-                                    "previous_score": prev_runs.score,
-                                    "current_score": score,
+                                    "previous_score": prev_score,
+                                    "current_score": final,
                                     "delta": delta,
                                 },
                             )
 
                     # Low score alert
-                    if score < LOW_SCORE_THRESHOLD:
+                    if final < LOW_SCORE_THRESHOLD:
                         _create_alert(
                             session,
                             run_id,
                             table_id,
                             "low_score",
                             AlertSeverity.warning,
-                            f"Table performance is low ({score:.1%})",
+                            f"Table performance is low ({final:.1%})",
                         )
 
                     # Finalize run orchestration fields
@@ -363,6 +404,10 @@ def _run_dataset_pipeline(
             }
             if question_ids:
                 req["question_ids"] = question_ids
+            if run.agent_model:
+                req["model"] = run.agent_model
+            if run.agent and run.agent != "current":
+                req["agent"] = run.agent
             saved_question_ids: set[str] = set()
 
             def save_progress(job: dict) -> None:
@@ -438,6 +483,9 @@ async def trigger_dataset_run(
     background_tasks: BackgroundTasks,
     connection_id: int | None = Query(default=None),
     connection_name: str | None = Query(default=None),
+    model: str | None = Query(default=None),
+    agent: EvalAgent = Query(default="current"),
+    name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
     session: Session = Depends(get_session),
 ):
     if connection_id is None:
@@ -577,6 +625,10 @@ async def trigger_dataset_run(
         connection_id=conn_id,
         connection_name=conn_name,
         dataset_id=actual_dataset_to_run,
+        # The previous agent has no model choice
+        agent_model=(model or None) if agent != "previous" else None,
+        agent=agent,
+        name=_run_name(name),
         status=EvalStatus.running,
     )
     session.add(run)
@@ -600,6 +652,12 @@ async def trigger_dataset_run(
     )
 
 
+@router.get("/models")
+async def list_evaluation_models():
+    """The LLM models an evaluation can run the agent with, and its default."""
+    return await list_agent_models()
+
+
 @router.post("/run-connection", response_model=EvalRunRead, status_code=202)
 async def trigger_connection_run(
     background_tasks: BackgroundTasks,
@@ -608,6 +666,9 @@ async def trigger_connection_run(
     dataset_name: str | None = Query(default=None),
     triggered_by: str = Query(default="user"),
     tags: list[str] | None = Query(default=None),
+    model: str | None = Query(default=None),
+    agent: EvalAgent = Query(default="current"),
+    name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
     session: Session = Depends(get_session),
 ):
     """Evaluate a connection's golden questions: those with any of `tags`, or all."""
@@ -741,6 +802,10 @@ async def trigger_connection_run(
         dataset_id=ds_name,
         question_tags=selected_tags,
         question_ids=question_ids,
+        # The previous agent has no model choice
+        agent_model=(model or None) if agent != "previous" else None,
+        agent=agent,
+        name=_run_name(name),
         status=EvalStatus.running,
     )
     session.add(run)
@@ -800,6 +865,14 @@ def list_runs(
                 .group_by(EvalResult.run_id)
             ).all()
         )
+    # Finished runs carry their saved final score; only running runs are scored
+    # from the results saved so far
+    results_by_run: dict[str, list[EvalResult]] = {}
+    if running_ids:
+        for result in session.exec(
+            select(EvalResult).where(EvalResult.run_id.in_(running_ids))
+        ).all():
+            results_by_run.setdefault(result.run_id, []).append(result)
     runs = []
     for run, table_name in results:
         if table_name:
@@ -812,9 +885,12 @@ def list_runs(
         else:
             t_name = "Catalog Evaluation"
 
+        final_score, score_breakdown = _run_final_score(run, results_by_run.get(run.id))
         read = EvalRunRead.model_validate(
             run,
             update={
+                "final_score": final_score,
+                "score_breakdown": score_breakdown,
                 "table_name": t_name,
                 "connection_name": run.connection_name,
                 "completed_questions": completed_counts.get(run.id, 0)
@@ -855,6 +931,18 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
             "connection_name": run.connection_name,
         },
     )
+
+
+@router.patch("/runs/{run_id}", response_model=EvalRunRead)
+def rename_run(run_id: str, body: RunRename, session: Session = Depends(get_session)):
+    """Name (or, with an empty name, unname) a run, while it runs or after."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    run.name = _run_name(body.name)
+    session.add(run)
+    session.commit()
+    return get_run(run_id, session)
 
 
 @router.post("/runs/{run_id}/stop", response_model=EvalRunRead)
@@ -911,6 +999,23 @@ def _connection_run_questions(run: EvalRun, session: Session) -> list[GoldenQues
     return list(session.exec(query).all())
 
 
+def _question_trace(run: EvalRun, question_id: str) -> tuple[dict | None, str | None]:
+    """A question's Langfuse record in a run, or why there is none."""
+    # Either Langfuse will do: the configured one or the Langfuse Cloud fallback
+    if not langfuse_sources():
+        return None, "Langfuse is not configured."
+    try:
+        trace = fetch_question_trace(
+            question_id, run.started_at, run.completed_at or datetime.now()
+        )
+    except requests.RequestException as e:
+        logger.warning(f"[Eval] Langfuse read failed for question {question_id}: {e}")
+        return None, "Could not read this question's details from Langfuse."
+    if trace is None:
+        return None, "Langfuse has no record of this question in this run yet."
+    return trace, None
+
+
 @router.get("/runs/{run_id}/questions/{question_id}")
 def get_run_question(
     run_id: str, question_id: str, session: Session = Depends(get_session)
@@ -925,27 +1030,7 @@ def get_run_question(
             EvalResult.run_id == run_id, EvalResult.question_id == question_id
         )
     ).first()
-
-    trace = None
-    trace_unavailable_reason = None
-    if not langfuse_client.enabled:
-        trace_unavailable_reason = "Langfuse is not configured."
-    else:
-        try:
-            trace = fetch_question_trace(
-                question_id, run.started_at, run.completed_at or datetime.now()
-            )
-            if trace is None:
-                trace_unavailable_reason = (
-                    "Langfuse has no record of this question in this run yet."
-                )
-        except requests.RequestException as e:
-            logger.warning(
-                f"[Eval] Langfuse read failed for question {question_id}: {e}"
-            )
-            trace_unavailable_reason = (
-                "Could not read this question's details from Langfuse."
-            )
+    trace, trace_unavailable_reason = _question_trace(run, question_id)
 
     return {
         "run_id": run_id,
@@ -955,8 +1040,116 @@ def get_run_question(
         "score": result.score if result else None,
         "status": result.status if result else None,
         "failure_type": result.error_type if result else None,
+        # time shift when the question has one, else contains accuracy
+        **dict(
+            zip(
+                ("final_score", "score_source"),
+                question_score(result) if result else (None, None),
+                strict=True,
+            )
+        ),
         "trace": trace,
         "trace_unavailable_reason": trace_unavailable_reason,
+    }
+
+
+def _sql_result(run: dict | None) -> dict | None:
+    """A query's result rows, without the run's timing details."""
+    if not run:
+        return None
+    return {
+        "success": run.get("success"),
+        "error": run.get("error"),
+        "columns": run.get("columns") or [],
+        "rows": run.get("rows") or [],
+        "row_count": run.get("total_rows", run.get("row_count")),
+        "truncated": bool(run.get("truncated") or run.get("truncated_by_executor")),
+    }
+
+
+@router.get("/runs/{run_id}/results")
+def export_run_results(
+    run_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=50),
+    session: Session = Depends(get_session),
+):
+    """
+    Every finished question of a run with its golden and generated SQL and
+    the rows each returned, a page at a time (for scripts outside the app).
+    Results come from Langfuse, so a page of 10 takes a few seconds; follow
+    next_offset until it is null. Only finished runs: while a run is going,
+    new results land between pages and rows would be skipped or repeated.
+    """
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    if run.status == EvalStatus.running:
+        raise HTTPException(
+            status_code=409,
+            detail="The run is still going; export it once it has finished.",
+        )
+    total = len(
+        session.exec(select(EvalResult.id).where(EvalResult.run_id == run_id)).all()
+    )
+    rows = session.exec(
+        select(EvalResult, GoldenQuestion)
+        .join(GoldenQuestion, EvalResult.question_id == GoldenQuestion.id)
+        .where(EvalResult.run_id == run_id)
+        .order_by(EvalResult.question_id)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    results = []
+    for result, question in rows:
+        trace, unavailable = _question_trace(run, question.id)
+        trace = trace or {}
+        score, score_source = question_score(result)
+        results.append(
+            {
+                "question_id": question.id,
+                "question": question.question,
+                "status": result.status,
+                "score": score,
+                "score_source": score_source,
+                "failure_type": result.error_type,
+                # None only for results saved before per-metric scores were kept
+                "scores": result.scores
+                if result.scores is not None
+                else {"contains_accuracy": result.score},
+                "golden_sql": trace.get("expected_sql") or question.expected_sql,
+                "generated_sql": trace.get("generated_sql"),
+                # the generated SQL as it ran, when it was rewritten for the engine
+                "executed_generated_sql": trace.get("executed_generated_sql"),
+                "golden_result": _sql_result(trace.get("expected_run")),
+                "generated_result": _sql_result(trace.get("generated_run")),
+                "langfuse_url": trace.get("langfuse_url"),
+                "details_unavailable_reason": unavailable,
+            }
+        )
+
+    next_offset = offset + len(rows)
+    run_final_score, _ = _run_final_score(
+        run,
+        session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+        if run.status == EvalStatus.running
+        else None,
+    )
+    return {
+        "run_id": run.id,
+        "score": run_final_score,
+        "connection_id": run.connection_id,
+        "connection_name": run.connection_name,
+        "name": run.name,
+        "agent_model": run.agent_model,
+        "agent": run.agent or "current",
+        "status": run.status,
+        "started_at": run.started_at,
+        "total": total,
+        "offset": offset,
+        "next_offset": next_offset if next_offset < total else None,
+        "results": results,
     }
 
 
@@ -1015,6 +1208,10 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 "failure_type": r.error_type,
                 # None for results saved before scores were kept
                 "scores": r.scores,
+                # time shift when the question has one, else contains accuracy
+                **dict(
+                    zip(("final_score", "score_source"), question_score(r), strict=True)
+                ),
             }
             for r in results
         ]
@@ -1044,10 +1241,16 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         else {}
     )
 
+    score, score_breakdown = _run_final_score(
+        run, results if run.status == EvalStatus.running else None
+    )
     return {
         "run_id": run_id,
         "table_id": run.table_id,
         "overall_score": run.score,
+        # time shift per question when it has one, else contains accuracy, averaged
+        "score": score,
+        "score_breakdown": score_breakdown,
         "pass_rate": run.pass_rate,
         "fail_rate": run.fail_rate,
         "total_questions": run.total_questions or len(per_question),
@@ -1056,8 +1259,11 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "duration_seconds": run.duration_seconds,
         "status": run.status,
         "triggered_by": run.triggered_by,
+        "name": run.name,
+        "agent": run.agent or "current",
+        "agent_model": run.agent_model,
         "promotion_run_id": run.promotion_run_id,
-        "is_publishable": run.score >= 0.50
+        "is_publishable": score is not None and score >= 0.50
         if run.status == EvalStatus.completed
         else False,
         "regression_detected": run.regression_detected,

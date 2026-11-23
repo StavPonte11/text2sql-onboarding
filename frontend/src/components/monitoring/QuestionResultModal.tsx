@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Modal } from 'antd';
-import { CheckCircle2, ExternalLink, MinusCircle, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, ExternalLink, Gavel, MinusCircle, XCircle } from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
 import { ScoreBar, Spinner } from '../common/EvalUI';
@@ -27,6 +28,33 @@ function formatValue(value: unknown): string {
   return typeof value === 'object' && value !== null
     ? JSON.stringify(value, null, 2)
     : String(value);
+}
+
+/** A result as tab-separated text with a header row, which pastes into a spreadsheet */
+function resultAsTsv(columns: string[], rows: unknown[][]): string {
+  const cell = (value: unknown) => formatCell(value).replace(/[\t\n\r]+/g, ' ');
+  return [columns.map(cell), ...rows.map((row) => row.map(cell))]
+    .map((line) => line.join('\t'))
+    .join('\n');
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" className="question-copy" onClick={copy} aria-label={label} title={label}>
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? 'Copied' : label}
+    </button>
+  );
 }
 
 function ScoreRow({ score }: { score: QuestionScore }) {
@@ -100,7 +128,10 @@ function SqlRunPanel({
         )}
       </div>
       {sql ? (
-        <pre className="question-sql__code">{sql}</pre>
+        <div className="question-copyable">
+          <pre className="question-sql__code">{sql}</pre>
+          <CopyButton text={sql} label={`Copy ${title}`} />
+        </div>
       ) : (
         <p className="question-muted">No SQL</p>
       )}
@@ -120,6 +151,12 @@ function SqlRunPanel({
             {run.truncated_by_executor && <span>cut off by the row limit</span>}
           </div>
           {run.error && <pre className="question-error">{run.error}</pre>}
+          {columns.length > 0 && (
+            <CopyButton
+              text={resultAsTsv(columns, rows)}
+              label={`Copy ${title.replace(/ SQL$/, '')} result`}
+            />
+          )}
           {columns.length > 0 && (
             <div className="question-table-wrap">
               <table className="question-table">
@@ -147,6 +184,139 @@ function SqlRunPanel({
     </section>
   );
 }
+
+const JUDGE_NOT_USED: Record<string, string> = {
+  generated_sql_did_not_run:
+    "Not used: the generated SQL didn't run, so there was no result to judge.",
+  judge_unavailable: 'The judge was asked but could not answer',
+};
+
+/** Whether the LLM judge took a second look at this question, and what it decided */
+function JudgeSection({
+  judge,
+  status,
+}: {
+  judge: QuestionScore | undefined;
+  status: string | null;
+}) {
+  if (!judge) {
+    return (
+      <p className="question-muted">
+        {status === 'pass'
+          ? 'Contains accuracy: not needed, the question passed it.'
+          : 'Contains accuracy: not used, the LLM judge was not enabled for this run.'}
+      </p>
+    );
+  }
+  const d = judge.details as Record<string, any>;
+  if (!judge.applicable) {
+    const reason = String(d.reason ?? '');
+    return (
+      <p className="question-muted">
+        {JUDGE_NOT_USED[reason] ?? label(reason)}
+        {d.error ? `: ${d.error}` : ''}
+      </p>
+    );
+  }
+  const overturned = Boolean(d.overturned);
+  const differences: Record<string, any>[] = Array.isArray(d.key_differences)
+    ? d.key_differences
+    : [];
+  return (
+    <div className={`question-judge question-judge--${overturned ? 'overturned' : 'upheld'}`}>
+      <div className="question-judge__verdict">
+        <Gavel size={14} />
+        <strong>
+          {overturned
+            ? 'Overturned: judged correct, so the question passes'
+            : d.is_false_negative
+              ? 'Leaned correct, but not confident enough to overturn'
+              : 'Upheld: the answer is wrong'}
+        </strong>
+        {d.confidence != null && (
+          <span className="question-judge__confidence">
+            confidence {d.confidence}% (needs {d.min_confidence ?? 80}%)
+          </span>
+        )}
+      </div>
+      {d.reasoning && <p className="question-judge__reasoning">{d.reasoning}</p>}
+      {differences.length > 0 && (
+        <ul className="question-judge__differences">
+          {differences.map((diff, i) => (
+            <li key={i}>
+              <span>{String(diff.difference ?? '')}</span>
+              {String(diff.prevents_correct_answer) === 'true' ? (
+                <em> (prevents a correct answer)</em>
+              ) : (
+                <em> (cosmetic)</em>
+              )}
+              {diff.explanation && <div className="question-muted">{String(diff.explanation)}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="question-muted">
+        Metrics failed it for: {label(String(d.judged_failure_reason ?? 'results differ'))}
+        {d.model ? ` · model ${d.model}` : ''}
+        {d.prompt_name
+          ? ` · prompt ${d.prompt_name}${d.prompt_version ? ` v${d.prompt_version}` : ''}`
+          : ''}
+      </div>
+    </div>
+  );
+}
+
+/** The judge's verdict on each time shift the contains check failed */
+function ShiftJudgeSection({ timeShift }: { timeShift: QuestionScore | undefined }) {
+  const shifts = (timeShift?.details?.shift_results ?? []) as Record<string, any>[];
+  const judged = shifts.filter((shift) => shift.llm_judge);
+  if (!timeShift?.applicable || !shifts.length) return null;
+  if (!judged.length) {
+    return (
+      <p className="question-muted">
+        Time shifts: none needed the judge (no shift failed the contains check).
+      </p>
+    );
+  }
+  const passed = judged.filter((shift) => shift.llm_judge.overturned).length;
+  return (
+    <div className="question-judge-shifts">
+      <div className="question-judge__verdict">
+        <Gavel size={14} />
+        <strong>
+          Time shifts: judged {judged.length} failed shift{judged.length === 1 ? '' : 's'}, passed{' '}
+          {passed}
+        </strong>
+      </div>
+      <ul className="question-judge__differences">
+        {judged.map((shift) => {
+          const verdict = shift.llm_judge;
+          return (
+            <li key={shift.offset_days}>
+              <strong>{shift.offset_days} days:</strong>{' '}
+              {verdict.error
+                ? `judge unavailable (${verdict.error})`
+                : verdict.overturned
+                  ? 'overturned, judged correct'
+                  : verdict.is_false_negative
+                    ? 'leaned correct, not confident enough'
+                    : 'upheld, wrong'}
+              {verdict.confidence != null && (
+                <span className="question-muted"> · confidence {verdict.confidence}%</span>
+              )}
+              {verdict.reasoning && <div className="question-muted">{verdict.reasoning}</div>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+const SCORE_SOURCE: Record<string, string> = {
+  time_shift: 'its time shift score',
+  contains_accuracy: 'its contains accuracy (no time shift for this question)',
+};
 
 // Shown as tiles above the scores; the rest of the metadata goes under "Run information"
 const TILE_KEYS = [
@@ -177,7 +347,9 @@ export function QuestionResultModal({
 
   const trace = data?.trace;
   const metadata = trace?.metadata ?? {};
-  const scores = (trace?.scores ?? []).filter((s) => !s.name.endsWith('_seconds'));
+  const allScores = trace?.scores ?? [];
+  const judge = allScores.find((s) => s.name === 'llm_judge');
+  const scores = allScores.filter((s) => !s.name.endsWith('_seconds') && s.name !== 'llm_judge');
   const error = trace?.error || data?.failure_type;
 
   const tiles = [
@@ -228,10 +400,25 @@ export function QuestionResultModal({
 
       {data && (
         <div className="question-modal__body">
-          <p className="question-modal__question">{data.question}</p>
+          <div className="question-modal__question-row">
+            <p className="question-modal__question">{data.question}</p>
+            <CopyButton text={data.question} label="Copy question" />
+          </div>
           {error && <pre className="question-error">{error}</pre>}
           {data.trace_unavailable_reason && (
             <p className="question-notice">{data.trace_unavailable_reason}</p>
+          )}
+
+          {data.final_score !== undefined && (
+            <p className="question-final-score">
+              Score{' '}
+              <strong>
+                {data.final_score == null ? 'N/A' : `${Math.round(data.final_score * 100)}%`}
+              </strong>
+              {data.score_source && (
+                <span className="question-muted"> = {SCORE_SOURCE[data.score_source]}</span>
+              )}
+            </p>
           )}
 
           {tiles.length > 0 && (
@@ -253,6 +440,14 @@ export function QuestionResultModal({
                   <ScoreRow key={score.name} score={score} />
                 ))}
               </div>
+            </>
+          )}
+
+          {trace && (
+            <>
+              <h3 className="question-heading">LLM Judge</h3>
+              <JudgeSection judge={judge} status={data.status} />
+              <ShiftJudgeSection timeShift={allScores.find((s) => s.name === 'time_shift')} />
             </>
           )}
 

@@ -143,6 +143,8 @@ services:
       APP_ENV: production
       JWT_SECRET: dev-secret-change-in-production
       AGENT_URL: http://agent:8001
+      # Keep equal to the agent's LLM_MODEL below
+      AGENT_LLM_MODEL: openai/gpt-oss-120b
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}

@@ -22,6 +22,7 @@ from app.routers import (
     audit,
     enrichment,
     evaluation,
+    export,
     extractors,
     feedback,
     health,
@@ -135,6 +136,7 @@ api_router.include_router(admin_approval.router)
 api_router.include_router(agent.router)
 api_router.include_router(query.router)
 api_router.include_router(auth_api.router, prefix="/v1/auth", tags=["auth"])
+api_router.include_router(export.router)  # its own API key instead of SSO
 
 # Private endpoints (SSO protected)
 auth_deps = [Depends(get_current_user)]
