@@ -101,7 +101,7 @@ def test_langfuse_prompt_by_label(langfuse_enabled, monkeypatch):
         p = load_prompt("system")
     assert (p.source, p.text, p.version) == ("langfuse", "served v3", 3)
     args, kwargs = fake.get_prompt.call_args
-    assert args == ("deep-agent/system",)
+    assert args == ("text2sql/deep_agent/system",)
     assert kwargs["label"] == "staging" and kwargs["fallback"] == local_prompt("system")
 
 
@@ -122,7 +122,7 @@ async def test_prompt_change_rebuilds_the_agent_on_the_next_request(langfuse_ena
     from deep_agent import service
 
     served = {"system": "system v1", "validator": "validator v1"}
-    fake = MagicMock(get_prompt=MagicMock(side_effect=lambda name, **k: _served(served[name.split("/")[1]])))
+    fake = MagicMock(get_prompt=MagicMock(side_effect=lambda name, **k: _served(served[name.rsplit("/", 1)[1]])))
     builds = []
 
     def fake_build(**kwargs):
@@ -131,7 +131,7 @@ async def test_prompt_change_rebuilds_the_agent_on_the_next_request(langfuse_ena
 
     service.reset_for_tests()
     with patch("agent.langfuse_client.langfuse_client", fake), \
-         patch("deep_agent.agent.create_deep_agent", fake_build), \
+         patch("deep_agent.service.create_deep_agent", fake_build), \
          patch.object(service, "build_checkpointer", MagicMock(side_effect=lambda: _async(object()))):
         first = await service.get_deep_agent()
         assert await service.get_deep_agent() is first  # unchanged prompts: same agent
@@ -160,17 +160,6 @@ async def test_a_run_keeps_the_prompt_it_started_with(scripted_model, langfuse_e
     assert "Skills System" in prompts[0]
 
 
-def test_run_config_links_generations_to_the_prompt_version(langfuse_enabled):
-    client = _served("x", version=7)
-    with patch.object(observability, "_langfuse_handler", return_value=object()), \
-         patch.object(prompt_registry, "load_prompt",
-                      return_value=prompt_registry.LoadedPrompt("system", "x", "langfuse", 7, client)):
-        config = observability.build_run_config("t", tracing=True)
-    assert config["metadata"]["langfuse_prompt"] is client
-    assert config["metadata"]["prompt_version"] == 7
-    assert config["metadata"]["prompt_source"] == "langfuse"
-
-
 def test_sync_script_pushes_every_prompt_with_label():
     import importlib.util
     from pathlib import Path
@@ -181,9 +170,9 @@ def test_sync_script_pushes_every_prompt_with_label():
     spec.loader.exec_module(module)
     fake = MagicMock()
     pushed = module.sync(fake, label="staging", dry_run=False)
-    assert pushed == [f"deep-agent/{k}" for k in PROMPT_KEYS]
+    assert pushed == [f"text2sql/deep_agent/{k}" for k in PROMPT_KEYS]
     for call, key in zip(fake.create_prompt.call_args_list, PROMPT_KEYS):
-        assert call.kwargs["name"] == f"deep-agent/{key}"
+        assert call.kwargs["name"] == f"text2sql/deep_agent/{key}"
         assert call.kwargs["prompt"] == local_prompt(key)
         assert call.kwargs["labels"] == ["staging"] and call.kwargs["type"] == "text"
     assert module.sync(MagicMock(), label="staging", dry_run=True) == pushed

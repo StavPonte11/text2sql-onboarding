@@ -23,6 +23,7 @@ from deep_agent.answer.verification import normalize_sql, validation_summary
 from deep_agent.observability import run_metrics
 from deep_agent.tools import sql as sql_tools
 from deep_agent.validator.reviewer import SubmitVerdict, parse_brief, review_request
+from tests.deep_agent.conftest import system_text
 
 SQL = "SELECT COUNT(*) AS n FROM orders WHERE status = 'shipped'"
 FIXED = "SELECT COUNT(DISTINCT order_id) AS n FROM orders WHERE status = 'shipped'"
@@ -66,8 +67,8 @@ def _verdict(verdict, issues=(), call_id="v1"):
     return _call("submit_verdict", {"verdict": verdict, "issues": list(issues)}, call_id)
 
 
-async def _run(main, reviewer=None, mode="always", question=QUESTION, thread="t"):
-    agent = create_deep_agent(model=main, semantic_validation=mode, validator_model=reviewer)
+async def _run(main, reviewer=None, mode="always", question=QUESTION, thread="t", run_mode=None, **kwargs):
+    agent = create_deep_agent(model=main, semantic_validation=mode, validator_model=reviewer, mode=run_mode, **kwargs)
     with _fake_trino():
         return await agent.ainvoke({"messages": [("user", question)]}, {"configurable": {"thread_id": thread}})
 
@@ -214,11 +215,8 @@ ANSWER_AS_TEXT = json.dumps({"sql": SQL, "explanation_he": "x", "confidence": "h
 
 
 @pytest.mark.asyncio
-async def test_strict_submit_has_no_recovery_or_reminder(scripted_model, monkeypatch):
-    from agent.config import settings
-
-    monkeypatch.setattr(settings, "DEEP_AGENT_STRICT_SUBMIT", True)
-    state = await _run(scripted_model(_execute(), AIMessage(ANSWER_AS_TEXT)), mode="off")
+async def test_training_mode_has_no_recovery_or_reminder(scripted_model):
+    state = await _run(scripted_model(_execute(), AIMessage(ANSWER_AS_TEXT)), mode="off", run_mode="training")
     assert state["final_result"]["status"] == "no_answer"
     assert not [m for m in state["messages"] if getattr(m, "name", None) == "submit_reminder"]
 
@@ -273,8 +271,9 @@ def test_validation_response_only_exists_when_review_is_required():
 def test_defaults():
     from agent.config import AgentSettings
 
-    assert AgentSettings.model_fields["DEEP_AGENT_SEMANTIC_VALIDATION"].default == "always"
-    assert AgentSettings.model_fields["DEEP_AGENT_STRICT_SUBMIT"].default is False
+    assert AgentSettings.model_fields["DEEP_AGENT_MODE"].default == "serving"
+    assert AgentSettings.model_fields["DEEP_AGENT_SEMANTIC_VALIDATION"].default is None  # by mode
+    assert "DEEP_AGENT_STRICT_SUBMIT" not in AgentSettings.model_fields                  # replaced by the mode
 
 
 def test_summary_looks_at_the_review_of_the_final_sql():
@@ -321,7 +320,7 @@ async def test_on_demand_offers_the_reviewer_but_submit_only_needs_a_run(scripte
     assert _submit_results(state) == [ANSWER_RECEIVED]
     review = state["final_result"]["semantic_validation"]
     assert review["verdict"] == "not_validated" and review["reason"] == "no review of the final SQL"
-    assert "worth it before submit_answer" in _texts(main.seen[0]) or "semantic-validator" in _texts(main.seen[0])
+    assert "## Before you submit (required)" in _texts(main.seen[0])  # the same instructions as `always`
 
 
 @pytest.mark.asyncio
@@ -431,3 +430,136 @@ def test_notes_reach_the_reviewer():
                  "rows": [[1]], "row_count": 1, "truncated": False}]
     text = review_request([QUESTION], "SELECT a FROM t ORDER BY b DESC LIMIT 1", [], executed)
     assert "## Notes on this answer" in text and "LIMIT 1" in text
+
+
+@pytest.mark.asyncio
+async def test_each_agents_generations_link_its_own_langfuse_prompt(scripted_model):
+    """Through the real Langfuse CallbackHandler (exported to memory): the reviewer runs inside the main agent's run,
+    yet its generation must link the validator prompt and the main agent's generations the system prompt."""
+    from langfuse import Langfuse
+    from langfuse.langchain import CallbackHandler
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from deep_agent import observability
+    from deep_agent.prompts.registry import LoadedPrompt
+
+    exporter = InMemorySpanExporter()
+    langfuse = Langfuse(public_key="pk-lf-unit-test-prompt-links", secret_key="sk-lf-unit-test-prompt-links", host="http://127.0.0.1:9",
+                        span_exporter=exporter, flush_at=1, flush_interval=0.01)
+    served = {key: LoadedPrompt(key, f"{key} prompt", "langfuse", 1,
+                                SimpleNamespace(name=f"text2sql/deep_agent/{key}", version=1, is_fallback=False))
+              for key in ("system", "validator")}
+    main = scripted_model(_execute(), _review(), _submit())
+    with patch("deep_agent.agent.load_prompt", lambda key: served[key]), \
+         patch("deep_agent.validator.reviewer.load_prompt", lambda key: served[key]):
+        agent = create_deep_agent(model=main, semantic_validation="always", validator_model=scripted_model(_verdict("pass")))
+    with patch.object(observability, "_langfuse_handler", return_value=CallbackHandler(public_key="pk-lf-unit-test-prompt-links")), \
+         _fake_trino():
+        await agent.ainvoke({"messages": [("user", QUESTION)]}, observability.build_run_config("links", tracing=True))
+    langfuse.flush()
+
+    spans = exporter.get_finished_spans()
+    by_id = {s.context.span_id: s for s in spans}
+
+    def in_reviewer(span):  # is this span inside the reviewer subagent's run?
+        while span is not None:
+            if span.name == "semantic-validator":
+                return True
+            span = by_id.get(span.parent.span_id) if span.parent else None
+        return False
+
+    generations = [s for s in spans if s.attributes.get("langfuse.observation.type") == "generation"]
+    owner_and_prompt = [("reviewer" if in_reviewer(g) else "main", g.attributes.get("langfuse.observation.prompt.name"))
+                        for g in generations]
+    assert owner_and_prompt.count(("reviewer", "text2sql/deep_agent/validator")) == 1   # the reviewer's one call
+    assert owner_and_prompt.count(("main", "text2sql/deep_agent/system")) == 3          # execute, review, submit
+    assert len(owner_and_prompt) == 4                                                   # and nothing linked wrongly
+
+
+# ── run modes (deep_agent.run_mode) ──────────────────────────────────────────
+
+@pytest.mark.parametrize("mode, explicit, expected", [
+    ("serving", None, "always"), ("training", None, "on_demand"),
+    ("serving", "off", "off"), ("training", "off", "off"), ("training", "always", "always"),
+])
+def test_reviewer_setting_follows_the_mode_unless_set(mode, explicit, expected):
+    from deep_agent.run_mode import validation_for
+
+    assert validation_for(mode, explicit) == expected
+
+
+@pytest.mark.asyncio
+async def test_training_offers_the_reviewer_on_demand_by_default(scripted_model, monkeypatch):
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_SEMANTIC_VALIDATION", None)  # by mode
+    serving = await _run(scripted_model(_execute(), _submit(), AIMessage("done"), AIMessage("done")), mode=None,
+                         thread="s")
+    training = await _run(scripted_model(_execute(), _submit()), scripted_model(), mode=None, run_mode="training",
+                          thread="t")
+    assert _submit_results(serving)[0] == NOT_REVIEWED          # serving: the reviewer is required
+    assert _submit_results(training) == [ANSWER_RECEIVED]       # training: the model may skip it
+
+
+@pytest.mark.asyncio
+async def test_submit_requires_a_run_in_training_too(scripted_model):
+    state = await _run(scripted_model(_submit(), _execute(), _submit(call_id="s2")), mode="off", run_mode="training")
+    assert _submit_results(state) == [NOT_RUN, ANSWER_RECEIVED]  # feedback, then accepted
+    assert state["final_result"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_serving_and_training_show_the_model_the_same_prompt_and_tools(scripted_model, monkeypatch):
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "DEEP_AGENT_SEMANTIC_VALIDATION", None)  # each mode's default reviewer setting
+    worlds = {}
+    for run_mode in ("serving", "training"):
+        main = scripted_model(_execute(), _review(), _submit())
+        await _run(main, scripted_model(_verdict("pass")), mode=None, run_mode=run_mode, thread=run_mode)
+        worlds[run_mode] = (system_text(main.seen[0]), main.bound_tools[0])
+    assert worlds["serving"] == worlds["training"]
+
+
+@pytest.mark.asyncio
+async def test_training_ends_with_no_answer_after_the_model_call_bound(scripted_model):
+    main = scripted_model(*[_execute(call_id=f"e{i}") for i in range(10)])
+    state = await _run(main, mode="off", run_mode="training", max_model_calls=3)
+    assert len(main.seen) == 3
+    assert state["final_result"]["status"] == "no_answer"
+
+
+def test_training_runs_are_tagged():
+    from deep_agent.observability import build_run_config
+
+    assert build_run_config("t", mode="training", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent", "training"]
+    assert build_run_config("t", mode="serving", tracing=False)["metadata"]["langfuse_tags"] == ["deep-agent"]
+
+
+
+@pytest.mark.asyncio
+async def test_training_bounds_a_delegated_subagent_too(policy_model):
+    """A general-purpose subagent that keeps calling tools stops at the model-call bound in training mode."""
+    sub_calls = []
+
+    def policy(messages):
+        if any(m.type == "human" and "explore" in m.text for m in messages):              # inside the subagent
+            sub_calls.append(1)
+            return _execute(call_id=f"sub{len(sub_calls)}")
+        if not any(m.type == "tool" and m.name == "task" for m in messages):              # main agent: delegate once
+            return _call("task", {"description": "explore the orders table", "subagent_type": "general-purpose"}, "t1")
+        return AIMessage("done")
+
+    agent = create_deep_agent(model=policy_model(policy), mode="training", semantic_validation="off", max_model_calls=3)
+    with _fake_trino():
+        await agent.ainvoke({"messages": [("user", QUESTION)]}, {"configurable": {"thread_id": "bound-sub"}})
+    assert len(sub_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_on_demand_records_a_dispute_of_a_failed_review(scripted_model):
+    main = scripted_model(_execute(), _review(), _submit(validation_response="הספירה נכונה: כל שורה היא הזמנה"))
+    state = await _run(main, scripted_model(_verdict("fail", [ISSUE])), mode="on_demand")
+    assert _submit_results(state) == [ANSWER_RECEIVED]          # on demand: accepted
+    review = state["final_result"]["semantic_validation"]
+    assert review["verdict"] == "disputed" and review["response"].startswith("הספירה נכונה")

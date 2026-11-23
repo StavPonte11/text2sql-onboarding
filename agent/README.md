@@ -80,7 +80,7 @@ A SQL answer needs two approvals **before** it is submitted:
    never from the agent's reasoning. It judges by reading (no SQL tools) and returns pass, fail with issues and
    evidence, or — rarely, when only data can settle a doubt it can see — needs_check with specific checks; the agent
    runs them and asks for review again, and the reviewer then sees their real results (prompt: `prompts/validator.md`,
-   `deep-agent/validator` in Langfuse).
+   `text2sql/deep_agent/validator` in Langfuse).
 
 `submit_answer` only checks those records. Without them it is refused with the reason and the agent continues; a SQL
 changed after its review needs a new one. After a fail the agent fixes the SQL, or disputes: it submits the same SQL
@@ -88,9 +88,17 @@ with `validation_response` (recorded as disputed and shown to the user).
 
 | Setting | Default | |
 |---|---|---|
-| `DEEP_AGENT_SEMANTIC_VALIDATION` | `always` | `on_demand` = the reviewer is offered and the agent decides whether to call it; `off` = no reviewer. In both, only approval 1 is required |
+| `DEEP_AGENT_MODE` | `serving` | `training` = an RL environment (below). Also `create_deep_agent(mode=...)`; not exposed on the MCP tool |
+| `DEEP_AGENT_SEMANTIC_VALIDATION` | by mode | `always` (serving default); `on_demand` (training default) = the reviewer is offered and the agent decides whether to call it; `off` = no reviewer. In the last two only approval 1 is required. An explicit value wins in either mode |
 | `DEEP_AGENT_VALIDATOR_MAX_ROUNDS` | none | optional: after this many reviews in a turn, an unreviewed SQL is accepted as `not_validated` |
-| `DEEP_AGENT_STRICT_SUBMIT` | `false` | `true` = no recovery of answers written as text and no reminder: a model that doesn't call `submit_answer` ends without an answer |
+| `DEEP_AGENT_TRAINING_MAX_MODEL_CALLS` | `30` | training only: model calls per run, then it ends with no answer (`create_deep_agent(max_model_calls=...)`) |
+
+**Run modes** (`deep_agent/run_mode.py`). *Serving* adds guardrails so today's model answers reliably: the reviewer is
+required, an answer written as text is recovered, and a model that stops without submitting is reminded. *Training*
+only observes: the reviewer is on demand, no recovery or reminder (no `submit_answer` = no answer), a model-call bound,
+and traces tagged `training`. The prompt, tools, `submit_answer` schema and the "this SQL must have run" check are the
+same in both, so a policy trained in one carries over to the other. In training, give the reviewer a fixed
+`validator_model`, not the policy being trained.
 
 The response's `semantic_validation` reports the review of the **final** SQL: `verdict` (`passed` / `disputed` /
 `not_validated`), `rounds`, `issues`, `reviewed_final_sql`. Langfuse gets `validation_rounds` and, when the final SQL
@@ -116,20 +124,29 @@ Every deep-agent run is **one Langfuse trace** built by `deep_agent.observabilit
 
 In Langfuse, filter traces by **tag = `deep-agent`** (save it as a view). Disable tracing with `DEEP_AGENT_TRACING_ENABLED=false`.
 
+**Prompts** are served from Langfuse — `text2sql/deep_agent/system` and `text2sql/deep_agent/validator`, by label
+`DEEP_AGENT_PROMPT_LABEL` (default `production`) — and each trace links to the prompt version it used. A label move
+takes effect from the next request, no redeploy. The packaged `prompts/*.md` are the fallback when Langfuse is
+unreachable or has no such prompt; `DEEP_AGENT_LANGFUSE_PROMPTS=false` always uses them. After editing the `.md` files,
+push them as a new version: `uv run python scripts/sync_deep_agent_prompts.py --label staging`.
+
 ### Serving the deep agent
 
-The agent service exposes one MCP tool per agent: `chat_with_agent` (the legacy graph) and `deep_agent`. Each takes only
-its own arguments; the backend's `POST /api/agent/chat` picks the tool:
+The agent service exposes one MCP tool per agent, each with only its own arguments, and the backend one endpoint per tool:
+
+| Backend endpoint | MCP tool |
+|---|---|
+| `POST /api/agent/chat` | `chat_with_agent` (the legacy graph) |
+| `POST /api/agent/deep/chat` | `deep_agent` |
 
 | Setting / argument | Effect |
 |---|---|
-| backend body `"engine": "deep"` | calls `deep_agent`; omitted / `"legacy"` calls `chat_with_agent` |
-| thread id `deep-…` | Deep Agent threads; the backend resumes them on `deep_agent`, and each tool refuses the other's threads |
+| `thread_id` | continue a thread on the same agent; resuming a thread the deep agent never saw returns an error |
 | `DEEP_AGENT_CHECKPOINT_DB_URL=postgresql://…` | durable deep-agent threads (shared by replicas, survive restarts); unset = in-memory |
 | `timeout_s` argument | how long the caller waits; the run is cancelled then (a query already running finishes first). Omitted = no limit. The backend sends 290 (it waits 300). |
 
 The deep agent is built once per process and streams the same Redis `agent_stream:{thread_id}` events as the legacy graph
-(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `engine`, `verification`
+(nodes `deep:<tool>` and `deep:answer`). Responses keep the legacy contract and add `verification`
 (matched / re_executed / rejected / re_execution_failed / no_answer), `executed` (the final SQL ran and the rows are
 Trino's), `recovered_from_text`, `semantic_validation` and `confidence`. Each turn's answer is checked only against SQL executed in that turn.
 

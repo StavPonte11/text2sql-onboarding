@@ -3,7 +3,7 @@ Middleware around the final answer:
 
 - AnswerRecoveryMiddleware      answer written as JSON text instead of a submit_answer call -> the real call
 - SubmitReminderMiddleware      the model stopped without its submit call -> one reminder per turn
-                                (these two are the submit fallback; off with DEEP_AGENT_STRICT_SUBMIT)
+                                (these two are the submit fallback; off in training mode)
 - SubmitApprovalMiddleware      submit_answer is accepted only for SQL that ran this turn and that the
                                 semantic-validator passed (or that the agent disputes); it checks records, it
                                 doesn't judge
@@ -23,7 +23,6 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
-from agent.config import settings
 from deep_agent.answer.schema import ANSWER_RECEIVED, last_submission
 from deep_agent.answer.verification import match_execution, normalize_sql, validation_summary, verify_answer
 from deep_agent.context import REMINDER_NAME, current_turn
@@ -127,9 +126,9 @@ class SubmitReminderMiddleware(AgentMiddleware):
         return self.after_model(state, runtime)
 
 
-def submit_fallback(tool_name: str) -> list[AgentMiddleware]:
-    """Recovery + reminder for a model that doesn't call its submit tool — none with DEEP_AGENT_STRICT_SUBMIT."""
-    if settings.DEEP_AGENT_STRICT_SUBMIT:
+def submit_fallback(tool_name: str, strict: bool = False) -> list[AgentMiddleware]:
+    """Recovery + reminder for a model that doesn't call its submit tool — none when strict (training mode)."""
+    if strict:
         return []
     return [AnswerRecoveryMiddleware(), SubmitReminderMiddleware(tool_name)]
 
@@ -194,21 +193,23 @@ class SubmitApprovalMiddleware(AgentMiddleware):
         executed = (state.get("executed_queries") or [])[state.get("turn_execution_start") or 0:]
         if match_execution(answer.sql, executed) is None:
             return self._refuse(submission, NOT_RUN)
-        if not self.require_review:
-            return None
         sql = normalize_sql(answer.sql)
         records = list(state.get("semantic_validations") or [])
         reviews = [r for r in records if r.get("sql") == sql and r["verdict"] in _REVIEWED]
+        failed = bool(reviews) and reviews[-1]["verdict"] == "fail"
+        dispute = (
+            {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "disputed", "sql": sql,
+                                       "issues": reviews[-1]["issues"], "response": answer.validation_response}]}
+            if failed and getattr(answer, "validation_response", None) else None
+        )
+        if not self.require_review:
+            return dispute  # on demand: submit is accepted either way; a disputed fail is still recorded
         if reviews and reviews[-1]["verdict"] == "pass":
             return None
         if reviews and reviews[-1]["verdict"] == "needs_check":
             return self._refuse(submission, _checks_text(reviews[-1].get("checks") or []))
-        if reviews:  # failed
-            if getattr(answer, "validation_response", None):
-                return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "disputed", "sql": sql,
-                                                  "issues": reviews[-1]["issues"],
-                                                  "response": answer.validation_response}]}
-            return self._refuse(submission, _failed_text(reviews[-1]["issues"]))
+        if failed:
+            return dispute or self._refuse(submission, _failed_text(reviews[-1]["issues"]))
         done = sum(1 for r in records if r["verdict"] in _REVIEWED)
         if self.max_rounds is not None and done >= self.max_rounds:
             return {"semantic_validations": [{"id": uuid.uuid4().hex, "verdict": "skipped", "sql": sql, "issues": [],

@@ -48,7 +48,6 @@ from typing import Literal
 from agent.llm import get_llm
 
 # Initialize LLM for rejection routing classification
-llm = get_llm("routing")
 
 
 # ── G2-01: Custom exception ───────────────────────────────────────────────────
@@ -168,7 +167,8 @@ def rejection_router_node(state: AgentState, config: RunnableConfig | None = Non
     )
     prompt = ChatPromptTemplate.from_messages(langfuse_prompt.get_langchain_prompt())
 
-    structured_llm = llm.with_structured_output(RejectionRoute, method="json_schema")
+    structured_llm = get_llm("routing", runtime_flags=state.get("runtime_flags")).with_structured_output(
+        RejectionRoute, method="json_schema")
     chain = prompt | structured_llm
     try:
         response = chain.invoke({"feedback": feedback})
@@ -225,13 +225,9 @@ def route_detect_ambiguity(state: AgentState) -> str:
 
 
 def route_query_builder(state: AgentState) -> str:
-    runtime_flags = state.get("runtime_flags") or {}
-    enable_ambiguity = runtime_flags.get("SCHEMA_AMBIGUITY_DETECT", settings.ENABLE_AMBIGUITY_DETECT)
-    if isinstance(enable_ambiguity, str):
-        enable_ambiguity = enable_ambiguity.lower() == "true"
-        
-    if enable_ambiguity:
-        return "detect_ambiguity"
+    """Ambiguity detection is off until the ambiguity / clarification work is designed: no ambiguity check, no
+    clarifying question and no early stop, whatever SCHEMA_AMBIGUITY_DETECT says (the config DB seeds it true).
+    detect_ambiguity / ambiguity_resolution stay in the graph, unreachable, for that work."""
     return "hitl_query_approval"
 
 

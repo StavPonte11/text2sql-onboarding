@@ -4,7 +4,7 @@ Push the packaged Deep Agent prompts (agent/src/deep_agent/prompts/*.md) to Lang
     uv run python scripts/sync_deep_agent_prompts.py --label staging            # create new versions labelled staging
     uv run python scripts/sync_deep_agent_prompts.py --label production --dry-run
 
-Each run creates a new version of every `deep-agent/<key>` text prompt with the given label.
+Each run creates a new version of every `text2sql/deep_agent/<key>` text prompt with the given label.
 Promote a version by moving the `production` label in the Langfuse UI — the running agent
 picks it up within DEEP_AGENT_PROMPT_CACHE_TTL_S, no redeploy.
 """

@@ -44,7 +44,7 @@ from deep_agent.answer.schema import submission_strategy
 from deep_agent.answer.verification import match_execution, normalize_sql
 from deep_agent.context import DeepAgentContext, DeepAgentContextMiddleware, DeepAgentRuntimeState
 from deep_agent.middleware.catalog import CatalogMiddleware
-from deep_agent.prompts.registry import load_prompt
+from deep_agent.prompts.registry import PromptLinkMiddleware, load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -229,19 +229,21 @@ class ReviewRecordMiddleware(AgentMiddleware):
         return self.after_agent(state, runtime)
 
 
-def build_validator(model: BaseChatModel):
+def build_validator(model: BaseChatModel, extra_middleware: list | None = None):
     """The reviewer agent: facts-only input, catalog + date in context, no SQL tools, verdict via submit_verdict."""
-    prompt = load_prompt("validator").text
+    served = load_prompt("validator")
     agent = create_agent(
         model=model,
         tools=[],  # it judges by reading; checks that need data are run by the main agent (needs_check)
-        system_prompt=prompt,
+        system_prompt=served.text,
         middleware=[
             ReviewInputMiddleware(),  # first: the date is then added to the built input, not to the brief
             DeepAgentContextMiddleware(),
             CatalogMiddleware(),
-            *submit_fallback(VERDICT_TOOL),
+            PromptLinkMiddleware(served),
+            *submit_fallback(VERDICT_TOOL),  # the reviewer is environment, not policy: fallback in both modes
             ReviewRecordMiddleware(),
+            *(extra_middleware or []),  # e.g. the training-mode model-call bound
         ],
         response_format=submission_strategy(SubmitVerdict),
         context_schema=DeepAgentContext,
