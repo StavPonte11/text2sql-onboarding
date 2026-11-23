@@ -373,7 +373,7 @@ const AgentTestingHeader = memo(
     agentKindLocked: boolean;
     modelsInfo: ModelsResponse | null;
     model: string | undefined;
-    setModel: (v: string) => void;
+    setModel: (v: string | undefined) => void;
     hitlEnabled: boolean;
     setHitlEnabled: (v: boolean) => void;
     connections: any[];
@@ -417,13 +417,14 @@ const AgentTestingHeader = memo(
           <span>Model</span>
           <Select
             value={model}
-            onChange={setModel}
+            onChange={(v) => setModel(v ?? undefined)}
+            allowClear
             disabled={agentKindLocked}
             style={{ width: 190 }}
             popupMatchSelectWidth={false}
             loading={modelsInfo === null}
             status={modelsInfo?.list_error ? 'warning' : undefined}
-            placeholder={modelsInfo?.list_error ? 'Models unavailable — using default' : 'Select model'}
+            placeholder={modelsInfo?.list_error ? 'Default (list unavailable)' : 'Default (as configured)'}
             title={modelsInfo?.list_error ?? undefined}
             options={(modelsInfo?.models ?? []).map((m) => ({ value: m, label: m }))}
           />
@@ -959,11 +960,8 @@ export function AgentTestingPage() {
   useEffect(() => {
     agentApi
       .listModels()
-      .then((info) => {
-        setModelsInfo(info);
-        if (info.default && info.models.includes(info.default)) setModel(info.default);
-        else if (info.models.length) setModel(info.models[0]);
-      })
+      // No model is preselected: without a choice the agent uses its configured defaults (incl. per-step flags).
+      .then((info) => setModelsInfo(info))
       .catch((err) => {
         console.error('Failed to fetch models:', err);
         setModelsInfo({ models: [], default: null, list_error: 'Could not reach the agent' });

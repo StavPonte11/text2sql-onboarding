@@ -7,7 +7,6 @@ instead of the stored value (e.g. 'Fully Closed' for 'Fully Closed Airspace'). U
 where the list becomes the candidate set.
 """
 
-import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from agent.services.enrichment_models import AgentSQLTable, SQLFilterParams
@@ -16,11 +15,6 @@ from agent.services.enrichment_models import AgentSQLTable, SQLFilterParams
 def table_key(name: Optional[str]) -> str:
     """Comparable table name: the SQL and the catalog quote identifiers differently."""
     return (name or "").replace('"', "").lower()
-
-
-def _like_matches(pattern: str, value: str) -> bool:
-    regex = "".join(".*" if ch == "%" else "." if ch == "_" else re.escape(ch) for ch in pattern)
-    return re.fullmatch(regex, value, re.DOTALL) is not None
 
 
 class CompleteValueLists:
@@ -54,15 +48,17 @@ class CompleteValueLists:
         return self._lists.get((next(iter(owners)), col)) if len(owners) == 1 else None
 
     def unlisted(self, f: SQLFilterParams) -> List[str]:
-        """The filter's values that its column's complete list rules out (none when there is no complete list)."""
+        """The values of an `=` / `IN` filter that its column's complete list rules out (none without a list).
+
+        Not checked: negated filters (NOT IN, NOT ... =) — the SQL rewriter never changes them, so a correction
+        would only cost an LLM call — and LIKE, a deliberate partial match whose column may be wrapped in a
+        function (`lower(col) LIKE '%closed%'`) the filter extractor doesn't keep.
+        """
+        if f.is_negated or f.operator.upper() not in ("=", "IN"):
+            return []
         listed = self.for_filter(f)
         if not listed:
             return []
         values = [str(v) for v in (f.value if isinstance(f.value, list) else [f.value]) if v is not None]
-        op = f.operator.upper()
-        if op in ("=", "IN"):
-            return [v for v in values if v not in listed]
-        if op == "LIKE":
-            return [v for v in values if not any(_like_matches(v, item) for item in listed)]
-        return []
+        return [v for v in values if v not in listed]
 

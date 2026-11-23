@@ -65,9 +65,9 @@ DISTRICTS_A = ["Central District", "Haifa District"]
 DISTRICTS_B = ["District-1", "District-2"]
 
 
-def _filter(table, column, operator, value):
+def _filter(table, column, operator, value, negated=False):
     return SQLFilterParams(source_table=table, source_column=column, operator=operator, value=value,
-                           original_expression="", match_type="exact")
+                           original_expression="", match_type="exact", is_negated=negated)
 
 
 def _tables():
@@ -115,11 +115,15 @@ async def test_only_the_unlisted_values_of_an_in_list_are_flagged(mock_mcp_clien
 
 
 @pytest.mark.asyncio
-async def test_like_pattern_matching_nothing_is_flagged(mock_mcp_client):
-    from agent.config import settings
-    d = settings.CACHE_KEY_DELIMITER
-    f = _filter("postgres.public.policies", "flight_policy", "LIKE", "%Open%")
-    assert await HybridSearcher.search([f], _tables()) == {f"flight_policy{d}%Open%": POLICIES}
+@pytest.mark.parametrize("operator, value, negated", [
+    ("LIKE", "%Open%", False),        # LIKE is a deliberate partial match — never checked
+    ("LIKE", "%closed%", False),      # e.g. lower(col) LIKE '%closed%' (the extractor drops the lower())
+    ("IN", ["Fully Closed"], True),   # NOT IN — the rewriter never changes negated filters
+    ("=", "Fully Closed", True),      # NOT col = ...
+])
+async def test_like_and_negated_filters_are_not_checked(mock_mcp_client, operator, value, negated):
+    f = _filter("postgres.public.policies", "flight_policy", operator, value, negated)
+    assert await HybridSearcher.search([f], _tables()) == {}
 
 
 @pytest.mark.asyncio

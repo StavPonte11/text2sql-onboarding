@@ -125,3 +125,27 @@ async def test_deep_service_builds_one_agent_per_model_with_that_model_as_review
     assert "model" not in built[0]                                   # default: the configured LLM
     get.assert_called_once_with(model="qwen")
     assert built[1]["model"] is qwen_llm and built[1]["validator_model"] is qwen_llm  # agent and reviewer
+
+
+@pytest.mark.asyncio
+async def test_a_model_list_that_cannot_be_read_gives_a_clear_error(served):
+    from agent import mcp_server
+
+    served[1].models.list.side_effect = TimeoutError("timed out")
+    with patch.object(mcp_server.agent_graph, "ainvoke") as graph:
+        out = json.loads(await mcp_server.chat_with_agent(connection_id=89, query="q", model="qwen"))
+    assert "Could not check the model 'qwen'" in out["error"] and "timed out" in out["error"]
+    graph.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_default_model_by_name_shares_the_default_agent():
+    from deep_agent import service
+
+    service.reset_for_tests()
+    with patch("deep_agent.service.create_deep_agent", MagicMock(side_effect=lambda **k: object())) as create, \
+         patch.object(service, "build_checkpointer", AsyncMock(return_value=object())):
+        default = await service.get_deep_agent()
+        by_name = await service.get_deep_agent(llm_module.settings.LLM_MODEL)
+    service.reset_for_tests()
+    assert by_name is default and create.call_count == 1

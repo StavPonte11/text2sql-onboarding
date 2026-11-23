@@ -82,6 +82,8 @@ async def get_deep_agent(model: str | None = None):
     so a run keeps the prompt it started with and the next request gets the new one.
     """
     global _agent_lock, _checkpointer
+    if model == settings.LLM_MODEL:
+        model = None  # the default model by name is the default agent — one cached agent, not two
     prompts = await asyncio.to_thread(_current_prompts)
     cached = _agents.get(model)
     if cached is not None and cached[1] == prompts:

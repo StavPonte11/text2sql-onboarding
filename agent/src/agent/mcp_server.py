@@ -28,6 +28,8 @@ def _with_selected_model(tool):
                 await asyncio.to_thread(check_model, model)
             except UnknownModelError as e:
                 return json.dumps({"error": str(e)})
+            except Exception as e:  # noqa: BLE001 — the endpoint's model list couldn't be read (timeout, connection)
+                return json.dumps({"error": f"Could not check the model '{model}': {e}"})
         with selected_model(model):
             return await tool(*args, **kwargs)
 
