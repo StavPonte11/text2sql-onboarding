@@ -8,13 +8,13 @@ import type { EvalAgent } from '../../api/orchestration';
 import './AgentModelSelect.css';
 
 export const AGENT_LABELS: Record<EvalAgent, string> = {
-  current: 'Current agent',
+  current: 'Structured agent',
   deep: 'Deep Agent',
   previous: 'Previous agent (TextToSQL)',
 };
 
 const AGENT_OPTIONS: { label: string; value: EvalAgent }[] = [
-  { label: 'Current', value: 'current' },
+  { label: 'Structured', value: 'current' },
   { label: 'Deep', value: 'deep' },
   { label: 'Previous (TextToSQL)', value: 'previous' },
 ];
@@ -49,7 +49,7 @@ export function AgentModelSelect({
   ];
   const listError = data?.list_error ?? null;
   const agents = data?.agents;
-  // Before the agent server answers, only the current agent is offered
+  // Before the agent server answers, only the structured agent is offered
   const agentInfo = (name: EvalAgent) =>
     agents?.[name] ?? { available: name !== 'deep', supports_model: name === 'current' };
   // The previous agent, and agent versions whose tool takes no model, run on their own
