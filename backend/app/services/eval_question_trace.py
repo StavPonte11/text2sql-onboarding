@@ -11,6 +11,10 @@ The configured Langfuse (LANGFUSE_HOST) is read first. When it can't be read
 or has no record of the question, Langfuse Cloud is tried as a fallback
 (LANGFUSE_FALLBACK_HOST with its own LANGFUSE_FALLBACK_* keys), so runs
 written there still show their details.
+
+A Langfuse that doesn't answer in time isn't retried: the next source is tried
+at once, and that host is skipped for _SKIP_DOWN_HOST_SECONDS so every other
+question (a popup, an export page) doesn't wait on it again.
 """
 
 import json
@@ -26,8 +30,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_SECONDS = 30
+# (connect, read) seconds per request
+_TIMEOUT_SECONDS = (5, 15)
+# Attempts on a rate limit (429); a timeout or dropped connection isn't retried
 _ATTEMPTS = 3
+_SKIP_DOWN_HOST_SECONDS = 60
+# host -> time.monotonic() until which it is skipped after not answering
+_down_until: dict[str, float] = {}
 # How a Langfuse without the v2/v3 read endpoints answers them
 _NOT_AVAILABLE = {404, 405, 501}
 _OBSERVATION_FIELDS = "core,basic,io,metadata"
@@ -43,33 +52,42 @@ class LangfuseSource:
 
 
 def langfuse_sources() -> list[LangfuseSource]:
-    """The configured Langfuse, then Langfuse Cloud when it has keys and differs."""
-    sources = [
+    """The configured Langfuse, then Langfuse Cloud — each only when it has a host and keys."""
+    candidates = [
         LangfuseSource(
             settings.LANGFUSE_HOST.rstrip("/"),
             settings.LANGFUSE_PUBLIC_KEY,
             settings.LANGFUSE_SECRET_KEY,
-        )
+        ),
+        LangfuseSource(
+            settings.LANGFUSE_FALLBACK_HOST.rstrip("/"),
+            settings.LANGFUSE_FALLBACK_PUBLIC_KEY,
+            settings.LANGFUSE_FALLBACK_SECRET_KEY,
+        ),
     ]
-    fallback = LangfuseSource(
-        settings.LANGFUSE_FALLBACK_HOST.rstrip("/"),
-        settings.LANGFUSE_FALLBACK_PUBLIC_KEY,
-        settings.LANGFUSE_FALLBACK_SECRET_KEY,
-    )
-    if (
-        fallback.host
-        and fallback.public_key
-        and fallback.secret_key
-        and fallback.host != sources[0].host
-    ):
-        sources.append(fallback)
+    sources: list[LangfuseSource] = []
+    for source in candidates:
+        if (
+            source.host
+            and source.public_key
+            and source.secret_key
+            and source.host not in {s.host for s in sources}
+        ):
+            sources.append(source)
     return sources
 
 
 def _request(source: LangfuseSource, path: str, **params: Any) -> dict:
-    """GET with retries on rate limits (429) and dropped connections."""
+    """GET with retries on rate limits (429).
+
+    A timeout or dropped connection marks the host down for a while and is
+    raised at once, so the caller moves on to the next source.
+    """
+    if _down_until.get(source.host, 0.0) > time.monotonic():
+        raise requests.ConnectionError(
+            f"{source.host} didn't answer recently; skipped for now"
+        )
     for attempt in range(_ATTEMPTS):
-        last = attempt == _ATTEMPTS - 1
         try:
             res = requests.get(
                 f"{source.host}/api/public/{path}",
@@ -78,13 +96,12 @@ def _request(source: LangfuseSource, path: str, **params: Any) -> dict:
                 timeout=_TIMEOUT_SECONDS,
             )
         except (requests.ConnectionError, requests.Timeout):
-            if last:
-                raise
-            time.sleep(2**attempt)
-            continue
-        if res.status_code != 429 or last:
+            _down_until[source.host] = time.monotonic() + _SKIP_DOWN_HOST_SECONDS
+            raise
+        if res.status_code != 429 or attempt == _ATTEMPTS - 1:
             break
         time.sleep(2**attempt)
+    _down_until.pop(source.host, None)
     res.raise_for_status()
     return res.json()
 
@@ -201,16 +218,16 @@ def fetch_question_trace(
 ) -> dict | None:
     """
     Everything Langfuse holds for a question evaluated between the two times
-    (UTC), or None when no Langfuse has a record of it. Tries each of
-    langfuse_sources() in turn; raises the last requests exception only when
-    none of them could be read.
+    (UTC), or None when every Langfuse was read and none has a record of it.
+    Tries each of langfuse_sources() in turn; when one couldn't be read and no
+    other has the record, raises that error (the record may be in the one that
+    failed, so "no record" would hide a setup problem).
     """
     window = {
         "fromStartTime": f"{started_at.isoformat()}Z",
         "toStartTime": f"{ended_at.isoformat()}Z",
     }
     error: requests.RequestException | None = None
-    any_read = False
     for source in langfuse_sources():
         try:
             found = _read_from(source, question_id, window)
@@ -220,10 +237,9 @@ def fetch_question_trace(
             )
             error = exc
             continue
-        any_read = True
         if found is not None:
             return _question_record(source, *found)
-    if error is not None and not any_read:
+    if error is not None:
         raise error
     return None
 

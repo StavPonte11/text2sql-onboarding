@@ -12,7 +12,7 @@ New endpoints:
 
 import logging
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import requests
 from core.db.engine import engine, get_session
@@ -49,13 +49,13 @@ from app.routers.evaluation import (
     save_case_results,
 )
 from app.services.agent_models import list_agent_models
-from app.services.eval_question_trace import fetch_question_trace
+from app.services.eval_question_trace import fetch_question_trace, langfuse_sources
 from app.services.jeen_metadata import (
     fetch_jeen_sql_pairs,
     fetch_jeen_sql_pairs_with_tags,
 )
 from app.services.langfuse_client import langfuse_client
-from app.services.run_score import question_score, run_score
+from app.services.run_score import final_run_score, question_score, results_score
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,20 @@ class RunRename(BaseModel):
 
 
 router = APIRouter(prefix="/evaluations", tags=["evaluation-orchestration"])
+
+
+def _run_final_score(
+    run: EvalRun, running_results: list[EvalResult] | None = None
+) -> tuple[float | None, dict[str, Any] | None]:
+    """The run's score and breakdown to show.
+
+    A running run is scored from the results saved so far (`running_results`);
+    any other run shows its saved final score (0 when it failed).
+    """
+    if run.status == EvalStatus.running and running_results is not None:
+        return results_score(running_results)
+    return final_run_score(run), run.score_breakdown
+
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 REGRESSION_BLOCK_DELTA = 0.10
@@ -127,6 +141,8 @@ def _run_full_pipeline(
                     # Fetch updated run state
                     session.refresh(run)
 
+                    # The run's final score (and the previous run's) decide the alerts
+                    final = final_run_score(run) or 0.0
                     # Detect regression vs previous run
                     prev_runs = session.exec(
                         select(EvalRun)
@@ -139,11 +155,14 @@ def _run_full_pipeline(
                         .limit(1)
                     ).first()
 
+                    prev_score = (
+                        (final_run_score(prev_runs) or 0.0) if prev_runs else 0.0
+                    )
                     regression_detected = False
                     regression_delta = None
 
-                    if prev_runs and prev_runs.score > 0:
-                        delta = prev_runs.score - score
+                    if prev_runs and prev_score:
+                        delta = prev_score - final
                         if delta > REGRESSION_BLOCK_DELTA:
                             regression_detected = True
                             regression_delta = round(delta, 4)
@@ -153,10 +172,10 @@ def _run_full_pipeline(
                                 table_id,
                                 "regression",
                                 AlertSeverity.critical,
-                                f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                                f"Score dropped {delta:.1%} (from {prev_score:.2f} → {final:.2f})",
                                 {
-                                    "previous_score": prev_runs.score,
-                                    "current_score": score,
+                                    "previous_score": prev_score,
+                                    "current_score": final,
                                     "delta": delta,
                                 },
                             )
@@ -171,21 +190,21 @@ def _run_full_pipeline(
                                 AlertSeverity.warning,
                                 f"Score warning: {delta:.1%} drop detected",
                                 {
-                                    "previous_score": prev_runs.score,
-                                    "current_score": score,
+                                    "previous_score": prev_score,
+                                    "current_score": final,
                                     "delta": delta,
                                 },
                             )
 
                     # Low score alert
-                    if score < LOW_SCORE_THRESHOLD:
+                    if final < LOW_SCORE_THRESHOLD:
                         _create_alert(
                             session,
                             run_id,
                             table_id,
                             "low_score",
                             AlertSeverity.warning,
-                            f"Table performance is low ({score:.1%})",
+                            f"Table performance is low ({final:.1%})",
                         )
 
                     # Finalize run orchestration fields
@@ -846,11 +865,14 @@ def list_runs(
                 .group_by(EvalResult.run_id)
             ).all()
         )
+    # Finished runs carry their saved final score; only running runs are scored
+    # from the results saved so far
     results_by_run: dict[str, list[EvalResult]] = {}
-    for result in session.exec(
-        select(EvalResult).where(EvalResult.run_id.in_([run.id for run, _ in results]))
-    ).all():
-        results_by_run.setdefault(result.run_id, []).append(result)
+    if running_ids:
+        for result in session.exec(
+            select(EvalResult).where(EvalResult.run_id.in_(running_ids))
+        ).all():
+            results_by_run.setdefault(result.run_id, []).append(result)
     runs = []
     for run, table_name in results:
         if table_name:
@@ -863,7 +885,7 @@ def list_runs(
         else:
             t_name = "Catalog Evaluation"
 
-        final_score, score_breakdown = run_score(results_by_run.get(run.id, []))
+        final_score, score_breakdown = _run_final_score(run, results_by_run.get(run.id))
         read = EvalRunRead.model_validate(
             run,
             update={
@@ -979,7 +1001,8 @@ def _connection_run_questions(run: EvalRun, session: Session) -> list[GoldenQues
 
 def _question_trace(run: EvalRun, question_id: str) -> tuple[dict | None, str | None]:
     """A question's Langfuse record in a run, or why there is none."""
-    if not langfuse_client.enabled:
+    # Either Langfuse will do: the configured one or the Langfuse Cloud fallback
+    if not langfuse_sources():
         return None, "Langfuse is not configured."
     try:
         trace = fetch_question_trace(
@@ -1055,11 +1078,17 @@ def export_run_results(
     Every finished question of a run with its golden and generated SQL and
     the rows each returned, a page at a time (for scripts outside the app).
     Results come from Langfuse, so a page of 10 takes a few seconds; follow
-    next_offset until it is null.
+    next_offset until it is null. Only finished runs: while a run is going,
+    new results land between pages and rows would be skipped or repeated.
     """
     run = session.get(EvalRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
+    if run.status == EvalStatus.running:
+        raise HTTPException(
+            status_code=409,
+            detail="The run is still going; export it once it has finished.",
+        )
     total = len(
         session.exec(select(EvalResult.id).where(EvalResult.run_id == run_id)).all()
     )
@@ -1085,7 +1114,10 @@ def export_run_results(
                 "score": score,
                 "score_source": score_source,
                 "failure_type": result.error_type,
-                "scores": result.scores or {"contains_accuracy": result.score},
+                # None only for results saved before per-metric scores were kept
+                "scores": result.scores
+                if result.scores is not None
+                else {"contains_accuracy": result.score},
                 "golden_sql": trace.get("expected_sql") or question.expected_sql,
                 "generated_sql": trace.get("generated_sql"),
                 # the generated SQL as it ran, when it was rewritten for the engine
@@ -1098,8 +1130,11 @@ def export_run_results(
         )
 
     next_offset = offset + len(rows)
-    run_final_score, _ = run_score(
+    run_final_score, _ = _run_final_score(
+        run,
         session.exec(select(EvalResult).where(EvalResult.run_id == run_id)).all()
+        if run.status == EvalStatus.running
+        else None,
     )
     return {
         "run_id": run.id,
@@ -1206,7 +1241,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         else {}
     )
 
-    score, score_breakdown = run_score(results)
+    score, score_breakdown = _run_final_score(
+        run, results if run.status == EvalStatus.running else None
+    )
     return {
         "run_id": run_id,
         "table_id": run.table_id,
@@ -1226,7 +1263,7 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "agent": run.agent or "current",
         "agent_model": run.agent_model,
         "promotion_run_id": run.promotion_run_id,
-        "is_publishable": run.score >= 0.50
+        "is_publishable": score is not None and score >= 0.50
         if run.status == EvalStatus.completed
         else False,
         "regression_detected": run.regression_detected,

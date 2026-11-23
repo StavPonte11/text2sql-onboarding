@@ -44,6 +44,7 @@ from app.config import settings
 # NOTE: get_orchestration_report is imported locally inside get_run_report to avoid
 # a circular import with orchestration.py (which imports from this module).
 from app.services.langfuse_client import langfuse_client
+from app.services.run_score import cases_score, final_run_score
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,9 @@ def _map_and_save_run_metrics(
     run.duration_seconds = eval_resp.duration_seconds
     run.status = EvalStatus.completed
     run.completed_at = datetime.now()
+    # The run's one final score, saved now so every view, is_publishable and the
+    # regression alerts use the same number
+    run.final_score, run.score_breakdown = cases_score(eval_resp.cases)
 
     # Store failure breakdown details
     failure_breakdown = {
@@ -921,6 +925,8 @@ def _run_evaluation_pipeline(
             # Fetch updated run state
             session.refresh(run)
 
+            # The run's final score (and the previous run's) decide the alerts
+            final = final_run_score(run) or 0.0
             # Detect regression vs previous run
             prev_runs = session.exec(
                 select(EvalRun)
@@ -933,11 +939,12 @@ def _run_evaluation_pipeline(
                 .limit(1)
             ).first()
 
+            prev_score = (final_run_score(prev_runs) or 0.0) if prev_runs else 0.0
             regression_detected = False
             regression_delta = None
 
-            if prev_runs and prev_runs.score > 0:
-                delta = prev_runs.score - score
+            if prev_runs and prev_score:
+                delta = prev_score - final
                 if delta > REGRESSION_BLOCK_DELTA:
                     regression_detected = True
                     regression_delta = round(delta, 4)
@@ -947,10 +954,10 @@ def _run_evaluation_pipeline(
                         table_id,
                         "regression",
                         AlertSeverity.critical,
-                        f"Score dropped {delta:.1%} (from {prev_runs.score:.2f} → {score:.2f})",
+                        f"Score dropped {delta:.1%} (from {prev_score:.2f} → {final:.2f})",
                         {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
+                            "previous_score": prev_score,
+                            "current_score": final,
                             "delta": delta,
                         },
                     )
@@ -965,21 +972,21 @@ def _run_evaluation_pipeline(
                         AlertSeverity.warning,
                         f"Score warning: {delta:.1%} drop detected",
                         {
-                            "previous_score": prev_runs.score,
-                            "current_score": score,
+                            "previous_score": prev_score,
+                            "current_score": final,
                             "delta": delta,
                         },
                     )
 
             # Low score alert
-            if score < LOW_SCORE_THRESHOLD:
+            if final < LOW_SCORE_THRESHOLD:
                 _create_alert(
                     session,
                     run_id,
                     table_id,
                     "low_score",
                     AlertSeverity.warning,
-                    f"Table performance is low ({score:.1%})",
+                    f"Table performance is low ({final:.1%})",
                 )
 
             # Finalize run orchestration fields

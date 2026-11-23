@@ -30,7 +30,10 @@ export function scoreExplanation(breakdown: ScoreBreakdown, score: number | null
       .map((p) => `${p.count} × ${avg(p.average)}`);
     lines.push(`Score = (${parts.join(' + ')}) / ${questions} = ${score.toFixed(2)}`);
   }
-  if (unscored) lines.push(`${plural(unscored, 'question')} could not be scored and are left out.`);
+  if (unscored)
+    lines.push(
+      `${plural(unscored, 'question')} could not be scored (the agent failed or gave no SQL) and count as 0.`,
+    );
   if (!questions) lines.push('No question has been scored yet.');
   return lines;
 }

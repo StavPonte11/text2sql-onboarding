@@ -24,7 +24,11 @@ def require_export_key(request: Request) -> None:
             detail="The export API is off: set EVAL_EXPORT_API_KEY on the backend.",
         )
     scheme, _, key = request.headers.get("Authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(key, expected):
+    # Compare bytes: compare_digest raises TypeError on non-ASCII str, and a
+    # header with such characters must get 401, not 500
+    if scheme.lower() != "bearer" or not hmac.compare_digest(
+        key.encode(), expected.encode()
+    ):
         raise HTTPException(status_code=401, detail="Invalid or missing export API key")
 
 

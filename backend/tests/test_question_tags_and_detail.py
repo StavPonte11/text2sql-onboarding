@@ -281,10 +281,10 @@ def _finished_question(db_session):
 def test_question_endpoint_returns_trace(client, db_session):
     run, question = _finished_question(db_session)
     with (
-        patch(f"{ORCH}.langfuse_client") as langfuse,
+        patch(f"{ORCH}.langfuse_sources") as langfuse,
         patch(f"{ORCH}.fetch_question_trace", return_value={"trace_id": "t"}),
     ):
-        langfuse.enabled = True
+        langfuse.return_value = ["langfuse"]
         body = client.get(
             f"/api/evaluations/runs/{run.id}/questions/{question.id}"
         ).json()
@@ -299,12 +299,12 @@ def test_question_endpoint_still_answers_when_langfuse_fails(client, db_session)
 
     run, question = _finished_question(db_session)
     with (
-        patch(f"{ORCH}.langfuse_client") as langfuse,
+        patch(f"{ORCH}.langfuse_sources") as langfuse,
         patch(
             f"{ORCH}.fetch_question_trace", side_effect=requests.ConnectionError("x")
         ),
     ):
-        langfuse.enabled = True
+        langfuse.return_value = ["langfuse"]
         response = client.get(f"/api/evaluations/runs/{run.id}/questions/{question.id}")
     assert response.status_code == 200
     assert response.json()["trace"] is None
@@ -618,10 +618,10 @@ def _trace_for(question_id, *_):
 def test_results_export_pages_through_a_run(client, db_session):
     run, questions = _finished_run(db_session, 3)
     with (
-        patch(f"{ORCH}.langfuse_client") as langfuse,
+        patch(f"{ORCH}.langfuse_sources") as langfuse,
         patch(f"{ORCH}.fetch_question_trace", side_effect=_trace_for),
     ):
-        langfuse.enabled = True
+        langfuse.return_value = ["langfuse"]
         first = client.get(
             f"/api/evaluations/runs/{run.id}/results", params={"limit": 2}
         )
@@ -653,8 +653,8 @@ def test_results_export_pages_through_a_run(client, db_session):
 
 def test_results_export_without_langfuse_still_lists_the_questions(client, db_session):
     run, _ = _finished_run(db_session, 1)
-    with patch(f"{ORCH}.langfuse_client") as langfuse:
-        langfuse.enabled = False
+    with patch(f"{ORCH}.langfuse_sources") as langfuse:
+        langfuse.return_value = []
         row = client.get(f"/api/evaluations/runs/{run.id}/results").json()["results"][0]
     assert row["golden_sql"] == "SELECT 0"
     assert row["generated_sql"] is None and row["golden_result"] is None
@@ -676,8 +676,8 @@ def test_export_api_needs_its_key(client, db_session):
             client.get(url, headers={"Authorization": "Bearer wrong"}).status_code
             == 401
         )
-        with patch(f"{ORCH}.langfuse_client") as langfuse:
-            langfuse.enabled = False
+        with patch(f"{ORCH}.langfuse_sources") as langfuse:
+            langfuse.return_value = []
             ok = client.get(url, headers={"Authorization": "Bearer secret-key"})
             runs = client.get(
                 "/api/export/evaluations/runs",
@@ -709,28 +709,31 @@ def test_question_score_prefers_time_shift():
         1.0,
         "contains_accuracy",
     )  # old result
-    assert question_score(_result({"sql_exact_match": 0.0})) == (None, None)
+    # neither could judge it (the agent failed): counts as 0
+    assert question_score(_result({"sql_exact_match": 0.0})) == (0.0, None)
 
 
-def test_run_score_averages_and_explains():
-    from app.services.run_score import run_score
+def test_run_score_counts_unscored_questions_as_zero():
+    from app.services.run_score import results_score, run_score
 
-    score, breakdown = run_score(
+    score, breakdown = results_score(
         [
             _result({"contains_accuracy": 1.0, "time_shift": 0.8}),
             _result({"contains_accuracy": 1.0, "time_shift": 0.4}),
             _result({"contains_accuracy": 1.0}),
             _result({"contains_accuracy": 0.0}),
-            _result({}),
+            _result({}),  # the agent failed: no score, counts as 0
         ]
     )
-    assert score == round((0.8 + 0.4 + 1.0 + 0.0) / 4, 4)
+    assert score == round((0.8 + 0.4 + 1.0 + 0.0 + 0.0) / 5, 4)
     assert breakdown == {
-        "questions": 4,
+        "questions": 5,
         "time_shift": {"count": 2, "average": 0.6},
         "contains_accuracy": {"count": 2, "average": 0.5},
         "unscored": 1,
     }
+    # 5 failures and 5 passes are 0.5, not 1.0
+    assert run_score([(None, None)] * 5 + [(1.0, "contains_accuracy")] * 5)[0] == 0.5
     assert run_score([]) == (
         None,
         {
@@ -742,7 +745,42 @@ def test_run_score_averages_and_explains():
     )
 
 
+def test_final_run_score_is_saved_when_the_run_finishes():
+    from app.routers.evaluation import _map_and_save_run_metrics
+    from app.services.run_score import final_run_score
+
+    run = EvalRun(status=EvalStatus.running, total_questions=4)
+    from types import SimpleNamespace
+
+    cases = [
+        SimpleNamespace(question_id=qid, scores=scores)
+        for qid, scores in [
+            ("a", {"contains_accuracy": 1.0, "time_shift": 0.5}),
+            ("b", {"contains_accuracy": 1.0}),
+            ("c", {"sql_exact_match": 0.0}),  # the agent failed
+            ("d", {}),
+        ]
+    ]
+    eval_resp = MagicMock(total_cases=4, cases=cases, duration_seconds=1.0)
+    eval_resp.accuracy.contains_accuracy = 0.5
+    eval_resp.failure_analysis.categories = []
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+    with patch("app.routers.evaluation.save_case_results"):
+        _map_and_save_run_metrics(run, eval_resp, session, "r")
+
+    assert run.status == EvalStatus.completed
+    assert run.final_score == round((0.5 + 1.0) / 4, 4)
+    assert run.score_breakdown["unscored"] == 2
+    assert final_run_score(run) == run.final_score
+    # a failed run scores 0, a running one has no final score yet
+    assert final_run_score(EvalRun(status=EvalStatus.failed, final_score=0.9)) == 0.0
+    assert final_run_score(EvalRun(status=EvalStatus.running)) is None
+
+
 def test_report_and_run_list_carry_the_score(client, db_session):
+    from app.services.run_score import results_score
+
     run, questions = _finished_run(db_session, 2)
     # q0 fails contains (0), q1 passes contains (1) — give q1 a time shift of 0.5
     result = db_session.exec(
@@ -752,10 +790,15 @@ def test_report_and_run_list_carry_the_score(client, db_session):
     ).one()
     result.scores = {"contains_accuracy": 1.0, "time_shift": 0.5}
     db_session.add(result)
+    # saved when the run finished
+    run.final_score, run.score_breakdown = results_score([result, _result({})])
+    run.score = 0.9  # contains accuracy: no longer what decides publishable
+    db_session.add(run)
     db_session.commit()
 
     report = client.get(f"/api/evaluations/runs/{run.id}/report").json()
     assert report["score"] == 0.25
+    assert report["is_publishable"] is False  # by the final score, not run.score
     assert report["score_breakdown"]["time_shift"] == {"count": 1, "average": 0.5}
     by_id = {q["question_id"]: q for q in report["per_question"]}
     assert by_id[questions[1].id]["final_score"] == 0.5
@@ -766,6 +809,61 @@ def test_report_and_run_list_carry_the_score(client, db_session):
         "/api/evaluations/runs", params={"connection_id": run.connection_id}
     )
     assert listed.json()[0]["final_score"] == 0.25
+
+
+def test_failed_run_scores_zero_and_running_run_scores_live(client, db_session):
+    run, _ = _finished_run(db_session, 2)  # q0 scores 0, q1 scores 1
+    run.status = EvalStatus.running
+    db_session.add(run)
+    db_session.commit()
+    listed = client.get(
+        "/api/evaluations/runs", params={"connection_id": run.connection_id}
+    )
+    assert listed.json()[0]["final_score"] == 0.5  # from the results so far
+
+    run.status = EvalStatus.failed  # its partial results don't count
+    db_session.add(run)
+    db_session.commit()
+    report = client.get(f"/api/evaluations/runs/{run.id}/report").json()
+    assert report["score"] == 0.0
+    listed = client.get(
+        "/api/evaluations/runs", params={"connection_id": run.connection_id}
+    )
+    assert listed.json()[0]["final_score"] == 0.0
+
+
+def test_results_export_waits_for_the_run_to_finish(client, db_session):
+    run, _ = _finished_run(db_session, 1)
+    run.status = EvalStatus.running
+    db_session.add(run)
+    db_session.commit()
+    assert client.get(f"/api/evaluations/runs/{run.id}/results").status_code == 409
+
+
+def test_results_export_keeps_empty_scores_empty(client, db_session):
+    run, _ = _finished_run(db_session, 1)
+    result = db_session.exec(
+        __import__("sqlmodel").select(EvalResult).where(EvalResult.run_id == run.id)
+    ).one()
+    result.scores = {}  # the agent failed: nothing could be scored
+    db_session.add(result)
+    db_session.commit()
+    with patch(f"{ORCH}.langfuse_sources", return_value=[]):
+        row = client.get(f"/api/evaluations/runs/{run.id}/results").json()["results"][0]
+    assert row["scores"] == {}
+    assert row["score"] == 0.0 and row["score_source"] is None
+
+
+def test_export_key_with_non_ascii_characters_is_rejected(client, db_session):
+    run, _ = _finished_run(db_session, 1)
+    url = f"/api/export/evaluations/runs/{run.id}/results"
+    with patch("app.routers.export.settings.EVAL_EXPORT_API_KEY", "secret-key"):
+        response = client.get(
+            # sent as raw bytes; the server reads the header as latin-1
+            url,
+            headers={"Authorization": "Bearer s\u00e9cret".encode("latin-1")},
+        )
+    assert response.status_code == 401
 
 
 def _with_cloud_fallback():
@@ -786,8 +884,11 @@ def _page(data):
 def test_cloud_is_read_when_the_private_langfuse_is_unreachable():
     import requests
 
+    from app.services import eval_question_trace
+
+    eval_question_trace._down_until.clear()
     start = datetime(2026, 10, 26, 12, 0)
-    down = requests.ConnectionError("Name or service not known")
+    down = requests.Timeout("read timed out")
     host, fb_host, pk, sk, sleep = _with_cloud_fallback()
     with (
         host,
@@ -799,8 +900,9 @@ def test_cloud_is_read_when_the_private_langfuse_is_unreachable():
             "app.services.eval_question_trace.requests.get",
             side_effect=[
                 down,
-                down,
-                down,
+                _page([SAMPLE]),
+                _page(CHILDREN),
+                _page(SCORES),
                 _page([SAMPLE]),
                 _page(CHILDREN),
                 _page(SCORES),
@@ -808,12 +910,15 @@ def test_cloud_is_read_when_the_private_langfuse_is_unreachable():
         ) as get,
     ):
         trace = fetch_question_trace("q1", start, start + timedelta(hours=2))
+        # the next question skips the host that just timed out
+        fetch_question_trace("q2", start, start + timedelta(hours=2))
 
     hosts = [c.args[0].split("/api/")[0] for c in get.call_args_list]
-    assert hosts[:3] == ["https://langfuse.private"] * 3  # retried, then gave up
-    assert set(hosts[3:]) == {"https://cloud.langfuse.com"}
-    assert get.call_args_list[3].kwargs["auth"] == ("pk", "sk")
+    assert hosts[0] == "https://langfuse.private"  # tried once, not retried
+    assert set(hosts[1:]) == {"https://cloud.langfuse.com"}
+    assert get.call_args_list[1].kwargs["auth"] == ("pk", "sk")
     assert trace["langfuse_url"].startswith("https://cloud.langfuse.com/project/proj/")
+    eval_question_trace._down_until.clear()
 
 
 def test_cloud_is_read_when_the_private_langfuse_has_no_record():
@@ -834,8 +939,10 @@ def test_cloud_is_read_when_the_private_langfuse_has_no_record():
     assert trace["trace_id"] == "trace1"
 
 
-def test_no_record_anywhere_is_none_and_all_down_raises():
+def test_no_record_anywhere_is_none_and_a_failed_source_raises():
     import requests
+
+    from app.services import eval_question_trace
 
     start = datetime(2026, 10, 26, 12, 0)
     host, fb_host, pk, sk, sleep = _with_cloud_fallback()
@@ -845,12 +952,26 @@ def test_no_record_anywhere_is_none_and_all_down_raises():
             side_effect=[_page([]), _page([])],
         ):
             assert fetch_question_trace("q1", start, start) is None
+        # the private Langfuse answers 401 and the cloud has no record: that's
+        # "couldn't read", not "no record"
+        unauthorized = MagicMock(status_code=401)
+        unauthorized.raise_for_status.side_effect = requests.HTTPError(
+            response=unauthorized
+        )
+        with patch(
+            "app.services.eval_question_trace.requests.get",
+            side_effect=[unauthorized, _page([])],
+        ):
+            with pytest.raises(requests.HTTPError):
+                fetch_question_trace("q1", start, start)
+        eval_question_trace._down_until.clear()
         with patch(
             "app.services.eval_question_trace.requests.get",
             side_effect=requests.ConnectionError("down"),
         ):
             with pytest.raises(requests.ConnectionError):
                 fetch_question_trace("q1", start, start)
+    eval_question_trace._down_until.clear()
 
 
 def test_no_fallback_without_its_keys():
@@ -860,3 +981,16 @@ def test_no_fallback_without_its_keys():
         "app.services.eval_question_trace.settings.LANGFUSE_FALLBACK_PUBLIC_KEY", ""
     ):
         assert len(langfuse_sources()) == 1
+
+
+def test_fallback_alone_counts_as_configured():
+    from app.services.eval_question_trace import langfuse_sources
+
+    s = "app.services.eval_question_trace.settings"
+    with (
+        patch(f"{s}.LANGFUSE_PUBLIC_KEY", ""),
+        patch(f"{s}.LANGFUSE_FALLBACK_HOST", "https://cloud.langfuse.com"),
+        patch(f"{s}.LANGFUSE_FALLBACK_PUBLIC_KEY", "pk"),
+        patch(f"{s}.LANGFUSE_FALLBACK_SECRET_KEY", "sk"),
+    ):
+        assert [x.host for x in langfuse_sources()] == ["https://cloud.langfuse.com"]
