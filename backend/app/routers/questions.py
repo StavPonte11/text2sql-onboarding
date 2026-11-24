@@ -6,6 +6,7 @@ import pandas as pd
 from core.db.engine import get_session
 from core.models.models import (
     DifficultyLevel,
+    EvalResult,
     GoldenQuestion,
     GoldenQuestionCreate,
     GoldenQuestionRead,
@@ -23,6 +24,16 @@ from app.services.jeen_metadata import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tables", tags=["golden-questions"])
+
+
+def _delete_question_with_results(q: GoldenQuestion, session: Session) -> None:
+    """Delete a golden question and its results in past runs."""
+    for result in session.exec(
+        select(EvalResult).where(EvalResult.question_id == q.id)
+    ).all():
+        session.delete(result)
+    session.delete(q)
+    session.commit()
 
 
 @router.get("/{table_id}/questions", response_model=list[GoldenQuestionRead])
@@ -127,8 +138,7 @@ def delete_question(
     q = session.get(GoldenQuestion, question_id)
     if not q or q.table_id != table_id:
         raise HTTPException(status_code=404, detail="Question not found")
-    session.delete(q)
-    session.commit()
+    _delete_question_with_results(q, session)
 
 
 # ── Connection-Scoped Golden Questions (Jeen Metadata) ─────────────────────────
@@ -330,5 +340,4 @@ def delete_connection_question(
         raise HTTPException(
             status_code=404, detail="Question not found for this connection"
         )
-    session.delete(q)
-    session.commit()
+    _delete_question_with_results(q, session)
