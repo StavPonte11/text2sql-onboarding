@@ -77,3 +77,38 @@ def test_each_result_keeps_its_scores_for_the_report(client, db_session):
     scores = {q["question_id"]: q["scores"] for q in report["per_question"]}
     assert scores[q0.id] == {"contains_accuracy": 1.0, "time_shift": 0.5}
     assert scores[q1.id] == {"contains_accuracy": 0.0}
+
+
+def test_bird_run_takes_its_question_count_from_the_evaluation_service(
+    db_session, test_engine
+):
+    """A BIRD run starts with 0 questions; the service's total_items fills it in."""
+    from unittest.mock import patch
+
+    from app.routers.orchestration import _run_dataset_pipeline
+
+    run = EvalRun(
+        table_id=None,
+        total_questions=0,
+        triggered_by="bird",
+        connection_id=next(_next_connection),
+        connection_name="bird",
+        status=EvalStatus.running,
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+
+    def fake_call(req, is_cancelled=None, on_progress=None):
+        on_progress({"status": "running", "total_items": None, "completed_cases": []})
+        on_progress({"status": "running", "total_items": 178, "completed_cases": []})
+        raise RuntimeError("stop")
+
+    with (
+        patch("app.routers.orchestration.engine", test_engine),
+        patch("app.routers.orchestration._call_run_new_evaluation", side_effect=fake_call),
+    ):
+        _run_dataset_pipeline("bird", run.id)
+
+    db_session.expire_all()
+    assert db_session.get(EvalRun, run.id).total_questions == 178

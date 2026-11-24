@@ -412,6 +412,17 @@ def _run_dataset_pipeline(
 
             def save_progress(job: dict) -> None:
                 """Store each finished question as it comes in, so the report shows it."""
+                total = job.get("total_items")
+                # A BIRD run starts with 0 questions: only the evaluation
+                # service knows how many the benchmark has for this connection
+                if (
+                    isinstance(total, int)
+                    and total > 0
+                    and run.total_questions != total
+                ):
+                    run.total_questions = total
+                    session.add(run)
+                    session.commit()
                 new_ids = save_case_results(
                     run_id,
                     job.get("completed_cases") or [],
