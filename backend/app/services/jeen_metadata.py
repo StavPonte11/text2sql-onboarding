@@ -42,36 +42,52 @@ def _tool_json(result: Any, tool: str) -> Any:
     return json.loads(text) if text else None
 
 
+async def _list_prompt_tests(
+    session: ClientSession, args: dict[str, Any]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Every test of one Prompt-tab set (all pages), and the set's query language."""
+    tests: list[dict[str, Any]] = []
+    language: str | None = None
+    offset: int | None = 0
+    while offset is not None:
+        result = await session.call_tool(
+            "list_prompt_tests",
+            {**args, "limit": _PROMPT_TESTS_PAGE, "offset": offset},
+        )
+        data = _tool_json(result, "list_prompt_tests") or {}
+        language = language or data.get("language")
+        page = data.get("tests") or []
+        tests.extend(page)
+        next_offset = data.get("next_offset")
+        # stop on an empty page too, so a server that keeps sending
+        # next_offset can't loop forever
+        offset = next_offset if page and next_offset is not None else None
+    return tests, language
+
+
 async def fetch_jeen_sql_pairs(connection_id: int) -> list[dict[str, Any]]:
     """
-    The connection's golden questions: the tests on Jeen's Prompt tab
-    (list_prompt_tests, the connection's own "override" set), each as
-    {"question", "query" (its reference query), "prompt_test_id"}.
+    The connection's golden questions: the tests on Jeen's Prompt tab, each as
+    {"question", "query" (its reference query), "prompt_test_id", "prompt_test_scope"}.
+
+    The connection's own tests (its "override" set) when it has any; otherwise
+    the general ("default") set every connection shares, in the connection's
+    query language.
 
     Not the knowledge pairs (get_sql_pairs): those are the few-shot examples
     the agent itself is given, so they can't also judge it.
     """
-    tests: list[dict[str, Any]] = []
-    offset: int | None = 0
     try:
         async with get_jeen_mcp_session() as session:
-            while offset is not None:
-                result = await session.call_tool(
-                    "list_prompt_tests",
-                    {
-                        "scope": "override",
-                        "connection_id": connection_id,
-                        "limit": _PROMPT_TESTS_PAGE,
-                        "offset": offset,
-                    },
+            scope = "override"
+            tests, language = await _list_prompt_tests(
+                session, {"scope": scope, "connection_id": connection_id}
+            )
+            if not tests:
+                scope = "default"
+                tests, _ = await _list_prompt_tests(
+                    session, {"scope": scope, "language": language or "sql"}
                 )
-                data = _tool_json(result, "list_prompt_tests") or {}
-                page = data.get("tests") or []
-                tests.extend(page)
-                next_offset = data.get("next_offset")
-                # stop on an empty page too, so a server that keeps sending
-                # next_offset can't loop forever
-                offset = next_offset if page and next_offset is not None else None
     except Exception as e:
         logger.error(
             f"[JeenMetadata] Failed to fetch prompt tests for connection {connection_id}: {e}",
@@ -83,6 +99,7 @@ async def fetch_jeen_sql_pairs(connection_id: int) -> list[dict[str, Any]]:
             "question": test.get("question"),
             "query": test.get("reference_query"),
             "prompt_test_id": test.get("id"),
+            "prompt_test_scope": scope,
         }
         for test in tests
     ]

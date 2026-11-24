@@ -159,15 +159,20 @@ def _test(i):
 
 
 @pytest.mark.asyncio
-async def test_golden_questions_are_the_prompt_tab_tests_all_pages():
+async def test_golden_questions_are_the_connections_own_tests_all_pages():
     session, calls = _jeen_session(
-        {"tests": [_test(1), _test(2)], "next_offset": 2},
+        {"tests": [_test(1), _test(2)], "next_offset": 2, "language": "sql"},
         {"tests": [_test(3)], "next_offset": None},
     )
     with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
         pairs = await fetch_jeen_sql_pairs(7)
     assert pairs == [
-        {"question": f"q{i}?", "query": f"SELECT {i}", "prompt_test_id": i}
+        {
+            "question": f"q{i}?",
+            "query": f"SELECT {i}",
+            "prompt_test_id": i,
+            "prompt_test_scope": "override",
+        }
         for i in (1, 2, 3)
     ]
     assert [name for name, _ in calls] == ["list_prompt_tests"] * 2
@@ -178,6 +183,31 @@ async def test_golden_questions_are_the_prompt_tab_tests_all_pages():
         "offset": 0,
     }
     assert calls[1][1]["offset"] == 2
+
+
+@pytest.mark.asyncio
+async def test_without_its_own_tests_a_connection_gets_the_general_set():
+    session, calls = _jeen_session(
+        {"tests": [], "next_offset": None, "language": "dax"},
+        {"tests": [_test(81)], "next_offset": None, "language": "dax"},
+    )
+    with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
+        pairs = await fetch_jeen_sql_pairs(7)
+    assert pairs == [
+        {
+            "question": "q81?",
+            "query": "SELECT 81",
+            "prompt_test_id": 81,
+            "prompt_test_scope": "default",
+        }
+    ]
+    # the general set in the connection's own query language
+    assert calls[1][1] == {
+        "scope": "default",
+        "language": "dax",
+        "limit": 200,
+        "offset": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -192,10 +222,13 @@ async def test_prompt_tests_error_is_raised_not_read_as_no_questions():
 
 @pytest.mark.asyncio
 async def test_prompt_tests_paging_stops_on_an_empty_page():
-    session, calls = _jeen_session({"tests": [], "next_offset": 100})
+    session, calls = _jeen_session(
+        {"tests": [], "next_offset": 100}, {"tests": [], "next_offset": 100}
+    )
     with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
         assert await fetch_jeen_sql_pairs(7) == []
-    assert len(calls) == 1
+    # one call for the connection's own set, one for the general set
+    assert [args["scope"] for _, args in calls] == ["override", "default"]
 
 
 SAMPLE = {
