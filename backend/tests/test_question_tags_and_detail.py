@@ -7,7 +7,10 @@ import pytest
 from core.models.models import EvalResult, EvalRun, EvalStatus, GoldenQuestion
 
 from app.services.eval_question_trace import fetch_question_trace
-from app.services.jeen_metadata import fetch_jeen_sql_pairs_with_tags
+from app.services.jeen_metadata import (
+    fetch_jeen_sql_pairs,
+    fetch_jeen_sql_pairs_with_tags,
+)
 
 _next_connection = iter(range(4300, 4400))
 ORCH = "app.routers.orchestration"
@@ -125,6 +128,74 @@ async def test_pairs_survive_a_knowledge_questions_failure():
     ):
         result = await fetch_jeen_sql_pairs_with_tags(1)
     assert result == [{"question": "a?", "tags": []}]
+
+
+def _jeen_session(*answers):
+    """A fake Jeen MCP session whose call_tool gives each answer in turn."""
+    import json
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    calls = []
+
+    async def call_tool(name, args):
+        calls.append((name, args))
+        answer = answers[len(calls) - 1]
+        is_error = isinstance(answer, str)
+        text = answer if is_error else json.dumps(answer)
+        return SimpleNamespace(
+            isError=is_error, content=[SimpleNamespace(type="text", text=text)]
+        )
+
+    @asynccontextmanager
+    async def session():
+        yield SimpleNamespace(call_tool=call_tool)
+
+    return session, calls
+
+
+def _test(i):
+    return {"id": i, "question": f"q{i}?", "reference_query": f"SELECT {i}"}
+
+
+@pytest.mark.asyncio
+async def test_golden_questions_are_the_prompt_tab_tests_all_pages():
+    session, calls = _jeen_session(
+        {"tests": [_test(1), _test(2)], "next_offset": 2},
+        {"tests": [_test(3)], "next_offset": None},
+    )
+    with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
+        pairs = await fetch_jeen_sql_pairs(7)
+    assert pairs == [
+        {"question": f"q{i}?", "query": f"SELECT {i}", "prompt_test_id": i}
+        for i in (1, 2, 3)
+    ]
+    assert [name for name, _ in calls] == ["list_prompt_tests"] * 2
+    assert calls[0][1] == {
+        "scope": "override",
+        "connection_id": 7,
+        "limit": 200,
+        "offset": 0,
+    }
+    assert calls[1][1]["offset"] == 2
+
+
+@pytest.mark.asyncio
+async def test_prompt_tests_error_is_raised_not_read_as_no_questions():
+    session, _ = _jeen_session("Connection 7 not found")
+    with (
+        patch("app.services.jeen_metadata.get_jeen_mcp_session", session),
+        pytest.raises(RuntimeError, match="not found"),
+    ):
+        await fetch_jeen_sql_pairs(7)
+
+
+@pytest.mark.asyncio
+async def test_prompt_tests_paging_stops_on_an_empty_page():
+    session, calls = _jeen_session({"tests": [], "next_offset": 100})
+    with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
+        assert await fetch_jeen_sql_pairs(7) == []
+    assert len(calls) == 1
 
 
 SAMPLE = {

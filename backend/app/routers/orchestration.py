@@ -533,7 +533,7 @@ async def trigger_dataset_run(
         if not jeen_pairs:
             raise HTTPException(
                 status_code=404,
-                detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
+                detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}): it has no tests on Jeen metadata's Prompt tab. Add tests there before running an evaluation.",
             )
 
         existing_db_questions = session.exec(
@@ -748,7 +748,7 @@ async def trigger_connection_run(
     if not questions:
         raise HTTPException(
             status_code=404,
-            detail=f"No golden questions found in Jeen metadata for Connection {conn_id} ({conn_name or 'selected'}). Please add golden questions in Jeen metadata before running evaluation.",
+            detail=f"No golden questions found for Connection {conn_id} ({conn_name or 'selected'}): it has no tests on Jeen metadata's Prompt tab. Add tests there before running an evaluation.",
         )
 
     selected_tags = list(dict.fromkeys(t for t in tags or [] if t)) or None
