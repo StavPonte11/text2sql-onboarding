@@ -9,20 +9,20 @@ import './AgentModelSelect.css';
 
 export const AGENT_LABELS: Record<EvalAgent, string> = {
   current: 'Structured agent',
-  deep: 'Deep Agent',
-  previous: 'Previous agent (TextToSQL)',
+  deep: 'Agentic agent',
+  previous: 'Legacy agent',
 };
 
 const AGENT_OPTIONS: { label: string; value: EvalAgent }[] = [
   { label: 'Structured', value: 'current' },
-  { label: 'Deep', value: 'deep' },
-  { label: 'Previous (TextToSQL)', value: 'previous' },
+  { label: 'Agentic', value: 'deep' },
+  { label: 'Legacy', value: 'previous' },
 ];
 
 /**
  * How an evaluation runs, laid out like the agent sandbox's header: the run's
  * name, then Agent | Model. `model` is '' for the agent's default model, which
- * the picker shows by name. The previous agent has no model choice.
+ * the picker shows by name. The Legacy agent has no model choice.
  */
 export function AgentModelSelect({
   value,
@@ -141,12 +141,12 @@ export function AgentModelSelect({
       </div>
       {agent === 'deep' && noModelChoice && (
         <span className="eval-run-settings__note">
-          This Deep Agent version can't switch models; it runs on its own.
+          This Agentic agent version can't switch models; it runs on its own.
         </span>
       )}
       {isPrevious && (
         <span className="eval-run-settings__note">
-          The previous agent runs on its own model and looks in the evaluation service's
+          The Legacy agent runs on its own model and looks in the evaluation service's
           PREVIOUS_AGENT_DATABASES (home_command by default), whatever the connection.
         </span>
       )}

@@ -77,3 +77,119 @@ def test_each_result_keeps_its_scores_for_the_report(client, db_session):
     scores = {q["question_id"]: q["scores"] for q in report["per_question"]}
     assert scores[q0.id] == {"contains_accuracy": 1.0, "time_shift": 0.5}
     assert scores[q1.id] == {"contains_accuracy": 0.0}
+
+
+def test_bird_run_takes_its_question_count_from_the_evaluation_service(
+    db_session, test_engine
+):
+    """A BIRD run starts with 0 questions; the service's total_items fills it in."""
+    from unittest.mock import patch
+
+    from app.routers.orchestration import _run_dataset_pipeline
+
+    run = EvalRun(
+        table_id=None,
+        total_questions=0,
+        triggered_by="bird",
+        connection_id=next(_next_connection),
+        connection_name="bird",
+        status=EvalStatus.running,
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+
+    def fake_call(req, is_cancelled=None, on_progress=None):
+        on_progress({"status": "running", "total_items": None, "completed_cases": []})
+        on_progress({"status": "running", "total_items": 178, "completed_cases": []})
+        raise RuntimeError("stop")
+
+    with (
+        patch("app.routers.orchestration.engine", test_engine),
+        patch("app.routers.orchestration._call_run_new_evaluation", side_effect=fake_call),
+    ):
+        _run_dataset_pipeline("bird", run.id)
+
+    db_session.expire_all()
+    assert db_session.get(EvalRun, run.id).total_questions == 178
+
+
+def _bird_run(db_session):
+    run = EvalRun(
+        table_id=None,
+        total_questions=150,
+        triggered_by="bird",
+        connection_id=next(_next_connection),
+        connection_name="bird",
+        status=EvalStatus.running,
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    return run
+
+
+_BIRD_CASE = {
+    "question_id": "bird-5913",
+    "question": "What is the publication date of the book with the most pages?",
+    "expected_sql": "SELECT publication_date FROM bird_books.book LIMIT 1",
+    "generated_sql": "SELECT publication_date FROM bird_books.book LIMIT 1",
+    "scores": {"contains_accuracy": 1.0, "execution_accuracy": 1.0},
+}
+
+
+def test_bird_results_are_saved_and_shown_while_the_run_is_going(client, db_session):
+    """BIRD questions aren't golden questions, but a BIRD run still lists them."""
+    run = _bird_run(db_session)
+    assert save_case_results(run.id, [_BIRD_CASE], db_session, benchmark=True) == {
+        "bird-5913"
+    }
+    db_session.commit()
+
+    report = client.get(f"/api/evaluations/runs/{run.id}/report").json()
+    assert report["completed_questions"] == 1
+    [row] = report["per_question"]
+    assert (row["question_id"], row["status"]) == ("bird-5913", "pass")
+    assert row["question"] == _BIRD_CASE["question"]
+
+    detail = client.get(f"/api/evaluations/runs/{run.id}/questions/bird-5913")
+    assert detail.status_code == 200
+    assert detail.json()["question"] == _BIRD_CASE["question"]
+    assert detail.json()["expected_sql"] == _BIRD_CASE["expected_sql"]
+
+
+def test_bird_pipeline_saves_finished_questions_as_they_come(db_session, test_engine):
+    from unittest.mock import patch
+
+    from app.routers.orchestration import _run_dataset_pipeline
+
+    run = _bird_run(db_session)
+
+    def fake_call(req, is_cancelled=None, on_progress=None):
+        on_progress({"total_items": 150, "completed_cases": [_BIRD_CASE]})
+        raise RuntimeError("stop")
+
+    with (
+        patch("app.routers.orchestration.engine", test_engine),
+        patch("app.routers.orchestration._call_run_new_evaluation", side_effect=fake_call),
+    ):
+        _run_dataset_pipeline("bird", run.id)
+
+    rows = db_session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).all()
+    assert [(r.question_id, r.question) for r in rows] == [
+        ("bird-5913", _BIRD_CASE["question"])
+    ]
+
+
+def test_deleting_a_golden_question_deletes_its_results(client, db_session):
+    run, (q0, _, _) = _connection_run(db_session)
+    question_id, connection_id = q0.id, run.connection_id
+    save_case_results(run.id, [{"question_id": question_id, "scores": {}}], db_session)
+    db_session.commit()
+
+    response = client.delete(f"/api/connections/{connection_id}/questions/{question_id}")
+    assert response.status_code == 204
+    db_session.expire_all()
+    assert not db_session.exec(
+        select(EvalResult).where(EvalResult.question_id == question_id)
+    ).all()

@@ -143,14 +143,14 @@ describe('LLM model choice', () => {
         onAgentChange={(a) => picked.push(a)}
       />,
     );
-    await user.click(screen.getByText('Previous (TextToSQL)'));
+    await user.click(screen.getByText('Legacy'));
     expect(picked).toEqual(['previous']);
     unmount();
     renderWithProviders(
       <AgentModelSelect value="" onChange={() => {}} agent="previous" onAgentChange={() => {}} />,
     );
     expect(screen.getByRole('combobox', { name: 'LLM model for the evaluation' })).toBeDisabled();
-    expect(screen.getByText(/previous agent runs on its own model/)).toBeInTheDocument();
+    expect(screen.getByText(/Legacy agent runs on its own model/)).toBeInTheDocument();
   });
 
   test('sends the run name with the run', async () => {
@@ -168,7 +168,7 @@ describe('LLM model choice', () => {
     await waitFor(() => expect(url?.searchParams.get('name')).toBe('Baseline'));
   });
 
-  test('the Deep option is off, with the reason, when the agent server has no deep_agent', async () => {
+  test('the Agentic option is off, with the reason, when the agent server has no deep_agent', async () => {
     server.use(
       http.get(`${API}/evaluations/models`, () =>
         HttpResponse.json({
@@ -197,15 +197,15 @@ describe('LLM model choice', () => {
       />,
     );
     await screen.findByText('openai/gpt-oss-120b');
-    await user.click(screen.getByText('Deep'));
+    await user.click(screen.getByText('Agentic'));
     expect(picked).toEqual([]); // can't be chosen
-    await user.hover(screen.getByText('Deep'));
+    await user.hover(screen.getByText('Agentic'));
     expect(await screen.findByText(/no deep_agent tool/)).toBeInTheDocument();
     // this agent version takes no model
     expect(screen.getByRole('combobox', { name: 'LLM model for the evaluation' })).toBeDisabled();
   });
 
-  test('the Deep Agent keeps its model choice when it takes one', async () => {
+  test('the Agentic agent keeps its model choice when it takes one', async () => {
     server.use(
       http.get(`${API}/evaluations/models`, () =>
         HttpResponse.json({

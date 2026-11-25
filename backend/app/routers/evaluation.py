@@ -125,8 +125,14 @@ class PerformanceStatsDTO(BaseModel):
     average_refiner_iterations: float
 
 
+# Datasets whose questions aren't the studio's golden questions
+BENCHMARK_DATASETS = {"bird"}
+
+
 class RunDatasetCaseResultDTO(BaseModel):
     question_id: str
+    # the question as asked (sent for benchmark questions such as BIRD)
+    question: str | None = None
     generated_sql: str | None = None
     expected_sql: str | None = None
     succeeded: bool
@@ -262,7 +268,12 @@ def _map_and_save_run_metrics(
         select(EvalResult).where(EvalResult.run_id == run_id)
     ).all():
         session.delete(existing)
-    save_case_results(run_id, eval_resp.cases, session)
+    save_case_results(
+        run_id,
+        eval_resp.cases,
+        session,
+        benchmark=run.triggered_by in BENCHMARK_DATASETS,
+    )
 
 
 def save_case_results(
@@ -270,13 +281,16 @@ def save_case_results(
     cases: list,
     session: Session,
     skip_question_ids: set[str] | None = None,
+    benchmark: bool = False,
 ) -> set[str]:
     """
     Add an EvalResult row per case (pass = contains accuracy above threshold).
 
-    Only question_ids that are valid FK references (exist in golden_questions)
-    are saved; external benchmark cases (e.g. BIRD) won't match. Cases are
-    RunDatasetCaseResultDTOs or their dicts. Returns the question ids saved.
+    A case is saved when its question is one of the studio's golden questions,
+    or, with `benchmark` (e.g. a BIRD run), for any question: those keep the
+    question text and SQL the evaluation service sent, since the studio has no
+    golden question for them. Cases are RunDatasetCaseResultDTOs or their
+    dicts. Returns the question ids saved.
     """
 
     def _field(case, name, default=None):
@@ -298,15 +312,17 @@ def save_case_results(
     if not pending:
         return set()
 
-    valid_ids = set(
+    golden_ids = set(
         session.exec(
             select(GoldenQuestion.id).where(GoldenQuestion.id.in_(list(pending)))
         ).all()
     )
-    for target_id in valid_ids:
+    saved_ids = set(pending) if benchmark else golden_ids
+    for target_id in saved_ids:
         case = pending[target_id]
         score = (_field(case, "scores") or {}).get("contains_accuracy", 0.0)
         status = "pass" if score >= settings.EVAL_THRESHOLD else "fail"
+        own_question = target_id not in golden_ids
         session.add(
             EvalResult(
                 run_id=run_id,
@@ -315,9 +331,12 @@ def save_case_results(
                 status=status,
                 error_type=None if status == "pass" else _field(case, "error"),
                 scores=dict(_field(case, "scores") or {}),
+                question=_field(case, "question") if own_question else None,
+                expected_sql=_field(case, "expected_sql") if own_question else None,
+                generated_sql=_field(case, "generated_sql") if own_question else None,
             )
         )
-    return valid_ids
+    return saved_ids
 
 
 class EvaluationCancelledError(Exception):

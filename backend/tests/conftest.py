@@ -1,4 +1,5 @@
 import urllib.parse
+from unittest.mock import patch
 
 import core.db.engine
 import psycopg2
@@ -128,7 +129,13 @@ def client(test_engine):
 
     fastapi_app.dependency_overrides[get_session] = override_get_session
     fastapi_app.dependency_overrides[get_current_user] = override_get_current_user
-    with TestClient(fastapi_app) as test_client:
+    # The app's startup migrates settings.DATABASE_URL (the developer's own
+    # database, not the test one, whose tables create_all made): with a new
+    # migration it would alter that database, waiting on its locks
+    with (
+        patch("app.main.create_db_and_tables"),
+        TestClient(fastapi_app) as test_client,
+    ):
         yield test_client
     fastapi_app.dependency_overrides.clear()
 

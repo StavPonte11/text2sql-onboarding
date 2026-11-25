@@ -359,16 +359,18 @@ class EvalResult(SQLModel, table=True):
         ],
         index=True,
     )
-    question_id: str = Field(
-        sa_column_args=[
-            ForeignKey("golden_questions.id", ondelete="CASCADE", onupdate="CASCADE")
-        ]
-    )
+    # A golden question's id, or a benchmark question's (e.g. "bird-5913"),
+    # which isn't one of the studio's golden questions
+    question_id: str
     score: float = Field(default=0.0)
     status: str  # "pass" | "fail"
     error_type: str | None = None
     # evaluator name → score for the evaluators that could judge this question
     scores: dict[str, float] | None = Field(default=None, sa_column=Column(JSON))
+    # Benchmark questions only: the question and its golden SQL as evaluated
+    question: str | None = None
+    expected_sql: str | None = None
+    generated_sql: str | None = None
 
 
 class EvalResultRead(SQLModel):

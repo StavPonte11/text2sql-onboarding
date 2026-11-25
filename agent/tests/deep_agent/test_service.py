@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 from deep_agent import service
 from deep_agent.agent import create_deep_agent
 from deep_agent.answer import verification
-from deep_agent.service import run_deep_chat, to_response
+from deep_agent.service import StreamPublisher, run_deep_chat, to_response
 from deep_agent.tools import sql as sql_tools
 
 SQL = "SELECT COUNT(*) AS orders FROM orders WHERE status = 'shipped'"
@@ -88,7 +88,8 @@ async def test_clarify_then_resume_on_the_same_thread(policy_model, published):
     assert first["status"] == "interrupted" and "שנשלחו" in first["interrupt_details"]["reason"]
     assert second["status"] == "completed" and second["sql_query"] == SQL
     assert second["verification"] == "matched" and second["executed"] is True and "466" in second["summary"]
-    assert second["execution_path"] == ["deep:execute_trino_query"]
+    assert first["execution_path"] == []  # a clarification is not an answer
+    assert second["execution_path"] == ["deep:execute_trino_query", "deep:answer"]
 
     events = [(c.args[1], c.args[2]) for c in published.await_args_list]
     assert ("deep:execute_trino_query", "active") in events and ("deep:execute_trino_query", "completed") in events
@@ -110,6 +111,7 @@ async def test_turn_without_new_answer_does_not_repeat_the_previous_one(scripted
         second = await run_deep_chat(connection_id=89, query="ותודה", thread_id="deep-t2", agent=agent)
     assert first["verification"] == "matched"
     assert second["verification"] == "no_answer" and second["sql_query"] is None
+    assert "deep:answer" not in second["execution_path"]
 
 
 @pytest.mark.asyncio
@@ -236,5 +238,19 @@ async def test_review_appears_in_the_stream(scripted_model, published):
     agent = create_deep_agent(model=main, semantic_validation="always", validator_model=reviewer)
     with patch.object(sql_tools, "execute_query_sync", return_value=OK):
         r = await run_deep_chat(connection_id=89, query="q", thread_id="deep-t6", agent=agent)
-    assert r["execution_path"] == ["deep:execute_trino_query", "deep:task"]  # the reviewer runs no tools
+    assert r["execution_path"] == ["deep:execute_trino_query", "deep:reviewer", "deep:answer"]
     assert r["semantic_validation"]["verdict"] == "passed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_str, inputs, expected", [
+    ("", {"description": "x", "subagent_type": "semantic-validator"}, "deep:reviewer"),
+    ("{'description': 'x', 'subagent_type': 'semantic-validator'}", None, "deep:reviewer"),
+    ('{"description": "x", "subagent_type": "general-purpose"}', None, "deep:subagent"),
+    ("not a dict", None, "deep:subagent"),
+])
+async def test_a_subagent_step_is_named_by_its_subagent(published, input_str, inputs, expected):
+    publisher = StreamPublisher("deep-t7")
+    await publisher.on_tool_start({"name": "task"}, input_str, run_id=uuid.uuid4(), inputs=inputs)
+    assert publisher.execution_path == [expected]
+    assert published.await_args_list[-1].args[1:] == (expected, "active")

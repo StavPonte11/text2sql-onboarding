@@ -43,6 +43,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.routers.evaluation import (
+    BENCHMARK_DATASETS,
     _call_run_new_evaluation,
     _map_and_save_run_metrics,
     execute_single_table_eval,
@@ -412,11 +413,23 @@ def _run_dataset_pipeline(
 
             def save_progress(job: dict) -> None:
                 """Store each finished question as it comes in, so the report shows it."""
+                total = job.get("total_items")
+                # A BIRD run starts with 0 questions: only the evaluation
+                # service knows how many the benchmark has for this connection
+                if (
+                    isinstance(total, int)
+                    and total > 0
+                    and run.total_questions != total
+                ):
+                    run.total_questions = total
+                    session.add(run)
+                    session.commit()
                 new_ids = save_case_results(
                     run_id,
                     job.get("completed_cases") or [],
                     session,
                     skip_question_ids=saved_question_ids,
+                    benchmark=run.triggered_by in BENCHMARK_DATASETS,
                 )
                 if new_ids:
                     session.commit()
@@ -1023,20 +1036,22 @@ def get_run_question(
     """One question's result in a run, with everything Langfuse recorded for it."""
     run = session.get(EvalRun, run_id)
     question = session.get(GoldenQuestion, question_id)
-    if not run or not question:
-        raise HTTPException(status_code=404, detail="Question result not found")
     result = session.exec(
         select(EvalResult).where(
             EvalResult.run_id == run_id, EvalResult.question_id == question_id
         )
     ).first()
+    # A benchmark question (e.g. BIRD) isn't a golden question: its result
+    # holds the question as evaluated
+    if not run or not (question or (result and result.question)):
+        raise HTTPException(status_code=404, detail="Question result not found")
     trace, trace_unavailable_reason = _question_trace(run, question_id)
 
     return {
         "run_id": run_id,
         "question_id": question_id,
-        "question": question.question,
-        "expected_sql": question.expected_sql,
+        "question": question.question if question else result.question,
+        "expected_sql": question.expected_sql if question else result.expected_sql,
         "score": result.score if result else None,
         "status": result.status if result else None,
         "failure_type": result.error_type if result else None,
@@ -1202,7 +1217,9 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         per_question = [
             {
                 "question_id": r.question_id,
-                "question": question_map.get(r.question_id, r.question_id),
+                "question": question_map.get(r.question_id)
+                or r.question
+                or r.question_id,
                 "score": r.score,
                 "status": r.status,
                 "failure_type": r.error_type,

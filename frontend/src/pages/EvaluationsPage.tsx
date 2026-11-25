@@ -38,6 +38,7 @@ import {
   useTriggerOrchestrationRun,
 } from '../hooks/useEvaluations';
 import { useTables } from '../hooks/useTables';
+import { BIRD_CONNECTION_NAME, findBirdConnection } from '../utils/birdConnection';
 
 import type { EvalAgent } from '../api/orchestration';
 import type { Table } from '../types';
@@ -954,6 +955,7 @@ function DatasetRunPanel({
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
   const [runName, setRunName] = useState('');
+  const birdConnection = findBirdConnection<any>(connections);
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -962,17 +964,26 @@ function DatasetRunPanel({
   }, [connections, selectedConnection]);
 
   const handleLaunch = (datasetName: string) => {
-    if (!selectedConnection) {
-      message.error('Please select a catalog connection before launching dataset evaluation.');
+    // The public benchmark always runs on the BIRD connection, whatever the
+    // catalog picker shows; the production dataset runs on the picked one.
+    const connObj =
+      datasetName === 'bird'
+        ? birdConnection
+        : connections.find((c: any) => c.connection_id === selectedConnection);
+    if (!connObj) {
+      message.error(
+        datasetName === 'bird'
+          ? `No BIRD connection found. Add a Jeen connection named "${BIRD_CONNECTION_NAME}".`
+          : 'Please select a catalog connection before launching dataset evaluation.',
+      );
       return;
     }
     setRunningDataset(datasetName);
-    const connObj = connections.find((c: any) => c.connection_id === selectedConnection);
     triggerDatasetMut.mutate(
       {
         datasetName,
-        connectionId: selectedConnection,
-        connectionName: connObj?.name,
+        connectionId: connObj.connection_id,
+        connectionName: connObj.name,
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
@@ -1034,11 +1045,11 @@ function DatasetRunPanel({
         <button
           className="btn btn--secondary"
           style={{ flex: 1, justifyContent: 'center' }}
-          disabled={triggerDatasetMut.isPending || !!runningDataset || !selectedConnection}
+          disabled={triggerDatasetMut.isPending || !!runningDataset || !birdConnection}
           title={
-            !selectedConnection
-              ? 'Please select a catalog connection'
-              : 'Runs the public BIRD text-to-SQL benchmark questions for this connection. The connection must hold a BIRD database and be named after it (e.g. movie_platform).'
+            birdConnection
+              ? `Runs the public BIRD text-to-SQL benchmark questions on the "${birdConnection.name}" connection, whatever catalog is selected.`
+              : `No BIRD connection found. Add a Jeen connection named "${BIRD_CONNECTION_NAME}".`
           }
           onClick={() => handleLaunch('bird')}
         >

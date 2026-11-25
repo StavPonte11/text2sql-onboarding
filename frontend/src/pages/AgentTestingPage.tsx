@@ -1,7 +1,20 @@
 import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Divider, Input, Modal, Segmented, Select, Space, Spin, Switch, Tag, Tooltip } from 'antd';
+import {
+  Alert,
+  Button,
+  Divider,
+  Input,
+  Modal,
+  Segmented,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+  Tooltip,
+} from 'antd';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -389,8 +402,8 @@ const AgentTestingHeader = memo(
             Text2SQL Agent Sandbox
           </h1>
           <p className={styles.subtitle}>
-            Ask a question about your data in Hebrew or English — the agent finds the right tables, writes and runs
-            the SQL, and explains the answer.
+            Ask a question about your data in Hebrew or English — the agent finds the right tables,
+            writes and runs the SQL, and explains the answer.
           </p>
         </div>
         <Tooltip title="Pause to approve or reject the agent's work before it continues">
@@ -409,7 +422,7 @@ const AgentTestingHeader = memo(
             disabled={agentKindLocked}
             options={[
               { label: 'Structured', value: 'structured' },
-              { label: 'Deep', value: 'deep' },
+              { label: 'Agentic', value: 'deep' },
             ]}
           />
         </div>
@@ -424,7 +437,9 @@ const AgentTestingHeader = memo(
             popupMatchSelectWidth={false}
             loading={modelsInfo === null}
             status={modelsInfo?.list_error ? 'warning' : undefined}
-            placeholder={modelsInfo?.list_error ? 'Default (list unavailable)' : 'Default (as configured)'}
+            placeholder={
+              modelsInfo?.list_error ? 'Default (list unavailable)' : 'Default (as configured)'
+            }
             title={modelsInfo?.list_error ?? undefined}
             options={(modelsInfo?.models ?? []).map((m) => ({ value: m, label: m }))}
           />
@@ -1101,7 +1116,8 @@ export function AgentTestingPage() {
   const isResuming = chatMutation.isPending && chatResponse?.status === 'interrupted';
   // A run is "starting" during the short delay before its request is sent (so the live stream can connect).
   const [starting, setStarting] = useState(false);
-  const isInputDisabled = starting || chatMutation.isPending || chatResponse?.status === 'interrupted';
+  const isInputDisabled =
+    starting || chatMutation.isPending || chatResponse?.status === 'interrupted';
 
   const handleSubmit = () => {
     if (!query || !selectedConnection || starting || chatMutation.isPending) return;
@@ -1268,6 +1284,7 @@ export function AgentTestingPage() {
             <AgentGraph
               threadId={threadId!}
               executionPath={executionPath}
+              running={chatMutation.isPending}
               onNodeClick={handleNodeClick}
             />
           </motion.div>
