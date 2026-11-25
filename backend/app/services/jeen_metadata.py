@@ -30,33 +30,79 @@ async def get_jeen_mcp_session():
             yield session
 
 
+# list_prompt_tests returns at most this many tests per call
+_PROMPT_TESTS_PAGE = 200
+
+
+def _tool_json(result: Any, tool: str) -> Any:
+    """The JSON a Jeen MCP tool answered with; raises when the tool reported an error."""
+    text = next((c.text for c in result.content or [] if c.type == "text"), None)
+    if getattr(result, "isError", False):
+        raise RuntimeError(f"Jeen {tool} failed: {text or 'no details'}")
+    return json.loads(text) if text else None
+
+
+async def _list_prompt_tests(
+    session: ClientSession, args: dict[str, Any]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Every test of one Prompt-tab set (all pages), and the set's query language."""
+    tests: list[dict[str, Any]] = []
+    language: str | None = None
+    offset: int | None = 0
+    while offset is not None:
+        result = await session.call_tool(
+            "list_prompt_tests",
+            {**args, "limit": _PROMPT_TESTS_PAGE, "offset": offset},
+        )
+        data = _tool_json(result, "list_prompt_tests") or {}
+        language = language or data.get("language")
+        page = data.get("tests") or []
+        tests.extend(page)
+        next_offset = data.get("next_offset")
+        # stop on an empty page too, so a server that keeps sending
+        # next_offset can't loop forever
+        offset = next_offset if page and next_offset is not None else None
+    return tests, language
+
+
 async def fetch_jeen_sql_pairs(connection_id: int) -> list[dict[str, Any]]:
-    """Fetch curated question -> SQL query pairs for a connection from Jeen metadata MCP."""
+    """
+    The connection's golden questions: the tests on Jeen's Prompt tab, each as
+    {"question", "query" (its reference query), "prompt_test_id", "prompt_test_scope"}.
+
+    The connection's own tests (its "override" set) when it has any; otherwise
+    the general ("default") set every connection shares, in the connection's
+    query language.
+
+    Not the knowledge pairs (get_sql_pairs): those are the few-shot examples
+    the agent itself is given, so they can't also judge it.
+    """
     try:
         async with get_jeen_mcp_session() as session:
-            result = await session.call_tool(
-                "get_sql_pairs", {"connection_id": connection_id}
+            scope = "override"
+            tests, language = await _list_prompt_tests(
+                session, {"scope": scope, "connection_id": connection_id}
             )
-            if not result.content:
-                logger.warning(
-                    f"[JeenMetadata] Empty response for get_sql_pairs (connection_id={connection_id})"
+            if not tests:
+                scope = "default"
+                tests, _ = await _list_prompt_tests(
+                    session, {"scope": scope, "language": language or "sql"}
                 )
-                return []
-            first = result.content[0]
-            if first.type != "text":
-                return []
-            data = json.loads(first.text)
-            if isinstance(data, dict):
-                return data.get("sql_pairs", [])
-            elif isinstance(data, list):
-                return data
-            return []
     except Exception as e:
         logger.error(
-            f"[JeenMetadata] Failed to fetch SQL pairs for connection {connection_id}: {e}",
+            f"[JeenMetadata] Failed to fetch prompt tests for connection {connection_id}: {e}",
             exc_info=True,
         )
         raise
+    return [
+        {
+            "question": test.get("question"),
+            "query": test.get("reference_query"),
+            "prompt_test_id": test.get("id"),
+            "prompt_test_scope": scope,
+        }
+        for test in tests
+    ]
 
 
 async def fetch_jeen_knowledge_questions(
@@ -106,9 +152,10 @@ def _question_key(item: dict[str, Any]) -> str:
 
 async def fetch_jeen_sql_pairs_with_tags(connection_id: int) -> list[dict[str, Any]]:
     """
-    The connection's SQL pairs, each with a normalized "tags" list. Tags missing
-    from get_sql_pairs are taken from list_knowledge_questions (same question text);
-    if that fails the pairs are still returned, without those tags.
+    The connection's golden questions (its Prompt-tab tests), each with a
+    normalized "tags" list. Prompt tests have no tags, so a test takes the tags
+    of the knowledge question with the same text (list_knowledge_questions);
+    if that fails the questions are still returned, without tags.
     """
     pairs = await fetch_jeen_sql_pairs(connection_id)
     knowledge_tags: dict[str, list[str]] = {}
