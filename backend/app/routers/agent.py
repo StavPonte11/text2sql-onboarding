@@ -14,8 +14,8 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
-import httpx
 import redis.asyncio as redis
+import requests
 from core.db.engine import get_session
 from core.models.models import Table, TableRead, TableStatus
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.config import settings
+from app.services.eval_question_trace import fetch_trace_observations
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,17 @@ class DeepChatRequest(BaseModel):
     resume_value: QueryApproval | str | dict | None = None
     hitl_enabled: bool = True
     connection_id: int
-    model: str | None = None  # one of GET /models — the agent and its reviewer; None = the default
+    model: str | None = (
+        None  # one of GET /models — the agent and its reviewer; None = the default
+    )
 
 
 class ModelsResponse(BaseModel):
-    models: list[str]                # what the agent's LLM endpoint serves (its /models)
-    default: str | None = None       # used when no model is chosen
-    list_error: str | None = None    # the endpoint couldn't be listed; the default still works
+    models: list[str]  # what the agent's LLM endpoint serves (its /models)
+    default: str | None = None  # used when no model is chosen
+    list_error: str | None = (
+        None  # the endpoint couldn't be listed; the default still works
+    )
 
 
 class SuggestFixesRequest(BaseModel):
@@ -93,11 +98,21 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     execution_path: list[str] | None = None
     is_unanswerable: bool = False
-    verification: str | None = None    # Deep Agent answer verification status (matched, re_executed, ...)
-    confidence: str | None = None      # Deep Agent self-reported confidence (high / medium / low)
-    executed: bool | None = None       # Deep Agent: the submitted final SQL ran and the rows are Trino's
-    recovered_from_text: bool | None = None  # Deep Agent: final answer was written as text and recovered
-    semantic_validation: dict | None = None  # Deep Agent: independent review (verdict, rounds, issues, response)
+    verification: str | None = (
+        None  # Deep Agent answer verification status (matched, re_executed, ...)
+    )
+    confidence: str | None = (
+        None  # Deep Agent self-reported confidence (high / medium / low)
+    )
+    executed: bool | None = (
+        None  # Deep Agent: the submitted final SQL ran and the rows are Trino's
+    )
+    recovered_from_text: bool | None = (
+        None  # Deep Agent: final answer was written as text and recovered
+    )
+    semantic_validation: dict | None = (
+        None  # Deep Agent: independent review (verdict, rounds, issues, response)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +235,14 @@ async def _call_agent_mcp(tool_name: str, tool_arguments: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _resume_payload(resume_value: QueryApproval | str | dict | None) -> str | dict | None:
-    return resume_value.model_dump() if isinstance(resume_value, QueryApproval) else resume_value
+def _resume_payload(
+    resume_value: QueryApproval | str | dict | None,
+) -> str | dict | None:
+    return (
+        resume_value.model_dump()
+        if isinstance(resume_value, QueryApproval)
+        else resume_value
+    )
 
 
 def _with_model(arguments: dict, model: str | None) -> dict:
@@ -246,16 +267,22 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     The Deep Agent has its own endpoint: POST /deep/chat.
     """
-    result = await _call_agent_mcp("chat_with_agent", _with_model({
-        "query": request.query,
-        "thread_id": request.thread_id,
-        "resume_value": _resume_payload(request.resume_value),
-        "allowed_tables": request.allowed_tables,
-        "allowed_statuses": request.allowed_statuses,
-        "extractors": request.extractors,
-        "hitl_enabled": request.hitl_enabled,
-        "connection_id": request.connection_id,
-    }, request.model))
+    result = await _call_agent_mcp(
+        "chat_with_agent",
+        _with_model(
+            {
+                "query": request.query,
+                "thread_id": request.thread_id,
+                "resume_value": _resume_payload(request.resume_value),
+                "allowed_tables": request.allowed_tables,
+                "allowed_statuses": request.allowed_statuses,
+                "extractors": request.extractors,
+                "hitl_enabled": request.hitl_enabled,
+                "connection_id": request.connection_id,
+            },
+            request.model,
+        ),
+    )
     return ChatResponse(**result)
 
 
@@ -267,15 +294,21 @@ async def deep_chat(request: DeepChatRequest) -> ChatResponse:
     - First call: provide `query`.
     - Continue: provide the same `thread_id` + `resume_value` (the user's answer to a clarifying question).
     """
-    result = await _call_agent_mcp("deep_agent", _with_model({
-        "query": request.query,
-        "thread_id": request.thread_id,
-        "resume_value": _resume_payload(request.resume_value),
-        "hitl_enabled": request.hitl_enabled,
-        "connection_id": request.connection_id,
-        # the deep agent stops its run then, so its "stopped" reply arrives before we give up
-        "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
-    }, request.model))
+    result = await _call_agent_mcp(
+        "deep_agent",
+        _with_model(
+            {
+                "query": request.query,
+                "thread_id": request.thread_id,
+                "resume_value": _resume_payload(request.resume_value),
+                "hitl_enabled": request.hitl_enabled,
+                "connection_id": request.connection_id,
+                # the deep agent stops its run then, so its "stopped" reply arrives before we give up
+                "timeout_s": settings.AGENT_READ_TIMEOUT_SECONDS - AGENT_STOP_MARGIN_S,
+            },
+            request.model,
+        ),
+    )
     return ChatResponse(**result)
 
 
@@ -355,55 +388,51 @@ async def stream_agent_execution(thread_id: str):
 
 @router.get("/traces/{trace_id}")
 async def get_trace_timeline(trace_id: str):
-    """Fetch trace from Langfuse and normalize observations for frontend timeline."""
-    auth = (settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY)
-    url = f"{settings.LANGFUSE_HOST}/api/public/traces/{trace_id}"
+    """The trace's observations from Langfuse, normalized for the frontend timeline.
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, auth=auth)
-        if resp.status_code != 200:
-            if resp.status_code == 404:
-                return []
-            raise HTTPException(
-                status_code=resp.status_code, detail=f"Langfuse error: {resp.text}"
-            )
+    Read through /v2/observations (Langfuse Cloud no longer serves the
+    /traces/{id} API); an empty list while Langfuse hasn't received them yet.
+    """
+    try:
+        observations = await asyncio.to_thread(fetch_trace_observations, trace_id)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 502
+        text = exc.response.text if exc.response is not None else str(exc)
+        raise HTTPException(status_code=status, detail=f"Langfuse error: {text}")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Langfuse error: {exc}")
 
-        data = resp.json()
-        observations = data.get("observations", [])
+    timeline = []
+    for obs in observations:
+        start_time_str = obs.get("startTime")
+        end_time_str = obs.get("endTime")
+        duration_ms = 0
+        if start_time_str and end_time_str:
+            try:
+                start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
+                duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
+            except Exception:
+                pass
 
-        # Normalize
-        timeline = []
-        for obs in observations:
-            start_time_str = obs.get("startTime")
-            end_time_str = obs.get("endTime")
-            duration_ms = 0
-            if start_time_str and end_time_str:
-                try:
-                    start_dt = datetime.fromisoformat(
-                        start_time_str.replace("Z", "+00:00")
-                    )
-                    end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
-                    duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
-                except Exception:
-                    pass
+        timeline.append(
+            {
+                "span_name": obs.get("name") or obs.get("type"),
+                "start_time": start_time_str,
+                "duration_ms": duration_ms,
+                # v2 names the token counts inputUsage/outputUsage
+                "input_tokens": obs.get("inputUsage", obs.get("promptTokens")) or 0,
+                "output_tokens": obs.get("outputUsage", obs.get("completionTokens"))
+                or 0,
+                "model": obs.get("model") or "N/A",
+                "status": "success" if not obs.get("statusMessage") else "error",
+                "input_preview": str(obs.get("input", "")),
+                "output_preview": str(obs.get("output", "")),
+            }
+        )
 
-            timeline.append(
-                {
-                    "span_name": obs.get("name") or obs.get("type"),
-                    "start_time": start_time_str,
-                    "duration_ms": duration_ms,
-                    "input_tokens": obs.get("promptTokens", 0),
-                    "output_tokens": obs.get("completionTokens", 0),
-                    "model": obs.get("model") or "N/A",
-                    "status": "success" if not obs.get("statusMessage") else "error",
-                    "input_preview": str(obs.get("input", "")),
-                    "output_preview": str(obs.get("output", "")),
-                }
-            )
-
-        # Sort by start time
-        timeline.sort(key=lambda x: x["start_time"] or "")
-        return timeline
+    timeline.sort(key=lambda x: x["start_time"] or "")
+    return timeline
 
 
 @router.post("/suggest_fixes")
