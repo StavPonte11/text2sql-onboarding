@@ -8,7 +8,9 @@ Serving the Deep Agent behind the existing `chat_with_agent` MCP tool.
 - Streaming: the same Redis events the legacy graph publishes (`agent_stream:{thread_id}`,
   {"thread_id", "node", "status"}), so the backend SSE relay and UI work unchanged. Nodes are
   named `deep:<tool>` (e.g. deep:execute_trino_query), `deep:review:<tool>` for the independent
-  reviewer's tools (deep_agent.validator), plus `deep:answer`.
+  reviewer's tools (deep_agent.validator), plus `deep:answer`. A call to a subagent (the `task`
+  tool) is named by the subagent: `deep:reviewer` for the semantic-validator, else
+  `deep:subagent`. The returned execution_path ends with `deep:answer` when the run gave an answer.
 - Response: the legacy JSON contract (status / summary / sql_query / sql_explanation /
   interrupt_details / trace_id / execution_path / is_unanswerable) plus
   `verification`, `executed`, `recovered_from_text`, `semantic_validation` and `confidence`.
@@ -20,7 +22,9 @@ Serving the Deep Agent behind the existing `chat_with_agent` MCP tool.
   next user message on the same thread.
 """
 
+import ast
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -114,6 +118,20 @@ def reset_for_tests(agent=None) -> None:
         _agents[None] = (agent, _current_prompts())
 
 
+def _tool_input(input_str: str | None, inputs: Any) -> dict[str, Any]:
+    """The tool call's arguments: LangChain passes them as `inputs`, and as a string in input_str."""
+    if isinstance(inputs, dict):
+        return inputs
+    for parse in (json.loads, ast.literal_eval):
+        try:
+            parsed = parse(input_str or "")
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 class StreamPublisher(AsyncCallbackHandler):
     """Publishes tool start/end to the legacy Redis stream and records the execution path."""
 
@@ -127,7 +145,13 @@ class StreamPublisher(AsyncCallbackHandler):
 
     async def on_tool_start(self, serialized, input_str, *, run_id, tags=None, **kwargs) -> None:
         tool = (serialized or {}).get("name") or kwargs.get("name") or "tool"
-        name = f"deep:review:{tool}" if VALIDATOR_NAME in (tags or []) else f"deep:{tool}"
+        if VALIDATOR_NAME in (tags or []):
+            name = f"deep:review:{tool}"
+        elif tool == "task":  # deepagents' subagent tool: name the step by the subagent it calls
+            subagent = _tool_input(input_str, kwargs.get("inputs")).get("subagent_type")
+            name = "deep:reviewer" if subagent == VALIDATOR_NAME else "deep:subagent"
+        else:
+            name = f"deep:{tool}"
         self._names[run_id] = name
         self.execution_path.append(name)
         await self._publish(name, "active")
@@ -225,8 +249,11 @@ async def run_deep_chat(
                         "error": f"stopped after {timeout_s:g}s: the caller does not wait longer"}
 
     await publish_node_event(thread_id, "deep:answer", "completed")
+    execution_path = list(publisher.execution_path)
+    if final_result.get("status", "no_answer") not in ("no_answer", "clarification"):
+        execution_path.append("deep:answer")  # the answer step the stream showed, when there is one
     trace_id = observability.langfuse_trace_id(config)
     observability.score_run(trace_id, observability.run_metrics(current_turn(state.get("messages") or []),
                                                                time.perf_counter() - start, final_result))
     observability.flush()
-    return to_response(thread_id, final_result, trace_id, publisher.execution_path)
+    return to_response(thread_id, final_result, trace_id, execution_path)

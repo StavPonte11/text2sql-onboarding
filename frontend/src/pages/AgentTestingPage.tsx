@@ -1284,6 +1284,7 @@ export function AgentTestingPage() {
             <AgentGraph
               threadId={threadId!}
               executionPath={executionPath}
+              running={chatMutation.isPending}
               onNodeClick={handleNodeClick}
             />
           </motion.div>

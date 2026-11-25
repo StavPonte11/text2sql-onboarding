@@ -283,3 +283,64 @@ def _question_record(
             if key not in _SDK_METADATA
         },
     }
+
+
+# Observations of one trace per page; Langfuse allows at most 1000
+_TRACE_PAGE = 100
+_TRACE_FIELDS = "core,basic,io,model,usage"
+
+
+def _trace_observations_from(source: LangfuseSource, trace_id: str) -> list[dict]:
+    """Every observation of the trace, page by page; the older API on self-hosted Langfuse."""
+    try:
+        observations: list[dict] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "traceId": trace_id,
+                "fields": _TRACE_FIELDS,
+                "limit": _TRACE_PAGE,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            page = _request(source, "v2/observations", **params)
+            data = page.get("data") or []
+            observations.extend(data)
+            cursor = (page.get("meta") or {}).get("cursor")
+            if not cursor or len(data) < _TRACE_PAGE:
+                return observations
+    except requests.HTTPError as exc:
+        if exc.response is None or exc.response.status_code not in _NOT_AVAILABLE:
+            raise
+        try:
+            return _request(source, f"traces/{trace_id}").get("observations") or []
+        except requests.HTTPError as legacy_exc:
+            if (
+                legacy_exc.response is not None
+                and legacy_exc.response.status_code == 404
+            ):
+                return []
+            raise
+
+
+def fetch_trace_observations(trace_id: str) -> list[dict]:
+    """
+    The observations Langfuse holds for a trace (an agent run), from the first
+    of langfuse_sources() that has any. Empty when none has them yet; when one
+    couldn't be read and no other has them, raises that error.
+    """
+    error: requests.RequestException | None = None
+    for source in langfuse_sources():
+        try:
+            observations = _trace_observations_from(source, trace_id)
+        except requests.RequestException as exc:
+            logger.warning(
+                f"[Agent] Langfuse at {source.host} failed for trace {trace_id}: {exc}"
+            )
+            error = exc
+            continue
+        if observations:
+            return observations
+    if error is not None:
+        raise error
+    return []

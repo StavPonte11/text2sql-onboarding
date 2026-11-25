@@ -14,6 +14,8 @@ import '@xyflow/react/dist/style.css';
 interface AgentGraphProps {
   threadId: string | null;
   executionPath?: string[];
+  /** True while the run is in progress: only then is the last step drawn as active */
+  running?: boolean;
   onNodeClick?: (nodeName: string, index: number) => void;
 }
 
@@ -75,7 +77,7 @@ const getStyle = (isCompleted: boolean, isActive: boolean) => {
   };
 };
 
-export function AgentGraph({ executionPath = [], onNodeClick }: AgentGraphProps) {
+export function AgentGraph({ executionPath = [], running = false, onNodeClick }: AgentGraphProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
@@ -95,8 +97,9 @@ export function AgentGraph({ executionPath = [], onNodeClick }: AgentGraphProps)
 
     executionPath.forEach((step, i) => {
       const id = `${step}-${i}`;
-      const isActive = i === executionPath.length - 1;
-      const isCompleted = i < executionPath.length - 1;
+      const isLast = i === executionPath.length - 1;
+      const isActive = running && isLast;
+      const isCompleted = !isActive;
 
       newNodes.push({
         id,
@@ -126,7 +129,7 @@ export function AgentGraph({ executionPath = [], onNodeClick }: AgentGraphProps)
 
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [executionPath, setNodes, setEdges]);
+  }, [executionPath, running, setNodes, setEdges]);
 
   return (
     <div
