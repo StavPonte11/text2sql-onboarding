@@ -223,3 +223,76 @@ def test_rerun_results_replace_the_old_ones_and_rescore(db_session):
     assert run.pass_rate == 1.0
     assert run.final_score == 0.75  # time shift: (1.0 + 0.5) / 2
     assert "rate_limited" not in run.failure_breakdown
+
+
+# ── chosen questions ────────────────────────────────────────────────────────
+
+
+def _run_with_pairs(client, connection_id, params):
+    pairs = [
+        {
+            "question": f"pick{i}?",
+            "sql_statement": f"SELECT {i}",
+            "tags": ["t"] if i else [],
+        }
+        for i in range(4)
+    ]
+    with (
+        patch(f"{ORCH}.fetch_jeen_sql_pairs_with_tags", AsyncMock(return_value=pairs)),
+        patch(f"{ORCH}.langfuse_client") as langfuse,
+        patch(f"{ORCH}._run_dataset_pipeline") as pipeline,
+    ):
+        langfuse.enabled = False
+        response = client.post(
+            "/api/evaluations/run-connection",
+            params={"connection_id": connection_id, **params},
+        )
+    return response, pipeline
+
+
+def test_run_only_the_chosen_questions(client, db_session):
+    connection_id = next(_next_connection)
+    # creates the connection's golden questions
+    _run_with_pairs(client, connection_id, {})
+    ids = {
+        q.question: q.id
+        for q in db_session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.connection_id == connection_id)
+        )
+    }
+    chosen = [ids["pick1?"], ids["pick3?"]]
+
+    response, pipeline = _run_with_pairs(
+        client, connection_id, {"question_ids": chosen}
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["total_questions"] == 2
+    assert sorted(pipeline.call_args.args[3]) == sorted(chosen)
+
+
+def test_chosen_questions_and_tags_both_apply(client, db_session):
+    connection_id = next(_next_connection)
+    _run_with_pairs(client, connection_id, {})
+    ids = {
+        q.question: q.id
+        for q in db_session.exec(
+            select(GoldenQuestion).where(GoldenQuestion.connection_id == connection_id)
+        )
+    }
+    # pick0 has no tag "t": only pick2 is left
+    response, pipeline = _run_with_pairs(
+        client,
+        connection_id,
+        {"question_ids": [ids["pick0?"], ids["pick2?"]], "tags": ["t"]},
+    )
+    assert response.status_code == 202
+    assert pipeline.call_args.args[3] == [ids["pick2?"]]
+
+
+def test_unknown_chosen_questions_are_rejected(client):
+    response, pipeline = _run_with_pairs(
+        client, next(_next_connection), {"question_ids": ["not-a-question"]}
+    )
+    assert response.status_code == 404
+    pipeline.assert_not_called()

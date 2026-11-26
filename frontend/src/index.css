@@ -101,3 +101,17 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* Choosing which questions an evaluation runs: "n of m chosen · Select all · Clear" */
+.question-pick-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.question-pick-actions .btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}

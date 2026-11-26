@@ -262,6 +262,7 @@ export const orchestrationApi = {
     agent: EvalAgent = 'current',
     name?: string,
     timeShift?: string[],
+    questionIds?: string[],
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -275,6 +276,7 @@ export const orchestrationApi = {
           ...(agent !== 'current' ? { agent } : {}),
           ...(name?.trim() ? { name: name.trim() } : {}),
           ...(timeShift?.length ? { time_shift: timeShift } : {}),
+          ...(questionIds?.length ? { question_ids: questionIds } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },

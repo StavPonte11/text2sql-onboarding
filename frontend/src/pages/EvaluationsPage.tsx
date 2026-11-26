@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { App, Select } from 'antd';
+import { App, Checkbox, Select } from 'antd';
 import {
   CalendarClock,
   Check,
@@ -15,7 +15,6 @@ import {
   Search,
   Server,
   Square,
-  Trash2,
   X,
 } from 'lucide-react';
 
@@ -30,7 +29,6 @@ import { ScheduleManager } from '../components/monitoring/ScheduleManager';
 import {
   useConnectionQuestions,
   useCreateConnectionQuestion,
-  useDeleteConnectionQuestion,
   useEvalReadiness,
   useQuestionTagSelection,
   useStopEvalRun,
@@ -449,7 +447,6 @@ function ConnectionRunPanel({
   const { data: questions = [], isLoading: questionsLoading } =
     useConnectionQuestions(selectedConnection);
   const createQuestionMut = useCreateConnectionQuestion();
-  const deleteQuestionMut = useDeleteConnectionQuestion();
 
   useEffect(() => {
     if (!selectedConnection && connections.length > 0) {
@@ -459,8 +456,18 @@ function ConnectionRunPanel({
 
   const activeConn = connections.find((c: any) => c.connection_id === selectedConnection);
 
-  const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
-    useQuestionTagSelection<any>(questions);
+  const {
+    selectedTags,
+    setSelectedTags,
+    tagOptions,
+    selectedQuestions,
+    runQuestions,
+    isChosen,
+    toggleQuestion,
+    chooseAll,
+    chosenIds,
+    resetChoice,
+  } = useQuestionTagSelection<any>(questions);
 
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
@@ -470,6 +477,7 @@ function ConnectionRunPanel({
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
     setSelectedTags([]);
+    resetChoice();
   };
 
   const handleLaunch = () => {
@@ -477,11 +485,16 @@ function ConnectionRunPanel({
       message.error('Please select a catalog connection before launching evaluation.');
       return;
     }
+    if (selectedQuestions.length > 0 && runQuestions.length === 0) {
+      message.warning('Check at least one question to run.');
+      return;
+    }
     triggerConnectionMut.mutate(
       {
         connectionId: selectedConnection,
         connectionName: activeConn?.name,
         tags: selectedTags,
+        questionIds: chosenIds,
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
@@ -527,17 +540,6 @@ function ConnectionRunPanel({
         onError: (err: any) => {
           message.error(err?.response?.data?.detail || 'Failed to save question.');
         },
-      },
-    );
-  };
-
-  const handleDeleteQuestion = (qId: string) => {
-    if (!selectedConnection) return;
-    deleteQuestionMut.mutate(
-      { connectionId: selectedConnection, questionId: qId },
-      {
-        onSuccess: () => message.success('Question removed.'),
-        onError: () => message.error('Failed to remove question.'),
       },
     );
   };
@@ -660,7 +662,11 @@ function ConnectionRunPanel({
           alignItems: 'center',
           gap: 8,
         }}
-        disabled={triggerConnectionMut.isPending || !selectedConnection}
+        disabled={
+          triggerConnectionMut.isPending ||
+          !selectedConnection ||
+          (selectedQuestions.length > 0 && runQuestions.length === 0)
+        }
         onClick={handleLaunch}
       >
         {triggerConnectionMut.isPending ? (
@@ -670,8 +676,8 @@ function ConnectionRunPanel({
         ) : (
           <>
             <PlayCircle size={17} /> Launch Evaluation for{' '}
-            {activeConn?.name || 'Selected Connection'} ({selectedQuestions.length} Question
-            {selectedQuestions.length !== 1 ? 's' : ''})
+            {activeConn?.name || 'Selected Connection'} ({runQuestions.length} Question
+            {runQuestions.length !== 1 ? 's' : ''})
           </>
         )}
       </button>
@@ -690,8 +696,28 @@ function ConnectionRunPanel({
             <Code2 size={16} style={{ color: 'var(--accent)' }} />
             <span style={{ fontWeight: 600, fontSize: 14 }}>Connection Golden Questions</span>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              ({selectedQuestions.length})
+              ({runQuestions.length} of {selectedQuestions.length} chosen)
             </span>
+            {selectedQuestions.length > 0 && (
+              <span className="question-pick-actions">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => chooseAll(true)}
+                  disabled={runQuestions.length === selectedQuestions.length}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => chooseAll(false)}
+                  disabled={runQuestions.length === 0}
+                >
+                  Clear
+                </button>
+              </span>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -865,6 +891,7 @@ function ConnectionRunPanel({
               <div
                 key={q.id}
                 style={{
+                  opacity: isChosen(q.id) ? 1 : 0.5,
                   padding: '10px 14px',
                   borderRadius: 6,
                   background: 'rgba(255, 255, 255, 0.02)',
@@ -882,9 +909,14 @@ function ConnectionRunPanel({
                     gap: 8,
                   }}
                 >
-                  <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--text-primary)' }}>
+                  <Checkbox
+                    checked={isChosen(q.id)}
+                    onChange={() => toggleQuestion(q.id)}
+                    aria-label={`Run: ${q.question}`}
+                    style={{ fontWeight: 500, fontSize: 13, color: 'var(--text-primary)' }}
+                  >
                     {q.question}
-                  </span>
+                  </Checkbox>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {(q.tags ?? []).map((tag: string) => (
                       <span key={tag} className="badge badge--neutral" style={{ fontSize: 10.5 }}>
@@ -903,14 +935,6 @@ function ConnectionRunPanel({
                     >
                       {q.difficulty || 'simple'}
                     </span>
-                    <button
-                      className="btn btn--ghost btn--sm"
-                      onClick={() => handleDeleteQuestion(q.id)}
-                      title="Delete question"
-                      style={{ padding: '2px 5px', color: '#ef4444' }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
                   </div>
                 </div>
 

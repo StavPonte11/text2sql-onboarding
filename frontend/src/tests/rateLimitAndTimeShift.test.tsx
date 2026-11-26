@@ -16,6 +16,7 @@ import {
   RerunRateLimitedButton,
 } from '../components/monitoring/RateLimitPanel';
 import { API_BASE_URL as API } from '../config/constants';
+import { useQuestionTagSelection, useTriggerConnectionRun } from '../hooks/useEvaluations';
 import { server } from './mocks/server';
 import { renderWithProviders } from './setup';
 
@@ -163,5 +164,81 @@ describe('question result popup', () => {
 
     renderWithProviders(<QuestionResultModal runId="r1" questionId="q1" onClose={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Next question' })).not.toBeInTheDocument();
+  });
+});
+
+describe('choosing the questions to run', () => {
+  const questions = [
+    { id: 'a', question: 'A?', tags: ['x'] },
+    { id: 'b', question: 'B?', tags: ['y'] },
+    { id: 'c', question: 'C?', tags: ['x'] },
+  ];
+
+  function Picker({ onLaunch }: { onLaunch: (ids: string[] | undefined) => void }) {
+    const { runQuestions, isChosen, toggleQuestion, chooseAll, chosenIds, setSelectedTags } =
+      useQuestionTagSelection(questions);
+    return (
+      <>
+        {questions.map((q) => (
+          <label key={q.id}>
+            <input type="checkbox" checked={isChosen(q.id)} onChange={() => toggleQuestion(q.id)} />
+            {q.question}
+          </label>
+        ))}
+        <span>{runQuestions.length} chosen</span>
+        <button onClick={() => chooseAll(true)}>Select all</button>
+        <button onClick={() => chooseAll(false)}>Clear</button>
+        <button onClick={() => setSelectedTags(['x'])}>tag x</button>
+        <button onClick={() => onLaunch(chosenIds)}>launch</button>
+      </>
+    );
+  }
+
+  test('all checked to start: no ids sent; unchecking sends only the checked ones', async () => {
+    const launches: (string[] | undefined)[] = [];
+    renderWithProviders(<Picker onLaunch={(ids) => launches.push(ids)} />);
+
+    expect(screen.getByText('3 chosen')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'launch' }));
+    await userEvent.click(screen.getByLabelText('B?'));
+    expect(screen.getByText('2 chosen')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'launch' }));
+    expect(launches).toEqual([undefined, ['a', 'c']]);
+  });
+
+  test('clear and select all; tags narrow the list first', async () => {
+    const launches: (string[] | undefined)[] = [];
+    renderWithProviders(<Picker onLaunch={(ids) => launches.push(ids)} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByText('0 chosen')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByText('3 chosen')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'tag x' }));
+    await userEvent.click(screen.getByLabelText('C?'));
+    await userEvent.click(screen.getByRole('button', { name: 'launch' }));
+    expect(launches).toEqual([['a']]);
+  });
+
+  test('the run request carries the chosen question ids', async () => {
+    let url = '';
+    server.use(
+      http.post(`${API}/evaluations/run-connection`, ({ request }) => {
+        url = request.url;
+        return HttpResponse.json({ id: 'run-9' }, { status: 202 });
+      }),
+    );
+    function Launcher() {
+      const trigger = useTriggerConnectionRun();
+      return (
+        <button onClick={() => trigger.mutate({ connectionId: 6, questionIds: ['a', 'c'] })}>
+          go
+        </button>
+      );
+    }
+    renderWithProviders(<Launcher />);
+    await userEvent.click(screen.getByRole('button', { name: 'go' }));
+    await waitFor(() => expect(url).toContain('question_ids=a&question_ids=c'));
   });
 });

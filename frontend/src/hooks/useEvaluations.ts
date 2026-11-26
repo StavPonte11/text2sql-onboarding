@@ -51,6 +51,7 @@ export function useTriggerConnectionRun() {
       agent,
       name,
       timeShift,
+      questionIds,
     }: {
       connectionId: number;
       connectionName?: string;
@@ -61,6 +62,8 @@ export function useTriggerConnectionRun() {
       agent?: EvalAgent;
       name?: string;
       timeShift?: string[];
+      /** Run only these questions (ids) */
+      questionIds?: string[];
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -72,6 +75,7 @@ export function useTriggerConnectionRun() {
         agent,
         name,
         timeShift,
+        questionIds,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -114,9 +118,13 @@ export function useStopEvalRun() {
 }
 
 // ── Connection golden questions hooks ────────────────────────────────────────
-/** Which questions a tag selection covers: any selected tag, or all when none is selected */
-export function useQuestionTagSelection<Q extends { tags?: string[] }>(questions: Q[]) {
+/**
+ * Which questions a run covers: those with any selected tag (all when none is
+ * selected), minus the ones the user unchecked. Every question starts checked.
+ */
+export function useQuestionTagSelection<Q extends { id: string; tags?: string[] }>(questions: Q[]) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set());
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -136,7 +144,42 @@ export function useQuestionTagSelection<Q extends { tags?: string[] }>(questions
     [questions, selectedTags],
   );
 
-  return { selectedTags, setSelectedTags, tagOptions, selectedQuestions };
+  const runQuestions = useMemo(
+    () => selectedQuestions.filter((q) => !unchecked.has(q.id)),
+    [selectedQuestions, unchecked],
+  );
+  const isChosen = (id: string) => !unchecked.has(id);
+  const toggleQuestion = (id: string) =>
+    setUnchecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  /** Check (true) or uncheck (false) every question the tags show */
+  const chooseAll = (chosen: boolean) =>
+    setUnchecked((prev) => {
+      const next = new Set(prev);
+      selectedQuestions.forEach((q) => (chosen ? next.delete(q.id) : next.add(q.id)));
+      return next;
+    });
+  /** The ids to send: only when the user unchecked some (else the tags decide) */
+  const chosenIds =
+    runQuestions.length < selectedQuestions.length ? runQuestions.map((q) => q.id) : undefined;
+  const resetChoice = () => setUnchecked(new Set());
+
+  return {
+    selectedTags,
+    setSelectedTags,
+    tagOptions,
+    selectedQuestions,
+    runQuestions,
+    isChosen,
+    toggleQuestion,
+    chooseAll,
+    chosenIds,
+    resetChoice,
+  };
 }
 
 export function useConnectionQuestions(connectionId: number | undefined) {

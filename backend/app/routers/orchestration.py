@@ -720,6 +720,10 @@ async def trigger_connection_run(
     dataset_name: str | None = Query(default=None),
     triggered_by: str = Query(default="user"),
     tags: list[str] | None = Query(default=None),
+    question_ids: list[str] | None = Query(
+        default=None,
+        description="Run only these of the connection's golden questions (ids); with tags, both apply",
+    ),
     model: str | None = Query(default=None),
     agent: EvalAgent = Query(default="current"),
     name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
@@ -823,7 +827,24 @@ async def trigger_connection_run(
                 status_code=404,
                 detail=f"No golden questions of Connection {conn_id} have the tags: {', '.join(selected_tags)}.",
             )
-    question_ids = [q.id for q in selected] if selected_tags else None
+    chosen_ids = list(dict.fromkeys(q for q in question_ids or [] if q))
+    if chosen_ids:
+        known = {q.id for q in selected}
+        selected = [q for q in selected if q.id in set(chosen_ids)]
+        if not selected:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"None of the chosen questions is one of Connection {conn_id}'s golden questions"
+                    + (" with those tags." if selected_tags else ".")
+                ),
+            )
+        missing = [q for q in chosen_ids if q not in known]
+        if missing:
+            logger.warning(
+                f"[Eval] Run of connection {conn_id}: {len(missing)} chosen questions are not its golden questions"
+            )
+    question_ids = [q.id for q in selected] if (selected_tags or chosen_ids) else None
 
     # 2. Sync to Langfuse dataset if available. The dataset always holds all of
     # the connection's questions; a tag-filtered run picks some by id.
