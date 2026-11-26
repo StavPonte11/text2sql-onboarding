@@ -24,6 +24,7 @@ import { orchestrationApi } from '../api/orchestration';
 import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { EmptySlate, SectionHeader, Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
+import { DEFAULT_TIME_SHIFT, isDefaultTimeShift } from '../components/common/TimeShiftSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import { ScheduleManager } from '../components/monitoring/ScheduleManager';
 import {
@@ -464,6 +465,7 @@ function ConnectionRunPanel({
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
   const [runName, setRunName] = useState('');
+  const [timeShift, setTimeShift] = useState<string[]>(DEFAULT_TIME_SHIFT);
 
   const handleConnectionChange = (connectionId: number) => {
     setSelectedConnection(connectionId);
@@ -483,6 +485,7 @@ function ConnectionRunPanel({
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
+        timeShift: isDefaultTimeShift(timeShift) ? undefined : timeShift,
       },
       {
         onSuccess: (run) => {
@@ -640,6 +643,8 @@ function ConnectionRunPanel({
         onAgentChange={setAgent}
         runName={runName}
         onRunNameChange={setRunName}
+        timeShift={timeShift}
+        onTimeShiftChange={setTimeShift}
       />
 
       {/* Main CTA */}
@@ -955,6 +960,7 @@ function DatasetRunPanel({
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
   const [runName, setRunName] = useState('');
+  const [timeShift, setTimeShift] = useState<string[]>(DEFAULT_TIME_SHIFT);
   const birdConnection = findBirdConnection<any>(connections);
 
   useEffect(() => {
@@ -987,6 +993,7 @@ function DatasetRunPanel({
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
+        timeShift: isDefaultTimeShift(timeShift) ? undefined : timeShift,
       },
       {
         onSuccess: (run) => {
@@ -1038,6 +1045,8 @@ function DatasetRunPanel({
           onAgentChange={setAgent}
           runName={runName}
           onRunNameChange={setRunName}
+          timeShift={timeShift}
+          onTimeShiftChange={setTimeShift}
         />
       </div>
 

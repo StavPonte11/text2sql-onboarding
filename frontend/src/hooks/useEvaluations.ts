@@ -50,6 +50,7 @@ export function useTriggerConnectionRun() {
       model,
       agent,
       name,
+      timeShift,
     }: {
       connectionId: number;
       connectionName?: string;
@@ -59,6 +60,7 @@ export function useTriggerConnectionRun() {
       model?: string;
       agent?: EvalAgent;
       name?: string;
+      timeShift?: string[];
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -69,6 +71,7 @@ export function useTriggerConnectionRun() {
         model,
         agent,
         name,
+        timeShift,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -188,6 +191,7 @@ export function useTriggerDatasetRun() {
       model,
       agent,
       name,
+      timeShift,
     }: {
       datasetName: string;
       connectionId?: number;
@@ -195,6 +199,7 @@ export function useTriggerDatasetRun() {
       model?: string;
       agent?: EvalAgent;
       name?: string;
+      timeShift?: string[];
     }) =>
       orchestrationApi.triggerDatasetRun(
         datasetName,
@@ -203,6 +208,7 @@ export function useTriggerDatasetRun() {
         model,
         agent,
         name,
+        timeShift,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -407,5 +413,31 @@ export function useAllTablesHealth() {
     queryKey: [QUERY_KEYS.HEALTH, 'all'],
     queryFn: () => healthApi.getAll(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
+  });
+}
+
+// ── LLM rate limits ──────────────────────────────────────────────────────────
+/** Stop a question's rate-limit retries (it is marked rate limited) */
+export function useStopQuestionRetry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, questionId }: { runId: string; questionId: string }) =>
+      orchestrationApi.stopQuestionRetry(runId, questionId),
+    onSuccess: (_, { runId }) => {
+      queryClient.invalidateQueries({ queryKey: ['run-report', runId] });
+    },
+  });
+}
+
+/** Evaluate questions of a finished run again (default: every rate-limited one) */
+export function useRerunQuestions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, questionIds }: { runId: string; questionIds?: string[] }) =>
+      orchestrationApi.rerunQuestions(runId, questionIds),
+    onSuccess: (_, { runId }) => {
+      queryClient.invalidateQueries({ queryKey: ['run-report', runId] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+    },
   });
 }

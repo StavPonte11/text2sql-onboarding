@@ -186,6 +186,15 @@ class EvalRun(SQLModel, table=True):
     # contains accuracy, unscored questions as 0, averaged (app.services.run_score)
     final_score: float | None = None
     score_breakdown: Any | None = Field(default=None, sa_column=Column(JSON))
+    # The time shift's days for this run: "-7" (days back) or a date
+    # "2023-10-07" (days back to it, counted when the job starts); None = defaults
+    time_shift: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    # The evaluation service job evaluating it now (to stop a question's retries)
+    eval_job_id: str | None = None
+    # Questions waiting out an LLM rate limit right now (from the job)
+    rate_limited: list[dict] | None = Field(default=None, sa_column=Column(JSON))
+    # Questions being evaluated again (a rerun of rate-limited questions)
+    rerun_question_ids: list[str] | None = Field(default=None, sa_column=Column(JSON))
     status: EvalStatus = Field(default=EvalStatus.running)
     started_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -230,6 +239,9 @@ class EvalRunRead(SQLModel):
     # The run's final score (0 for a failed run; see app.services.run_score)
     final_score: float | None = None
     score_breakdown: dict[str, Any] | None = None
+    time_shift: list[str] | None = None
+    rate_limited: list[dict] | None = None
+    rerun_question_ids: list[str] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import { agentApi } from '../api/agent';
 import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
+import { DEFAULT_TIME_SHIFT, isDefaultTimeShift } from '../components/common/TimeShiftSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import {
   useConnectionQuestions,
@@ -501,6 +502,7 @@ function EvaluationTab({
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
   const [runName, setRunName] = useState('');
+  const [timeShift, setTimeShift] = useState<string[]>(DEFAULT_TIME_SHIFT);
 
   const handleLaunch = () => {
     if (questionCount === 0) {
@@ -515,6 +517,7 @@ function EvaluationTab({
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
+        timeShift: isDefaultTimeShift(timeShift) ? undefined : timeShift,
       },
       {
         onSuccess: (run: any) => {
@@ -577,6 +580,8 @@ function EvaluationTab({
         onAgentChange={setAgent}
         runName={runName}
         onRunNameChange={setRunName}
+        timeShift={timeShift}
+        onTimeShiftChange={setTimeShift}
       />
 
       {questionCount > 0 && (

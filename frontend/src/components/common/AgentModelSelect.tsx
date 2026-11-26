@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Input, Segmented, Select, Tooltip } from 'antd';
 
 import { useAgentModels } from '../../hooks/useEvaluations';
+import { TimeShiftSelect } from './TimeShiftSelect';
 
 import type { EvalAgent } from '../../api/orchestration';
 
@@ -31,6 +32,8 @@ export function AgentModelSelect({
   onAgentChange,
   runName,
   onRunNameChange,
+  timeShift,
+  onTimeShiftChange,
   disabled = false,
 }: {
   value: string;
@@ -39,6 +42,9 @@ export function AgentModelSelect({
   onAgentChange?: (agent: EvalAgent) => void;
   runName?: string;
   onRunNameChange?: (name: string) => void;
+  /** The time shift's days/dates; shown when onTimeShiftChange is given */
+  timeShift?: string[];
+  onTimeShiftChange?: (values: string[]) => void;
   disabled?: boolean;
 }) {
   const { data, isLoading } = useAgentModels();
@@ -139,6 +145,21 @@ export function AgentModelSelect({
           )}
         </div>
       </div>
+      {onTimeShiftChange && (
+        <div className="eval-run-settings__item eval-run-settings__item--wide">
+          <span>Time shift</span>
+          <TimeShiftSelect
+            value={timeShift ?? []}
+            onChange={onTimeShiftChange}
+            disabled={disabled}
+          />
+        </div>
+      )}
+      {onTimeShiftChange && timeShift?.length === 0 && (
+        <span className="eval-run-settings__note">
+          Nothing picked: the run uses the defaults (1, 7, 14, 30 and 60 days back).
+        </span>
+      )}
       {agent === 'deep' && noModelChoice && (
         <span className="eval-run-settings__note">
           This Agentic agent version can't switch models; it runs on its own.
