@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { App, Empty, Modal, Select, Tag } from 'antd';
+import { App, Checkbox, Empty, Modal, Select, Tag } from 'antd';
 import {
   Check,
   ClipboardList,
@@ -21,6 +21,7 @@ import { agentApi } from '../api/agent';
 import { AgentModelSelect } from '../components/common/AgentModelSelect';
 import { Spinner } from '../components/common/EvalUI';
 import { QuestionTagSelect } from '../components/common/QuestionTagSelect';
+import { DEFAULT_TIME_SHIFT, isDefaultTimeShift } from '../components/common/TimeShiftSelect';
 import { RunHistoryTable } from '../components/monitoring/RunHistoryTable';
 import {
   useConnectionQuestions,
@@ -495,16 +496,30 @@ function EvaluationTab({
   const { message } = App.useApp();
   const navigate = useNavigate();
   const triggerMut = useTriggerConnectionRun();
-  const { selectedTags, setSelectedTags, tagOptions, selectedQuestions } =
-    useQuestionTagSelection<any>(questions);
-  const questionCount = selectedQuestions.length;
+  const {
+    selectedTags,
+    setSelectedTags,
+    tagOptions,
+    selectedQuestions,
+    runQuestions,
+    isChosen,
+    toggleQuestion,
+    chooseAll,
+    chosenIds,
+  } = useQuestionTagSelection<any>(questions);
+  const questionCount = runQuestions.length;
   const [model, setModel] = useState('');
   const [agent, setAgent] = useState<EvalAgent>('current');
   const [runName, setRunName] = useState('');
+  const [timeShift, setTimeShift] = useState<string[]>(DEFAULT_TIME_SHIFT);
 
   const handleLaunch = () => {
     if (questionCount === 0) {
-      message.warning('Add at least one golden question before running evaluation.');
+      message.warning(
+        questions.length
+          ? 'Check at least one question to run.'
+          : 'Add at least one golden question before running evaluation.',
+      );
       return;
     }
     triggerMut.mutate(
@@ -512,9 +527,11 @@ function EvaluationTab({
         connectionId,
         connectionName,
         tags: selectedTags,
+        questionIds: chosenIds,
         model: agent !== 'previous' ? model || undefined : undefined,
         agent,
         name: runName,
+        timeShift: isDefaultTimeShift(timeShift) ? undefined : timeShift,
       },
       {
         onSuccess: (run: any) => {
@@ -541,7 +558,7 @@ function EvaluationTab({
             <div style={{ fontWeight: 700, fontSize: 15 }}>Run Evaluation</div>
             <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
               Evaluates{' '}
-              {selectedTags.length
+              {questionCount < questions.length
                 ? `${questionCount} of ${questions.length}`
                 : `all ${questionCount}`}{' '}
               golden question{questionCount !== 1 ? 's' : ''} for <strong>{connectionName}</strong>
@@ -553,7 +570,13 @@ function EvaluationTab({
           style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           onClick={handleLaunch}
           disabled={triggerMut.isPending || questionCount === 0}
-          title={questionCount === 0 ? 'Add golden questions first' : undefined}
+          title={
+            questionCount === 0
+              ? questions.length
+                ? 'Check at least one question'
+                : 'Add golden questions first'
+              : undefined
+          }
         >
           {triggerMut.isPending ? (
             <>
@@ -577,13 +600,49 @@ function EvaluationTab({
         onAgentChange={setAgent}
         runName={runName}
         onRunNameChange={setRunName}
+        timeShift={timeShift}
+        onTimeShiftChange={setTimeShift}
       />
 
-      {questionCount > 0 && (
+      {selectedQuestions.length > 0 && (
+        <div className="question-pick-actions">
+          <span>
+            {questionCount} of {selectedQuestions.length} chosen
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => chooseAll(true)}
+            disabled={questionCount === selectedQuestions.length}
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => chooseAll(false)}
+            disabled={questionCount === 0}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+      {selectedQuestions.length > 0 && (
         <div className="eval-question-list">
           {selectedQuestions.map((q: any) => (
-            <div key={q.id} className="eval-question-row">
-              <span className="question-prompt">{q.question}</span>
+            <div
+              key={q.id}
+              className="eval-question-row"
+              style={{ opacity: isChosen(q.id) ? 1 : 0.5 }}
+            >
+              <Checkbox
+                checked={isChosen(q.id)}
+                onChange={() => toggleQuestion(q.id)}
+                aria-label={`Run: ${q.question}`}
+                className="question-prompt"
+              >
+                {q.question}
+              </Checkbox>
               <div style={{ display: 'flex', flexShrink: 0 }}>
                 <QuestionTags tags={q.tags} />
               </div>

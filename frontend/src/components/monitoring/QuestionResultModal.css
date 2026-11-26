@@ -378,3 +378,46 @@
   border-radius: 8px;
   font-size: 12.5px;
 }
+
+/* Previous / next question (after the Langfuse link when there is one) */
+.question-modal__title a + .question-modal__nav {
+  margin-left: 12px;
+}
+
+.question-modal__nav {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.question-modal__nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.question-modal__nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.question-modal__nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.question-modal__nav-pos {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

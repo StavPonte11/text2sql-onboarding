@@ -1,7 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Modal } from 'antd';
-import { Check, CheckCircle2, Copy, ExternalLink, Gavel, MinusCircle, XCircle } from 'lucide-react';
+import {
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  Gavel,
+  MinusCircle,
+  XCircle,
+} from 'lucide-react';
 
 import { orchestrationApi } from '../../api/orchestration';
 import { ScoreBar, Spinner } from '../common/EvalUI';
@@ -331,15 +341,52 @@ const TILE_KEYS = [
   'error',
 ];
 
+/** Arrow keys move between questions, except while typing or selecting text */
+function useArrowKeys(onPrev?: () => void, onNext?: () => void) {
+  useEffect(() => {
+    if (!onPrev && !onNext) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        target?.closest('input, textarea, select, [contenteditable="true"]') ||
+        window.getSelection()?.toString()
+      ) {
+        return;
+      }
+      if (e.key === 'ArrowLeft' && onPrev) {
+        e.preventDefault();
+        onPrev();
+      } else if (e.key === 'ArrowRight' && onNext) {
+        e.preventDefault();
+        onNext();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onPrev, onNext]);
+}
+
 export function QuestionResultModal({
   runId,
   questionId,
   onClose,
+  position,
+  onPrev,
+  onNext,
 }: {
   runId: string;
   questionId: string;
   onClose: () => void;
+  /** This question's place among the ones the user can step through (1-based) */
+  position?: { index: number; total: number };
+  /** Open the previous / next question; missing at the first / last */
+  onPrev?: () => void;
+  onNext?: () => void;
 }) {
+  useArrowKeys(onPrev, onNext);
   const { data, isLoading, isError } = useQuery({
     queryKey: ['run-question', runId, questionId],
     queryFn: () => orchestrationApi.getRunQuestion(runId, questionId),
@@ -387,6 +434,33 @@ export function QuestionResultModal({
             <a href={trace.langfuse_url} target="_blank" rel="noreferrer">
               <ExternalLink size={12} /> Open in Langfuse
             </a>
+          )}
+          {position && (
+            <span className="question-modal__nav">
+              <button
+                type="button"
+                className="question-modal__nav-btn"
+                onClick={onPrev}
+                disabled={!onPrev}
+                aria-label="Previous question"
+                title="Previous question (←)"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="question-modal__nav-pos">
+                {position.index} / {position.total}
+              </span>
+              <button
+                type="button"
+                className="question-modal__nav-btn"
+                onClick={onNext}
+                disabled={!onNext}
+                aria-label="Next question"
+                title="Next question (→)"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </span>
           )}
         </div>
       }

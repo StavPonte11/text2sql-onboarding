@@ -366,3 +366,72 @@
 .run-name-editor {
   font-size: 13px;
 }
+
+/* LLM rate limits (HTTP 429): waiting questions, reruns */
+.rate-limit-card {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rate-limit-card__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #f59e0b;
+}
+
+.rate-limit-card__error {
+  font-size: 12px;
+  color: #ef4444;
+}
+
+.rate-limit-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rate-limit-item__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.rate-limit-item__question {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rate-limit-item__detail {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.rate-limit-item__stop,
+.rate-limit-rerun {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.rate-limit-rerun--inline {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.rate-limit-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.question-item__failure-type--rate-limited {
+  color: #f59e0b;
+}

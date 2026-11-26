@@ -65,6 +65,22 @@ async def _list_prompt_tests(
     return tests, language
 
 
+PROMPT_TESTS_TOOL = "list_prompt_tests"
+
+
+async def _knowledge_pairs(
+    session: ClientSession, connection_id: int
+) -> list[dict[str, Any]]:
+    """The connection's curated question -> query knowledge pairs (get_sql_pairs)."""
+    data = _tool_json(
+        await session.call_tool("get_sql_pairs", {"connection_id": connection_id}),
+        "get_sql_pairs",
+    )
+    if isinstance(data, dict):
+        return data.get("sql_pairs") or []
+    return data if isinstance(data, list) else []
+
+
 async def fetch_jeen_sql_pairs(connection_id: int) -> list[dict[str, Any]]:
     """
     The connection's golden questions: the tests on Jeen's Prompt tab, each as
@@ -74,11 +90,19 @@ async def fetch_jeen_sql_pairs(connection_id: int) -> list[dict[str, Any]]:
     the general ("default") set every connection shares, in the connection's
     query language.
 
-    Not the knowledge pairs (get_sql_pairs): those are the few-shot examples
-    the agent itself is given, so they can't also judge it.
+    Not the knowledge pairs (get_sql_pairs) while Jeen has the Prompt tab's
+    tests: those are the few-shot examples the agent itself is given. A Jeen
+    without list_prompt_tests gets them, as before the Prompt tab existed.
     """
     try:
         async with get_jeen_mcp_session() as session:
+            tools = {tool.name for tool in (await session.list_tools()).tools}
+            if PROMPT_TESTS_TOOL not in tools:
+                logger.warning(
+                    f"[JeenMetadata] Jeen has no {PROMPT_TESTS_TOOL}: connection "
+                    f"{connection_id}'s golden questions are its knowledge pairs"
+                )
+                return await _knowledge_pairs(session, connection_id)
             scope = "override"
             tests, language = await _list_prompt_tests(
                 session, {"scope": scope, "connection_id": connection_id}

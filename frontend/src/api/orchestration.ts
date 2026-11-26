@@ -12,6 +12,12 @@ export interface ScoreBreakdown {
 
 export interface EvalRunFull {
   id: string;
+  /** The time shift's days/dates the run chose (null = the defaults) */
+  time_shift?: string[] | null;
+  /** Questions waiting out an LLM rate limit right now */
+  rate_limited?: { question_id: string; question: string }[] | null;
+  /** Questions being evaluated again */
+  rerun_question_ids?: string[] | null;
   table_id: string;
   table_name?: string;
   dataset_id: string | null;
@@ -255,6 +261,8 @@ export const orchestrationApi = {
     model?: string,
     agent: EvalAgent = 'current',
     name?: string,
+    timeShift?: string[],
+    questionIds?: string[],
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-connection', null, {
@@ -267,6 +275,8 @@ export const orchestrationApi = {
           ...(model ? { model } : {}),
           ...(agent !== 'current' ? { agent } : {}),
           ...(name?.trim() ? { name: name.trim() } : {}),
+          ...(timeShift?.length ? { time_shift: timeShift } : {}),
+          ...(questionIds?.length ? { question_ids: questionIds } : {}),
         },
         // FastAPI reads repeated keys: tags=a&tags=b
         paramsSerializer: { indexes: null },
@@ -288,6 +298,7 @@ export const orchestrationApi = {
     model?: string,
     agent: EvalAgent = 'current',
     name?: string,
+    timeShift?: string[],
   ) =>
     api
       .post<EvalRunFull>('/evaluations/run-dataset', null, {
@@ -298,7 +309,9 @@ export const orchestrationApi = {
           ...(model ? { model } : {}),
           ...(agent !== 'current' ? { agent } : {}),
           ...(name?.trim() ? { name: name.trim() } : {}),
+          ...(timeShift?.length ? { time_shift: timeShift } : {}),
         },
+        paramsSerializer: { indexes: null },
       })
       .then((r) => r.data),
 
@@ -347,6 +360,21 @@ export const orchestrationApi = {
 
   stopRun: (run_id: string) =>
     api.post<EvalRunFull>(`/evaluations/runs/${run_id}/stop`).then((r) => r.data),
+
+  /** Stop a question's LLM rate-limit retries: it is marked rate limited at once */
+  stopQuestionRetry: (run_id: string, question_id: string) =>
+    api
+      .post(`/evaluations/runs/${run_id}/questions/${encodeURIComponent(question_id)}/stop-retry`)
+      .then((r) => r.data),
+
+  /** Evaluate questions of a finished run again (default: every rate-limited one) */
+  rerunQuestions: (run_id: string, question_ids?: string[]) =>
+    api
+      .post<EvalRunFull>(
+        `/evaluations/runs/${run_id}/rerun`,
+        question_ids?.length ? { question_ids } : {},
+      )
+      .then((r) => r.data),
 
   getRunReport: (run_id: string) =>
     api.get(`/evaluations/runs/${run_id}/report`).then((r) => r.data),

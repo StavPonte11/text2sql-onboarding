@@ -9,7 +9,14 @@ import { orchestrationApi } from '../../api/orchestration';
 import { useRenameEvalRun, useStopEvalRun } from '../../hooks/useEvaluations';
 import { AGENT_LABELS } from '../common/AgentModelSelect';
 import { EmptySlate, ScoreBar, Spinner, StatusBadge } from '../common/EvalUI';
+import { timeShiftLabel } from '../common/TimeShiftSelect';
 import { QuestionResultModal } from './QuestionResultModal';
+import {
+  isRateLimited,
+  RateLimitedQuestions,
+  RerunQuestionButton,
+  RerunRateLimitedButton,
+} from './RateLimitPanel';
 import { ScoreInfo } from './ScoreInfo';
 
 import './RunHistoryTable.css';
@@ -126,6 +133,16 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
   });
 
   const isRegressionRun = report?.triggered_by === 'promotion-regression';
+  // Questions still being evaluated: not started/finished yet, or evaluated again
+  const busy = (status: string) => status === 'pending' || status === 'rerunning';
+  // The finished questions, in the list's order: the popup steps through them
+  const openableIds: string[] = (report?.per_question ?? [])
+    .filter((q: { status: string }) => !busy(q.status))
+    .map((q: { question_id: string }) => q.question_id);
+  const openIndex = openQuestionId ? openableIds.indexOf(openQuestionId) : -1;
+  const waitingIds = new Set<string>(
+    (report?.rate_limited ?? []).map((w: { question_id: string }) => w.question_id),
+  );
 
   const { data: regressionDiff } = useQuery({
     queryKey: ['regression-diff', runId],
@@ -178,6 +195,9 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                 {stopMut.isPending ? 'Stopping…' : 'Stop Evaluation'}
               </button>
             )}
+            {report && report.status !== 'running' && (
+              <RerunRateLimitedButton runId={runId} count={report.rate_limited_count ?? 0} />
+            )}
             <button className="btn btn--ghost btn--sm" onClick={onClose}>
               ✕ Close
             </button>
@@ -197,6 +217,19 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                 completed={report.completed_questions ?? 0}
                 total={report.total_questions}
               />
+            )}
+            {report.status === 'running' && report.rerun_question_ids?.length > 0 && (
+              <div className="rate-limit-note">
+                Evaluating {report.rerun_question_ids.length} rate-limited{' '}
+                {report.rerun_question_ids.length === 1 ? 'question' : 'questions'} again. Stopping
+                keeps the run as it was.
+              </div>
+            )}
+            <RateLimitedQuestions runId={runId} waiting={report.rate_limited ?? []} />
+            {report.time_shift?.length > 0 && (
+              <div className="rate-limit-note" title="The time shift's days and dates for this run">
+                Time shift: {report.time_shift.map(timeShiftLabel).join(' · ')}
+              </div>
             )}
 
             {/* Summary */}
@@ -351,8 +384,8 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                     }) => (
                       <div
                         key={q.question_id}
-                        className={`question-item${q.status !== 'pending' ? ' question-item--clickable' : ''}`}
-                        {...(q.status !== 'pending' && {
+                        className={`question-item${!busy(q.status) ? ' question-item--clickable' : ''}`}
+                        {...(!busy(q.status) && {
                           role: 'button',
                           tabIndex: 0,
                           onClick: () => setOpenQuestionId(q.question_id),
@@ -367,15 +400,13 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                         <div
                           className="question-item__dot"
                           style={{
-                            background:
-                              q.status === 'pending'
-                                ? '#f59e0b'
-                                : q.status === 'pass'
-                                  ? '#10b981'
-                                  : '#ef4444',
-                            opacity: q.status === 'pending' ? 0.7 : 1,
-                            animation:
-                              q.status === 'pending' ? 'pulse 1.4s ease-in-out infinite' : 'none',
+                            background: busy(q.status)
+                              ? '#f59e0b'
+                              : q.status === 'pass'
+                                ? '#10b981'
+                                : '#ef4444',
+                            opacity: busy(q.status) ? 0.7 : 1,
+                            animation: busy(q.status) ? 'pulse 1.4s ease-in-out infinite' : 'none',
                           }}
                         />
                         <div className="question-item__id" title={q.question ?? q.question_id}>
@@ -385,27 +416,40 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
                           className="question-item__score"
                           title={SCORE_SOURCE_LABEL[q.score_source ?? ''] ?? 'Score'}
                           style={{
-                            color:
-                              q.status === 'pending' ? '#f59e0b' : scoreColor(questionScore(q)),
+                            color: busy(q.status) ? '#f59e0b' : scoreColor(questionScore(q)),
                           }}
                         >
-                          {q.status === 'pending'
+                          {busy(q.status)
                             ? '—'
                             : questionScore(q) == null
                               ? 'N/A'
                               : `${Math.round(questionScore(q)! * 100)}%`}
                         </div>
-                        {q.status === 'pending' && (
+                        {busy(q.status) && (
                           <span
                             className="question-item__failure-type"
                             style={{ color: '#f59e0b' }}
                           >
-                            evaluating…
+                            {waitingIds.has(q.question_id)
+                              ? 'rate limited — retrying…'
+                              : q.status === 'rerunning'
+                                ? 'rerunning…'
+                                : 'evaluating…'}
                           </span>
                         )}
-                        {q.status !== 'pending' && q.failure_type && (
-                          <span className="question-item__failure-type">{q.failure_type}</span>
+                        {!busy(q.status) && q.failure_type && (
+                          <span
+                            className={`question-item__failure-type${isRateLimited(q.failure_type) ? ' question-item__failure-type--rate-limited' : ''}`}
+                            title={q.failure_type}
+                          >
+                            {isRateLimited(q.failure_type) ? 'rate limited' : q.failure_type}
+                          </span>
                         )}
+                        {!busy(q.status) &&
+                          isRateLimited(q.failure_type) &&
+                          report.status !== 'running' && (
+                            <RerunQuestionButton runId={runId} questionId={q.question_id} />
+                          )}
                       </div>
                     ),
                   )}
@@ -543,6 +587,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
           runId={runId}
           questionId={openQuestionId}
           onClose={() => setOpenQuestionId(null)}
+          {...(openIndex >= 0 && {
+            position: { index: openIndex + 1, total: openableIds.length },
+            onPrev: openIndex > 0 ? () => setOpenQuestionId(openableIds[openIndex - 1]) : undefined,
+            onNext:
+              openIndex < openableIds.length - 1
+                ? () => setOpenQuestionId(openableIds[openIndex + 1])
+                : undefined,
+          })}
         />
       )}
     </div>
@@ -734,6 +786,16 @@ export function RunHistoryTable({
                         {run.completed_questions != null && run.total_questions > 0 && (
                           <span title="Questions finished so far">
                             {run.completed_questions}/{run.total_questions}
+                          </span>
+                        )}
+                        {(run.rate_limited?.length ?? 0) > 0 && (
+                          <span
+                            className="question-item__failure-type--rate-limited"
+                            title={`Waiting out the LLM provider's rate limit: ${run
+                              .rate_limited!.map((w) => w.question)
+                              .join(' · ')}`}
+                          >
+                            ⏳ {run.rate_limited!.length} rate limited
                           </span>
                         )}
                       </span>

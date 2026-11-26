@@ -50,6 +50,8 @@ export function useTriggerConnectionRun() {
       model,
       agent,
       name,
+      timeShift,
+      questionIds,
     }: {
       connectionId: number;
       connectionName?: string;
@@ -59,6 +61,9 @@ export function useTriggerConnectionRun() {
       model?: string;
       agent?: EvalAgent;
       name?: string;
+      timeShift?: string[];
+      /** Run only these questions (ids) */
+      questionIds?: string[];
     }) =>
       orchestrationApi.triggerConnectionRun(
         connectionId,
@@ -69,6 +74,8 @@ export function useTriggerConnectionRun() {
         model,
         agent,
         name,
+        timeShift,
+        questionIds,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -111,9 +118,13 @@ export function useStopEvalRun() {
 }
 
 // ── Connection golden questions hooks ────────────────────────────────────────
-/** Which questions a tag selection covers: any selected tag, or all when none is selected */
-export function useQuestionTagSelection<Q extends { tags?: string[] }>(questions: Q[]) {
+/**
+ * Which questions a run covers: those with any selected tag (all when none is
+ * selected), minus the ones the user unchecked. Every question starts checked.
+ */
+export function useQuestionTagSelection<Q extends { id: string; tags?: string[] }>(questions: Q[]) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set());
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -133,7 +144,42 @@ export function useQuestionTagSelection<Q extends { tags?: string[] }>(questions
     [questions, selectedTags],
   );
 
-  return { selectedTags, setSelectedTags, tagOptions, selectedQuestions };
+  const runQuestions = useMemo(
+    () => selectedQuestions.filter((q) => !unchecked.has(q.id)),
+    [selectedQuestions, unchecked],
+  );
+  const isChosen = (id: string) => !unchecked.has(id);
+  const toggleQuestion = (id: string) =>
+    setUnchecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  /** Check (true) or uncheck (false) every question the tags show */
+  const chooseAll = (chosen: boolean) =>
+    setUnchecked((prev) => {
+      const next = new Set(prev);
+      selectedQuestions.forEach((q) => (chosen ? next.delete(q.id) : next.add(q.id)));
+      return next;
+    });
+  /** The ids to send: only when the user unchecked some (else the tags decide) */
+  const chosenIds =
+    runQuestions.length < selectedQuestions.length ? runQuestions.map((q) => q.id) : undefined;
+  const resetChoice = () => setUnchecked(new Set());
+
+  return {
+    selectedTags,
+    setSelectedTags,
+    tagOptions,
+    selectedQuestions,
+    runQuestions,
+    isChosen,
+    toggleQuestion,
+    chooseAll,
+    chosenIds,
+    resetChoice,
+  };
 }
 
 export function useConnectionQuestions(connectionId: number | undefined) {
@@ -188,6 +234,7 @@ export function useTriggerDatasetRun() {
       model,
       agent,
       name,
+      timeShift,
     }: {
       datasetName: string;
       connectionId?: number;
@@ -195,6 +242,7 @@ export function useTriggerDatasetRun() {
       model?: string;
       agent?: EvalAgent;
       name?: string;
+      timeShift?: string[];
     }) =>
       orchestrationApi.triggerDatasetRun(
         datasetName,
@@ -203,6 +251,7 @@ export function useTriggerDatasetRun() {
         model,
         agent,
         name,
+        timeShift,
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
@@ -407,5 +456,31 @@ export function useAllTablesHealth() {
     queryKey: [QUERY_KEYS.HEALTH, 'all'],
     queryFn: () => healthApi.getAll(),
     staleTime: QUERY_CONFIG.DEFAULT_STALE_TIME,
+  });
+}
+
+// ── LLM rate limits ──────────────────────────────────────────────────────────
+/** Stop a question's rate-limit retries (it is marked rate limited) */
+export function useStopQuestionRetry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, questionId }: { runId: string; questionId: string }) =>
+      orchestrationApi.stopQuestionRetry(runId, questionId),
+    onSuccess: (_, { runId }) => {
+      queryClient.invalidateQueries({ queryKey: ['run-report', runId] });
+    },
+  });
+}
+
+/** Evaluate questions of a finished run again (default: every rate-limited one) */
+export function useRerunQuestions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, questionIds }: { runId: string; questionIds?: string[] }) =>
+      orchestrationApi.rerunQuestions(runId, questionIds),
+    onSuccess: (_, { runId }) => {
+      queryClient.invalidateQueries({ queryKey: ['run-report', runId] });
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.EVAL_RUNS] });
+    },
   });
 }

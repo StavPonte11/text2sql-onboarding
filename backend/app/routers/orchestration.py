@@ -57,6 +57,7 @@ from app.services.jeen_metadata import (
 )
 from app.services.langfuse_client import langfuse_client
 from app.services.run_score import final_run_score, question_score, results_score
+from app.services.time_shift import normalize_time_shift, time_shift_offsets
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,8 @@ def _run_final_score(
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 REGRESSION_BLOCK_DELTA = 0.10
+# The error of a question the LLM rate limit stopped (the evaluation service marks it)
+RATE_LIMITED = "rate_limited"
 REGRESSION_WARNING_DELTA = 0.05
 LOW_SCORE_THRESHOLD = 0.70
 
@@ -362,10 +365,28 @@ def trigger_evaluation_run(
     return read_runs
 
 
+def _time_shift(values: list[str] | None) -> list[str] | None:
+    """The run's chosen time shift days/dates, or HTTP 400 when one is invalid."""
+    try:
+        return normalize_time_shift(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Time shift: {exc}") from exc
+
+
 def _is_run_cancelled(run_id: str) -> bool:
     with Session(engine) as session:
         run = session.get(EvalRun, run_id)
         return run is not None and run.status == EvalStatus.cancelled
+
+
+def _save_job_state(run: EvalRun, job: dict, session: Session) -> None:
+    """Keep the job id (to stop a question's retries) and the questions waiting out a rate limit."""
+    waiting = job.get("rate_limited") or None
+    if run.eval_job_id != job.get("job_id") or run.rate_limited != waiting:
+        run.eval_job_id = job.get("job_id")
+        run.rate_limited = waiting
+        session.add(run)
+        session.commit()
 
 
 def _run_dataset_pipeline(
@@ -409,10 +430,14 @@ def _run_dataset_pipeline(
                 req["model"] = run.agent_model
             if run.agent and run.agent != "current":
                 req["agent"] = run.agent
+            offsets = time_shift_offsets(run.time_shift)
+            if offsets:
+                req["time_shift_offsets_days"] = offsets
             saved_question_ids: set[str] = set()
 
             def save_progress(job: dict) -> None:
                 """Store each finished question as it comes in, so the report shows it."""
+                _save_job_state(run, job, session)
                 total = job.get("total_items")
                 # A BIRD run starts with 0 questions: only the evaluation
                 # service knows how many the benchmark has for this connection
@@ -450,6 +475,16 @@ def _run_dataset_pipeline(
                 return
 
             _map_and_save_run_metrics(run, eval_resp, session, run_id)
+            rate_limited = sum(
+                1 for c in eval_resp.cases if (c.error or "").startswith(RATE_LIMITED)
+            )
+            if rate_limited:
+                run.failure_breakdown = {
+                    **(run.failure_breakdown or {}),
+                    RATE_LIMITED: rate_limited,
+                }
+            run.rate_limited = None
+            run.eval_job_id = None
             session.commit()
         except Exception as e:
             try:
@@ -499,6 +534,10 @@ async def trigger_dataset_run(
     model: str | None = Query(default=None),
     agent: EvalAgent = Query(default="current"),
     name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
+    time_shift: list[str] | None = Query(
+        default=None,
+        description='Time shift days back ("-7") or dates ("2023-10-07"); omit for the defaults',
+    ),
     session: Session = Depends(get_session),
 ):
     if connection_id is None:
@@ -517,6 +556,7 @@ async def trigger_dataset_run(
             detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
         )
 
+    chosen_time_shift = _time_shift(time_shift)
     conn_name = connection_name if isinstance(connection_name, str) else None
 
     # Fallback to look up connection name from previous runs if not passed
@@ -642,6 +682,7 @@ async def trigger_dataset_run(
         agent_model=(model or None) if agent != "previous" else None,
         agent=agent,
         name=_run_name(name),
+        time_shift=chosen_time_shift,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -679,9 +720,17 @@ async def trigger_connection_run(
     dataset_name: str | None = Query(default=None),
     triggered_by: str = Query(default="user"),
     tags: list[str] | None = Query(default=None),
+    question_ids: list[str] | None = Query(
+        default=None,
+        description="Run only these of the connection's golden questions (ids); with tags, both apply",
+    ),
     model: str | None = Query(default=None),
     agent: EvalAgent = Query(default="current"),
     name: str | None = Query(default=None, max_length=RUN_NAME_MAX_LENGTH),
+    time_shift: list[str] | None = Query(
+        default=None,
+        description='Time shift days back ("-7") or dates ("2023-10-07"); omit for the defaults',
+    ),
     session: Session = Depends(get_session),
 ):
     """Evaluate a connection's golden questions: those with any of `tags`, or all."""
@@ -700,6 +749,7 @@ async def trigger_connection_run(
             detail=f"Invalid connection_id: '{connection_id}'. Must be a positive integer.",
         )
 
+    chosen_time_shift = _time_shift(time_shift)
     conn_name = connection_name if isinstance(connection_name, str) else None
     ds_name = (
         dataset_name
@@ -777,7 +827,24 @@ async def trigger_connection_run(
                 status_code=404,
                 detail=f"No golden questions of Connection {conn_id} have the tags: {', '.join(selected_tags)}.",
             )
-    question_ids = [q.id for q in selected] if selected_tags else None
+    chosen_ids = list(dict.fromkeys(q for q in question_ids or [] if q))
+    if chosen_ids:
+        known = {q.id for q in selected}
+        selected = [q for q in selected if q.id in set(chosen_ids)]
+        if not selected:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"None of the chosen questions is one of Connection {conn_id}'s golden questions"
+                    + (" with those tags." if selected_tags else ".")
+                ),
+            )
+        missing = [q for q in chosen_ids if q not in known]
+        if missing:
+            logger.warning(
+                f"[Eval] Run of connection {conn_id}: {len(missing)} chosen questions are not its golden questions"
+            )
+    question_ids = [q.id for q in selected] if (selected_tags or chosen_ids) else None
 
     # 2. Sync to Langfuse dataset if available. The dataset always holds all of
     # the connection's questions; a tag-filtered run picks some by id.
@@ -819,6 +886,7 @@ async def trigger_connection_run(
         agent_model=(model or None) if agent != "previous" else None,
         agent=agent,
         name=_run_name(name),
+        time_shift=chosen_time_shift,
         status=EvalStatus.running,
     )
     session.add(run)
@@ -966,7 +1034,16 @@ def stop_eval_run(run_id: str, session: Session = Depends(get_session)):
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
 
-    if run.status == EvalStatus.running:
+    if run.status == EvalStatus.running and run.rerun_question_ids:
+        # Stopping a rerun keeps the run as it was before it
+        run.rerun_question_ids = None
+        run.rate_limited = None
+        run.eval_job_id = None
+        run.status = EvalStatus.completed
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+    elif run.status == EvalStatus.running:
         run.status = EvalStatus.cancelled
         now = datetime.now()
         run.completed_at = now
@@ -1000,6 +1077,233 @@ def stop_eval_run(run_id: str, session: Session = Depends(get_session)):
             "connection_name": run.connection_name,
         },
     )
+
+
+def _clean_question_id(question_id: str) -> str:
+    return question_id.split(":")[-1] if ":" in question_id else question_id
+
+
+@router.post("/runs/{run_id}/questions/{question_id}/stop-retry")
+def stop_question_retry(
+    run_id: str, question_id: str, session: Session = Depends(get_session)
+):
+    """Stop a question's LLM rate-limit retries: it is marked rate limited at once."""
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    waiting = {
+        _clean_question_id(w.get("question_id") or ""): w.get("question_id")
+        for w in run.rate_limited or []
+    }
+    item_id = waiting.get(_clean_question_id(question_id))
+    if run.status != EvalStatus.running or not run.eval_job_id or not item_id:
+        raise HTTPException(
+            status_code=409, detail="This question isn't waiting out a rate limit"
+        )
+    url = (
+        f"{settings.EVALUATION_SERVICE_URL}/text-to-sql/evaluation/jobs/"
+        f"{run.eval_job_id}/questions/{item_id}/stop-retry"
+    )
+    try:
+        resp = requests.post(url, timeout=30)
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Could not reach the evaluation service: {exc}"
+        ) from exc
+    if resp.status_code in (404, 409):
+        raise HTTPException(
+            status_code=409,
+            detail="This question isn't waiting out a rate limit any more",
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Evaluation service: HTTP {resp.status_code} {resp.text[:200]}",
+        )
+    run.rate_limited = [
+        w for w in run.rate_limited or [] if w.get("question_id") != item_id
+    ] or None
+    session.add(run)
+    session.commit()
+    return {"run_id": run_id, "question_id": question_id, "stopped": True}
+
+
+class RerunRequest(BaseModel):
+    # None: every question the rate limit stopped
+    question_ids: list[str] | None = Field(default=None, max_length=500)
+
+
+def _rate_limited_question_ids(run_id: str, session: Session) -> list[str]:
+    return [
+        r.question_id
+        for r in session.exec(
+            select(EvalResult).where(EvalResult.run_id == run_id)
+        ).all()
+        if (r.error_type or "").startswith(RATE_LIMITED)
+    ]
+
+
+@router.post("/runs/{run_id}/rerun", response_model=EvalRunRead, status_code=202)
+def rerun_questions(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    body: RerunRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    """
+    Evaluate some of a finished run's questions again — by default every one the
+    LLM rate limit stopped — with the run's agent, model and time shift. Their
+    results replace the old ones and the run's score is recomputed.
+    """
+    run = session.get(EvalRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    if run.status == EvalStatus.running:
+        raise HTTPException(status_code=409, detail="The run is still running")
+    if not run.connection_id or not run.dataset_id:
+        raise HTTPException(
+            status_code=409, detail="Only connection and dataset runs can be rerun"
+        )
+    requested = (body.question_ids if body else None) or _rate_limited_question_ids(
+        run_id, session
+    )
+    question_ids = list(dict.fromkeys(_clean_question_id(q) for q in requested if q))
+    if not question_ids:
+        raise HTTPException(
+            status_code=404, detail="No rate-limited questions to rerun in this run"
+        )
+    run.status = EvalStatus.running
+    run.rerun_question_ids = question_ids
+    run.rate_limited = None
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    background_tasks.add_task(_rerun_pipeline, run.id, question_ids)
+    return EvalRunRead.model_validate(
+        run,
+        update={
+            "table_name": f"Connection: {run.connection_name or run.connection_id}",
+            "connection_name": run.connection_name,
+        },
+    )
+
+
+def _rerun_still_wanted(run_id: str) -> bool:
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        return bool(run and run.status == EvalStatus.running and run.rerun_question_ids)
+
+
+def _rerun_pipeline(run_id: str, question_ids: list[str]) -> None:
+    """Evaluate the questions again and merge their results into the run."""
+    with Session(engine) as session:
+        run = session.get(EvalRun, run_id)
+        if not run:
+            return
+        req: dict[str, Any] = {
+            "dataset_name": run.dataset_id,
+            "connection_id": run.connection_id,
+            "question_ids": question_ids,
+        }
+        if run.agent_model:
+            req["model"] = run.agent_model
+        if run.agent and run.agent != "current":
+            req["agent"] = run.agent
+        offsets = time_shift_offsets(run.time_shift)
+        if offsets:
+            req["time_shift_offsets_days"] = offsets
+        try:
+            eval_resp = _call_run_new_evaluation(
+                req,
+                is_cancelled=lambda: not _rerun_still_wanted(run_id),
+                on_progress=lambda job: _save_job_state(run, job, session),
+            )
+        except Exception as exc:
+            session.refresh(run)
+            if run.rerun_question_ids:
+                logger.error(
+                    f"[Eval] Rerun of run {run_id} failed: {exc}", exc_info=True
+                )
+                run.rerun_question_ids = None
+                run.rate_limited = None
+                run.eval_job_id = None
+                run.status = EvalStatus.completed
+                run.failure_breakdown = {
+                    **(run.failure_breakdown or {}),
+                    "rerun_error": str(exc)[:500],
+                }
+                session.add(run)
+                session.commit()
+            return
+        session.refresh(run)
+        if not run.rerun_question_ids:
+            return  # stopped while it ran
+        _merge_rerun_results(run, eval_resp.cases, session)
+        session.commit()
+        logger.info(
+            f"[Eval] Run {run_id}: {len(question_ids)} questions evaluated again"
+        )
+
+
+def _merge_rerun_results(run: EvalRun, cases: list, session: Session) -> None:
+    """Replace the rerun questions' results and recompute the run's scores."""
+    rerun_ids = {_clean_question_id(c.question_id) for c in cases}
+    for old in session.exec(
+        select(EvalResult).where(EvalResult.run_id == run.id)
+    ).all():
+        if old.question_id in rerun_ids:
+            session.delete(old)
+    session.flush()
+    save_case_results(
+        run.id, cases, session, benchmark=run.triggered_by in BENCHMARK_DATASETS
+    )
+    session.flush()
+    results = session.exec(select(EvalResult).where(EvalResult.run_id == run.id)).all()
+    if results:
+        contains = [
+            (r.scores or {}).get("contains_accuracy", r.score) or 0.0 for r in results
+        ]
+        run.score = round(sum(contains) / len(contains), 4)
+        passed = sum(1 for r in results if r.status == "pass")
+        run.pass_rate = round(passed / len(results), 4)
+        run.fail_rate = round(1.0 - run.pass_rate, 4)
+        run.final_score, run.score_breakdown = results_score(list(results))
+        shifts = [
+            (r.scores or {}).get("time_shift")
+            for r in results
+            if (r.scores or {}).get("time_shift") is not None
+        ]
+        run.dimension_averages = {
+            **(run.dimension_averages or {}),
+            "contains_execution_accuracy": run.score,
+            **(
+                {"time_shift_score": round(sum(shifts) / len(shifts), 4)}
+                if shifts
+                else {}
+            ),
+        }
+    run.failure_breakdown = {
+        **{
+            k: v
+            for k, v in (run.failure_breakdown or {}).items()
+            if k not in (RATE_LIMITED, "rerun_error")
+        },
+        **(
+            {RATE_LIMITED: n}
+            if (
+                n := sum(
+                    1 for r in results if (r.error_type or "").startswith(RATE_LIMITED)
+                )
+            )
+            else {}
+        ),
+    }
+    run.rerun_question_ids = None
+    run.rate_limited = None
+    run.eval_job_id = None
+    run.status = EvalStatus.completed
+    run.completed_at = datetime.now()
+    session.add(run)
 
 
 def _connection_run_questions(run: EvalRun, session: Session) -> list[GoldenQuestion]:
@@ -1252,6 +1556,20 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
                 if q.id not in done
             ]
 
+    rerunning = set(run.rerun_question_ids or [])
+    if rerunning and run.status == EvalStatus.running:
+        for q in per_question:
+            if q["question_id"] in rerunning:
+                q["status"] = "rerunning"
+    rate_limited = (
+        [
+            {**w, "question_id": _clean_question_id(w.get("question_id") or "")}
+            for w in (run.rate_limited or [])
+        ]
+        if run.status == EvalStatus.running
+        else []
+    )
+
     failure_breakdown = run.failure_breakdown or (
         {"evaluation_failed": run.total_questions or len(per_question)}
         if run.status == EvalStatus.failed
@@ -1290,6 +1608,14 @@ def get_run_report(run_id: str, session: Session = Depends(get_session)):
         "started_at": run.started_at.isoformat(),
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "per_question": per_question,
+        # The time shift's days/dates this run chose (None = the defaults)
+        "time_shift": run.time_shift,
+        # Questions waiting out an LLM rate limit right now
+        "rate_limited": rate_limited,
+        "rerun_question_ids": run.rerun_question_ids,
+        "rate_limited_count": sum(
+            1 for r in results if (r.error_type or "").startswith(RATE_LIMITED)
+        ),
     }
 
 
