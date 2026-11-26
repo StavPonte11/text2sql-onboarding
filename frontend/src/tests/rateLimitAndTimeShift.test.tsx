@@ -9,6 +9,7 @@ import {
   timeShiftLabel,
   TimeShiftSelect,
 } from '../components/common/TimeShiftSelect';
+import { QuestionResultModal } from '../components/monitoring/QuestionResultModal';
 import {
   RateLimitedQuestions,
   RerunQuestionButton,
@@ -107,5 +108,60 @@ describe('LLM rate limits', () => {
   test('no rate-limited questions: no rerun-all button', () => {
     renderWithProviders(<RerunRateLimitedButton runId="run-1" count={0} />);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
+describe('question result popup', () => {
+  const question = (id: string) =>
+    HttpResponse.json({
+      question_id: id,
+      question: `question ${id}`,
+      status: 'fail',
+      failure_type: null,
+      scores: {},
+      trace: null,
+    });
+
+  test('steps to the previous and next question with the buttons and arrow keys', async () => {
+    server.use(
+      http.get(`${API}/evaluations/runs/:runId/questions/:qid`, ({ params }) =>
+        question(String(params.qid)),
+      ),
+    );
+    const moves: string[] = [];
+    renderWithProviders(
+      <QuestionResultModal
+        runId="r1"
+        questionId="q2"
+        onClose={() => {}}
+        position={{ index: 2, total: 3 }}
+        onPrev={() => moves.push('prev')}
+        onNext={() => moves.push('next')}
+      />,
+    );
+
+    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Previous question' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
+    await userEvent.keyboard('{ArrowRight}{ArrowLeft}');
+    expect(moves).toEqual(['prev', 'next', 'next', 'prev']);
+  });
+
+  test('no previous at the first question, and no buttons without a list', () => {
+    const { unmount } = renderWithProviders(
+      <QuestionResultModal
+        runId="r1"
+        questionId="q1"
+        onClose={() => {}}
+        position={{ index: 1, total: 3 }}
+        onNext={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Previous question' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next question' })).toBeEnabled();
+    unmount();
+
+    renderWithProviders(<QuestionResultModal runId="r1" questionId="q1" onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Next question' })).not.toBeInTheDocument();
   });
 });

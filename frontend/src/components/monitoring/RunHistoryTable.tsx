@@ -135,6 +135,11 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
   const isRegressionRun = report?.triggered_by === 'promotion-regression';
   // Questions still being evaluated: not started/finished yet, or evaluated again
   const busy = (status: string) => status === 'pending' || status === 'rerunning';
+  // The finished questions, in the list's order: the popup steps through them
+  const openableIds: string[] = (report?.per_question ?? [])
+    .filter((q: { status: string }) => !busy(q.status))
+    .map((q: { question_id: string }) => q.question_id);
+  const openIndex = openQuestionId ? openableIds.indexOf(openQuestionId) : -1;
   const waitingIds = new Set<string>(
     (report?.rate_limited ?? []).map((w: { question_id: string }) => w.question_id),
   );
@@ -582,6 +587,14 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
           runId={runId}
           questionId={openQuestionId}
           onClose={() => setOpenQuestionId(null)}
+          {...(openIndex >= 0 && {
+            position: { index: openIndex + 1, total: openableIds.length },
+            onPrev: openIndex > 0 ? () => setOpenQuestionId(openableIds[openIndex - 1]) : undefined,
+            onNext:
+              openIndex < openableIds.length - 1
+                ? () => setOpenQuestionId(openableIds[openIndex + 1])
+                : undefined,
+          })}
         />
       )}
     </div>
