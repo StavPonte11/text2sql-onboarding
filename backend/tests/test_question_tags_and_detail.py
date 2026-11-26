@@ -130,7 +130,7 @@ async def test_pairs_survive_a_knowledge_questions_failure():
     assert result == [{"question": "a?", "tags": []}]
 
 
-def _jeen_session(*answers):
+def _jeen_session(*answers, tools=("list_prompt_tests", "get_sql_pairs")):
     """A fake Jeen MCP session whose call_tool gives each answer in turn."""
     import json
     from contextlib import asynccontextmanager
@@ -147,9 +147,12 @@ def _jeen_session(*answers):
             isError=is_error, content=[SimpleNamespace(type="text", text=text)]
         )
 
+    async def list_tools():
+        return SimpleNamespace(tools=[SimpleNamespace(name=name) for name in tools])
+
     @asynccontextmanager
     async def session():
-        yield SimpleNamespace(call_tool=call_tool)
+        yield SimpleNamespace(call_tool=call_tool, list_tools=list_tools)
 
     return session, calls
 
@@ -1098,3 +1101,13 @@ def test_fallback_alone_counts_as_configured():
         patch(f"{s}.LANGFUSE_FALLBACK_SECRET_KEY", "sk"),
     ):
         assert [x.host for x in langfuse_sources()] == ["https://cloud.langfuse.com"]
+
+
+@pytest.mark.asyncio
+async def test_jeen_without_prompt_tests_gives_the_knowledge_pairs():
+    pairs = [{"question": "k?", "sql_statement": "SELECT 1", "tags": ["a"]}]
+    session, calls = _jeen_session({"sql_pairs": pairs}, tools=("get_sql_pairs",))
+    with patch("app.services.jeen_metadata.get_jeen_mcp_session", session):
+        result = await fetch_jeen_sql_pairs(6)
+    assert result == pairs
+    assert calls == [("get_sql_pairs", {"connection_id": 6})]
